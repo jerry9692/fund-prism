@@ -1,0 +1,136 @@
+# ============================================================
+# 指标注册表模板
+#
+# 每个指标必须注册的所有字段（见需求书 7.4）。
+# 此文件将在第零阶段根据免费数据可得性填充。
+# ============================================================
+
+# 指标组: 收益
+metrics:
+  # --- 收益指标 ---
+  - field_name: cumulative_return
+    name_zh: 累计收益
+    name_en: Cumulative Return
+    entity_type: fund
+    data_type: float
+    unit: "%"
+    formula: "(end_nav / start_nav - 1) * 100"
+    input_fields: ["adjusted_nav"]
+    applicable_fund_types: ["all"]
+    update_frequency: daily
+    metric_group: return
+    version: "1.0.0"
+
+  - field_name: annualized_return
+    name_zh: 年化收益率
+    name_en: Annualized Return
+    entity_type: fund
+    data_type: float
+    unit: "%"
+    formula: "(1 + cumulative_return)^(365/n_days) - 1"
+    input_fields: ["adjusted_nav"]
+    applicable_fund_types: ["all"]
+    update_frequency: daily
+    metric_group: return
+    version: "1.0.0"
+
+  # --- 风险指标 ---
+  - field_name: max_drawdown
+    name_zh: 最大回撤
+    name_en: Maximum Drawdown
+    entity_type: fund
+    data_type: float
+    unit: "%"
+    formula: "max(peak_value - trough_value) / peak_value"
+    input_fields: ["adjusted_nav"]
+    applicable_fund_types: ["all"]
+    update_frequency: daily
+    metric_group: risk
+    version: "1.0.0"
+
+  - field_name: annualized_volatility
+    name_zh: 年化波动率
+    name_en: Annualized Volatility
+    entity_type: fund
+    data_type: float
+    unit: "%"
+    formula: "std(daily_returns) * sqrt(252)"
+    input_fields: ["daily_return"]
+    applicable_fund_types: ["all"]
+    update_frequency: daily
+    metric_group: risk
+    version: "1.0.0"
+
+  # --- 风险调整收益 ---
+  - field_name: sharpe_ratio
+    name_zh: 夏普比率
+    name_en: Sharpe Ratio
+    entity_type: fund
+    data_type: float
+    unit: ""
+    formula: "(annualized_return - risk_free_rate) / annualized_volatility"
+    input_fields: ["daily_return", "risk_free_rate"]
+    applicable_fund_types: ["all"]
+    update_frequency: daily
+    metric_group: risk
+    version: "1.0.0"
+    missing_handling: "无风险利率缺失时使用一年期国债收益率代替"
+
+  - field_name: calmar_ratio
+    name_zh: 卡玛比率
+    name_en: Calmar Ratio
+    entity_type: fund
+    data_type: float
+    unit: ""
+    formula: "annualized_return / abs(max_drawdown)"
+    input_fields: ["annualized_return", "max_drawdown"]
+    applicable_fund_types: ["all"]
+    update_frequency: daily
+    metric_group: risk
+    version: "1.0.0"
+
+  # --- 集中度 ---
+  - field_name: top10_holding_concentration
+    name_zh: 前十大重仓集中度
+    name_en: Top 10 Holding Concentration
+    entity_type: fund
+    data_type: float
+    unit: "%"
+    formula: "sum(top10_weight_pct)"
+    input_fields: ["weight_pct", "rank_in_holdings"]
+    applicable_fund_types: ["active_equity", "mixed"]
+    update_frequency: quarterly
+    metric_group: concentration
+    version: "1.0.0"
+    limitations: "仅反映披露期静态持仓，无法体现季度内调仓"
+
+  # --- 持有人 ---
+  - field_name: institutional_ownership_pct
+    name_zh: 机构持有比例
+    name_en: Institutional Ownership Percentage
+    entity_type: fund
+    data_type: float
+    unit: "%"
+    formula: "institutional_holders / total_holders * 100"
+    input_fields: ["institutional_pct"]
+    applicable_fund_types: ["all"]
+    update_frequency: semiannual
+    metric_group: holder
+    version: "1.0.0"
+
+# ============================================================
+# 数据源等级映射
+# ============================================================
+data_source_levels:
+  A:
+    description: "官方披露数据 — 证监会/交易所/基金公司公告"
+    examples: ["XBRL持仓", "定期报告", "招募说明书"]
+  B:
+    description: "开源接口聚合数据"
+    examples: ["AKShare", "Tushare"]
+  C:
+    description: "网页解析数据"
+    examples: ["天天基金公开页面", "东方财富页面"]
+  LOCAL:
+    description: "用户本地数据"
+    examples: ["本地CSV", "本地Parquet", "自建数据库"]
