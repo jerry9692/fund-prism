@@ -318,12 +318,13 @@ fund_manager:
 # 7. 股票日行情
 # ================================================================
 stock_daily:
-  source: akshare.stock_zh_a_hist
+  source: akshare.stock_zh_a_hist_tx
   akshare_version: "1.18.64"
-  underlying_source: 东方财富/新浪
+  underlying_source: 腾讯
   underlying_source_level: B
-  call_signature: "ak.stock_zh_a_hist(symbol='600519', period='daily', start_date='20240101', end_date='20240630', adjust='qfq')"
-  call_cost: "~3s/只/半年"
+  call_signature: "ak.stock_zh_a_hist_tx(symbol='sh600519', start_date='20240101', end_date='20240630')"
+  call_cost: "~5s/只/半年"
+  note: "审计发现 stock_zh_a_hist 在当前代理环境下可能连接 push2his.eastmoney.com 失败；一期默认使用腾讯源 stock_zh_a_hist_tx，东方财富源作为备用。"
   fields:
     - raw_name: "日期"
       canonical_name: trade_date
@@ -379,7 +380,35 @@ stock_daily:
       unit: "%"
 
 # ================================================================
-# 8. 持仓变动（用于换手率估算）
+# 8. 基金费率详情
+# ================================================================
+fund_fee_detail:
+  source: akshare.fund_individual_detail_info_xq
+  akshare_version: "1.18.64"
+  underlying_source: 雪球/蛋卷基金
+  underlying_source_level: B
+  call_signature: "ak.fund_individual_detail_info_xq(symbol='000001')"
+  call_cost: "~3s/只"
+  note: "用于一期费率信息主路径。fund_fee_em 在 1.18.64 下返回空 DataFrame，不作为主源。"
+  fields:
+    - raw_name: "费用类型"
+      canonical_name: fee_type
+      data_type: str
+      required: true
+      note: "如 买入规则 / 卖出规则 / 运作费用"
+    - raw_name: "条件或名称"
+      canonical_name: condition_or_name
+      data_type: str
+      required: true
+      note: "如 0.0万<买入金额<100.0万 / 管理费"
+    - raw_name: "费用"
+      canonical_name: fee_value
+      data_type: float
+      unit: "%"
+      required: true
+
+# ================================================================
+# 9. 持仓变动（用于换手率估算）
 # ================================================================
 fund_portfolio_change:
   source: akshare.fund_portfolio_change_em
@@ -418,7 +447,7 @@ fund_portfolio_change:
 # 待验证/待修复接口
 # ================================================================
 # ================================================================
-# 9. 持有人结构
+# 10. 持有人结构
 # ================================================================
 fund_holder_structure:
   source: akshare.fund_hold_structure_em
@@ -467,8 +496,8 @@ fund_holder_structure:
 # ================================================================
 pending:
   - name: fund_fee_em
-    issue: "返回空 DataFrame，参数签名待确认"
-    priority: P1
+    issue: "1.18.64 下返回空 DataFrame；已改用 fund_individual_detail_info_xq 作为一期费率主路径，fund_purchase_em 作为申购手续费交叉验证"
+    priority: P2
   - name: fund_aum_em
     issue: "仅返回基金公司级规模，缺少基金级历史规模序列"
     priority: P1

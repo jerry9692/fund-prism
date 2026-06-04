@@ -5,15 +5,16 @@
 所有枚举值必须稳定，变更需记录版本。
 """
 
-from enum import Enum
-
+from enum import StrEnum
 
 # ============================================================
 # 基金分类
 # ============================================================
 
-class FundCategory(str, Enum):
+
+class FundCategory(StrEnum):
     """基金一级分类。"""
+
     STOCK = "股票型"
     MIXED = "混合型"
     BOND = "债券型"
@@ -23,8 +24,9 @@ class FundCategory(str, Enum):
     ALTERNATIVE = "另类型"
 
 
-class FundSubCategory(str, Enum):
+class FundSubCategory(StrEnum):
     """基金二级分类（主动权益相关）。"""
+
     ACTIVE_EQUITY = "主动权益"
     PASSIVE_INDEX = "被动指数"
     INDEX_ENHANCED = "指数增强"
@@ -44,8 +46,9 @@ class FundSubCategory(str, Enum):
     FOF_MIXED = "FOF混合"
 
 
-class FundOperation(str, Enum):
+class FundOperation(StrEnum):
     """基金运作方式。"""
+
     OPEN_ENDED = "开放式"
     CLOSED_ENDED = "封闭式"
     LOF = "LOF"
@@ -53,8 +56,9 @@ class FundOperation(str, Enum):
     REGULAR_OPEN = "定期开放"
 
 
-class FundStatus(str, Enum):
+class FundStatus(StrEnum):
     """基金当前状态。"""
+
     NORMAL = "正常"
     LIQUIDATED = "已清盘"
     SUSPEND_SUBSCRIBE = "暂停申购"
@@ -68,7 +72,8 @@ class FundStatus(str, Enum):
 # 数据源与可靠性
 # ============================================================
 
-class DataSourceLevel(str, Enum):
+
+class DataSourceLevel(StrEnum):
     """
     数据源可靠性等级。
 
@@ -77,14 +82,16 @@ class DataSourceLevel(str, Enum):
     C: 网页解析数据（天天基金等公开页面）
     LOCAL: 用户本地数据
     """
+
     A = "A"
     B = "B"
     C = "C"
     LOCAL = "LOCAL"
 
 
-class DataSourceType(str, Enum):
+class DataSourceType(StrEnum):
     """数据源类型。"""
+
     OFFICIAL_DISCLOSURE = "official_disclosure"
     OPEN_API = "open_api"
     WEB_SCRAPING = "web_scraping"
@@ -96,7 +103,8 @@ class DataSourceType(str, Enum):
 # 结论可信度
 # ============================================================
 
-class ConclusionStatus(str, Enum):
+
+class ConclusionStatus(StrEnum):
     """
     结论状态分级（见需求书 5.5）。
 
@@ -106,6 +114,7 @@ class ConclusionStatus(str, Enum):
     observation: 研究观察，如"该基金近期增持了新能源"
     needs_review: 待复核 — 证据不足或模型不适用
     """
+
     FACT = "fact"
     COMPUTED = "computed"
     ESTIMATED = "estimated"
@@ -113,7 +122,7 @@ class ConclusionStatus(str, Enum):
     NEEDS_REVIEW = "needs_review"
 
 
-class ConfidenceLevel(str, Enum):
+class ConfidenceLevel(StrEnum):
     """
     结论置信度等级（见需求书 7.5）。
 
@@ -122,6 +131,7 @@ class ConfidenceLevel(str, Enum):
     低: 数据缺失较多，仅方向性参考
     待复核: 不应自动生成确定性结论
     """
+
     HIGH = "high"
     MEDIUM = "medium"
     LOW = "low"
@@ -132,16 +142,19 @@ class ConfidenceLevel(str, Enum):
 # 指标相关
 # ============================================================
 
-class MetricEntity(str, Enum):
+
+class MetricEntity(StrEnum):
     """指标所属实体。"""
+
     FUND = "fund"
     MANAGER = "manager"
     COMPANY = "company"
     PORTFOLIO = "portfolio"
 
 
-class MetricGroup(str, Enum):
+class MetricGroup(StrEnum):
     """指标分组。"""
+
     RETURN = "收益"
     RISK = "风险"
     STYLE = "风格"
@@ -159,8 +172,10 @@ class MetricGroup(str, Enum):
 # 资产与持仓
 # ============================================================
 
-class AssetType(str, Enum):
+
+class AssetType(StrEnum):
     """资产类型。"""
+
     STOCK = "股票"
     BOND = "债券"
     CONVERTIBLE_BOND = "可转债"
@@ -170,8 +185,9 @@ class AssetType(str, Enum):
     OTHER = "其他"
 
 
-class HoldingChangeDirection(str, Enum):
+class HoldingChangeDirection(StrEnum):
     """持仓变动方向。"""
+
     NEW = "新增"
     INCREASED = "增持"
     DECREASED = "减持"
@@ -183,8 +199,10 @@ class HoldingChangeDirection(str, Enum):
 # 研究包与证据
 # ============================================================
 
-class EvidenceType(str, Enum):
+
+class EvidenceType(StrEnum):
     """证据类型。"""
+
     RAW_DATA = "raw_data"
     TIME_SERIES = "time_series"
     ALGORITHM_RESULT = "algorithm_result"
@@ -193,8 +211,9 @@ class EvidenceType(str, Enum):
     USER_NOTE = "user_note"
 
 
-class ResearchPacketTemplate(str, Enum):
+class ResearchPacketTemplate(StrEnum):
     """研究包视角模板。"""
+
     SINGLE_FUND_CHECKUP = "single_fund_checkup"
     MANAGER_PROFILE = "manager_profile"
     STYLE_DRIFT = "style_drift"
@@ -207,8 +226,10 @@ class ResearchPacketTemplate(str, Enum):
 # 基金池
 # ============================================================
 
-class PoolType(str, Enum):
+
+class PoolType(StrEnum):
     """基金池类型。"""
+
     WATCHLIST = "watchlist"
     WHITELIST = "whitelist"
     BLACKLIST = "blacklist"
@@ -220,8 +241,10 @@ class PoolType(str, Enum):
 # 任务
 # ============================================================
 
-class TaskStatus(str, Enum):
+
+class TaskStatus(StrEnum):
     """任务状态。"""
+
     PENDING = "pending"
     RUNNING = "running"
     COMPLETED = "completed"
@@ -229,8 +252,9 @@ class TaskStatus(str, Enum):
     CANCELLED = "cancelled"
 
 
-class TaskType(str, Enum):
+class TaskType(StrEnum):
     """任务类型。"""
+
     DATA_UPDATE = "data_update"
     ALGORITHM_RUN = "algorithm_run"
     RESEARCH_PACKET = "research_packet"

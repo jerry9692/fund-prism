@@ -4,7 +4,7 @@
 
 AI-oriented open-source personal fund research platform for Chinese mutual funds. Built as a "trusted research base" first, with algorithms added incrementally after data validation.
 
-**Current phase:** Framework setup complete → entering Phase 0 (data availability & caliber experiment).
+**Current phase:** Phase 0 and pre-Phase-1 readiness checks complete → entering Phase 1 MVP development. B-level AKShare data has been validated on 30 sample funds; style index symbols, dividend data, fee-detail fallback, and one A-level CNInfo PDF evidence loop have been verified.
 
 ## Key Architecture Decisions
 

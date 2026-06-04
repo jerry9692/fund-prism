@@ -1,0 +1,475 @@
+{
+  "akshare_required_success_count": 17,
+  "akshare_required_total_count": 17,
+  "style_index_result": {
+    "chosen_symbols": {
+      "large_cap": "sh000300",
+      "mid_cap": "sh000905",
+      "small_cap": "sh000852",
+      "growth": "sz399370",
+      "value": "sz399371"
+    },
+    "all_required_resolved": true,
+    "records": [
+      {
+        "concept_name": "index_daily_large_cap",
+        "akshare_function": "stock_zh_index_daily_tx",
+        "params": {
+          "symbol": "sh000300"
+        },
+        "underlying_source": "腾讯",
+        "source_level": "B",
+        "required_for_pre_phase1": true,
+        "errors": [],
+        "elapsed_seconds": 39.72,
+        "row_count": 5139,
+        "raw_columns": [
+          "date",
+          "open",
+          "close",
+          "high",
+          "low",
+          "amount"
+        ],
+        "column_count": 6,
+        "columns_detail": [
+          {
+            "raw_name": "date",
+            "dtype": "object",
+            "missing_rate": 0.0,
+            "examples": [
+              "2005-04-08",
+              "2005-04-11",
+              "2005-04-12"
+            ]
+          },
+          {
+            "raw_name": "open",
+            "dtype": "float64",
+            "missing_rate": 0.0,
+            "examples": [
+              984.67,
+              1003.88,
+              993.71
+            ]
+          },
+          {
+            "raw_name": "close",
+            "dtype": "float64",
+            "missing_rate": 0.0,
+            "examples": [
+              1003.45,
+              995.42,
+              978.7
+            ]
+          },
+          {
+            "raw_name": "high",
+            "dtype": "float64",
+            "missing_rate": 0.0,
+            "examples": [
+              1003.7,
+              1008.74,
+              993.71
+            ]
+          },
+          {
+            "raw_name": "low",
+            "dtype": "float64",
+            "missing_rate": 0.0,
+            "examples": [
+              979.53,
+              992.77,
+              978.2
+            ]
+          },
+          {
+            "raw_name": "amount",
+            "dtype": "float64",
+            "missing_rate": 0.0,
+            "examples": [
+              14762526.0,
+              15936066.0,
+              10226193.0
+            ]
+          }
+        ],
+        "style_label": "large_cap"
+      },
+      {
+        "concept_name": "index_daily_mid_cap",
+        "akshare_function": "stock_zh_index_daily_tx",
+        "params": {
+          "symbol": "sh000905"
+        },
+        "underlying_source": "腾讯",
+        "source_level": "B",
+        "required_for_pre_phase1": true,
+        "errors": [],
+        "elapsed_seconds": 33.25,
+        "row_count": 4710,
+        "raw_columns": [
+          "date",
+          "open",
+          "close",
+          "high",
+          "low",
+          "amount"
+        ],
+        "column_count": 6,
+        "columns_detail": [
+          {
+            "raw_name": "date",
+            "dtype": "object",
+            "missing_rate": 0.0,
+            "examples": [
+              "2007-01-15",
+              "2007-01-16",
+              "2007-01-17"
+            ]
+          },
+          {
+            "raw_name": "open",
+            "dtype": "float64",
+            "missing_rate": 0.0,
+            "examples": [
+              1881.47,
+              1991.69,
+              2064.29
+            ]
+          },
+          {
+            "raw_name": "close",
+            "dtype": "float64",
+            "missing_rate": 0.0,
+            "examples": [
+              1986.54,
+              2055.02,
+              2035.65
+            ]
+          },
+          {
+            "raw_name": "high",
+            "dtype": "float64",
+            "missing_rate": 0.0,
+            "examples": [
+              1986.54,
+              2055.02,
+              2093.89
+            ]
+          },
+          {
+            "raw_name": "low",
+            "dtype": "float64",
+            "missing_rate": 0.0,
+            "examples": [
+              1881.47,
+              1991.04,
+              1992.54
+            ]
+          },
+          {
+            "raw_name": "amount",
+            "dtype": "float64",
+            "missing_rate": 0.0,
+            "examples": [
+              38812630.32,
+              48074418.98,
+              58832887.0
+            ]
+          }
+        ],
+        "style_label": "mid_cap"
+      },
+      {
+        "concept_name": "index_daily_small_cap",
+        "akshare_function": "stock_zh_index_daily_tx",
+        "params": {
+          "symbol": "sh000852"
+        },
+        "underlying_source": "腾讯",
+        "source_level": "B",
+        "required_for_pre_phase1": true,
+        "errors": [],
+        "elapsed_seconds": 22.93,
+        "row_count": 2827,
+        "raw_columns": [
+          "date",
+          "open",
+          "close",
+          "high",
+          "low",
+          "amount"
+        ],
+        "column_count": 6,
+        "columns_detail": [
+          {
+            "raw_name": "date",
+            "dtype": "object",
+            "missing_rate": 0.0,
+            "examples": [
+              "2014-10-17",
+              "2014-10-20",
+              "2014-10-21"
+            ]
+          },
+          {
+            "raw_name": "open",
+            "dtype": "float64",
+            "missing_rate": 0.0,
+            "examples": [
+              6118.98,
+              6068.78,
+              6153.02
+            ]
+          },
+          {
+            "raw_name": "close",
+            "dtype": "float64",
+            "missing_rate": 0.0,
+            "examples": [
+              6058.67,
+              6154.52,
+              6103.01
+            ]
+          },
+          {
+            "raw_name": "high",
+            "dtype": "float64",
+            "missing_rate": 0.0,
+            "examples": [
+              6140.12,
+              6154.69,
+              6176.07
+            ]
+          },
+          {
+            "raw_name": "low",
+            "dtype": "float64",
+            "missing_rate": 0.0,
+            "examples": [
+              5943.59,
+              6068.52,
+              6097.37
+            ]
+          },
+          {
+            "raw_name": "amount",
+            "dtype": "float64",
+            "missing_rate": 0.0,
+            "examples": [
+              97125862.0,
+              79024982.0,
+              79548408.0
+            ]
+          }
+        ],
+        "style_label": "small_cap"
+      },
+      {
+        "concept_name": "index_daily_growth",
+        "akshare_function": "stock_zh_index_daily_tx",
+        "params": {
+          "symbol": "sz399370"
+        },
+        "underlying_source": "腾讯",
+        "source_level": "B",
+        "required_for_pre_phase1": true,
+        "errors": [],
+        "elapsed_seconds": 27.37,
+        "row_count": 3734,
+        "raw_columns": [
+          "date",
+          "open",
+          "close",
+          "high",
+          "low",
+          "amount"
+        ],
+        "column_count": 6,
+        "columns_detail": [
+          {
+            "raw_name": "date",
+            "dtype": "object",
+            "missing_rate": 0.0,
+            "examples": [
+              "2011-01-17",
+              "2011-01-18",
+              "2011-01-19"
+            ]
+          },
+          {
+            "raw_name": "open",
+            "dtype": "float64",
+            "missing_rate": 0.0,
+            "examples": [
+              3420.09,
+              3289.73,
+              3311.81
+            ]
+          },
+          {
+            "raw_name": "close",
+            "dtype": "float64",
+            "missing_rate": 0.0,
+            "examples": [
+              3299.8,
+              3311.78,
+              3394.86
+            ]
+          },
+          {
+            "raw_name": "high",
+            "dtype": "float64",
+            "missing_rate": 0.0,
+            "examples": [
+              3425.19,
+              3318.99,
+              3394.86
+            ]
+          },
+          {
+            "raw_name": "low",
+            "dtype": "float64",
+            "missing_rate": 0.0,
+            "examples": [
+              3292.28,
+              3270.31,
+              3299.91
+            ]
+          },
+          {
+            "raw_name": "amount",
+            "dtype": "float64",
+            "missing_rate": 0.0,
+            "examples": [
+              29948219.96,
+              20116045.7,
+              26049354.91
+            ]
+          }
+        ],
+        "style_label": "growth"
+      },
+      {
+        "concept_name": "index_daily_value",
+        "akshare_function": "stock_zh_index_daily_tx",
+        "params": {
+          "symbol": "sz399371"
+        },
+        "underlying_source": "腾讯",
+        "source_level": "B",
+        "required_for_pre_phase1": true,
+        "errors": [],
+        "elapsed_seconds": 31.93,
+        "row_count": 3734,
+        "raw_columns": [
+          "date",
+          "open",
+          "close",
+          "high",
+          "low",
+          "amount"
+        ],
+        "column_count": 6,
+        "columns_detail": [
+          {
+            "raw_name": "date",
+            "dtype": "object",
+            "missing_rate": 0.0,
+            "examples": [
+              "2011-01-17",
+              "2011-01-18",
+              "2011-01-19"
+            ]
+          },
+          {
+            "raw_name": "open",
+            "dtype": "float64",
+            "missing_rate": 0.0,
+            "examples": [
+              3617.78,
+              3507.55,
+              3523.02
+            ]
+          },
+          {
+            "raw_name": "close",
+            "dtype": "float64",
+            "missing_rate": 0.0,
+            "examples": [
+              3514.26,
+              3521.3,
+              3583.81
+            ]
+          },
+          {
+            "raw_name": "high",
+            "dtype": "float64",
+            "missing_rate": 0.0,
+            "examples": [
+              3627.83,
+              3530.65,
+              3584.53
+            ]
+          },
+          {
+            "raw_name": "low",
+            "dtype": "float64",
+            "missing_rate": 0.0,
+            "examples": [
+              3505.62,
+              3493.46,
+              3512.24
+            ]
+          },
+          {
+            "raw_name": "amount",
+            "dtype": "float64",
+            "missing_rate": 0.0,
+            "examples": [
+              38412468.78,
+              24656510.61,
+              29586679.51
+            ]
+          }
+        ],
+        "style_label": "value"
+      }
+    ]
+  },
+  "fee_interface_ok": true,
+  "fund_fee_em_ok": false,
+  "purchase_fee_interface_ok": true,
+  "announcement_interface_ok": true,
+  "dividend_interface_ok": true,
+  "generated_at": "2026-06-04T20:55:28",
+  "test_fund": "000001",
+  "test_stock": "600519",
+  "official_pdf_evidence": {
+    "source": "巨潮资讯 static.cninfo.com.cn",
+    "source_level": "A",
+    "url": "https://static.cninfo.com.cn/finalpage/2024-04-19/1219682463.PDF",
+    "cached_path": "data\\cache\\official_evidence\\cninfo_000001_b49ee444113d.pdf",
+    "downloaded_at": "2026-06-04T20:55:26",
+    "download_ok": true,
+    "parse_ok": true,
+    "errors": [],
+    "http_status": 200,
+    "size_bytes": 355257,
+    "sha256": "aca20a5ec89c7911ce3f870f239db0d8b0371c7a546a547f17d6a6d6393e5b84",
+    "page_count": 13,
+    "keyword_hits": {
+      "华夏成长": true,
+      "基金主代码": true,
+      "000001": true,
+      "季度报告": true,
+      "基金产品概况": true,
+      "投资组合报告": true,
+      "前十名股票": false
+    },
+    "text_excerpt": " \n \n \n \n \n华夏成长证券投资基金 \n2024 年第 1 季度报告 \n2024 年 3 月 31 日 \n \n \n \n \n \n \n \n \n \n \n \n \n \n \n基金管理人：华夏基金管理有限公司 \n基金托管人：中国建设银行股份有限公司 \n报告送出日期：二〇二四年四月十九日\n华夏成长证券投资基金 2024 年第 1 季度报告 \n1 \n \n§1 重要提示 \n基金管理人的董事会及董事保证本报告所载资料不存在虚假记载、 误导性陈述或重大遗\n漏，并对其内容的真实性、准确性和完整性承担个别及连带责任。 \n基金托管人中国建设银行股份有限公司根据本基金合同规定， 于2024 年 4 月 17 日复核\n了本报告中的财务指标、净值表现和投资组合报告等内容，保证复核内容不存在虚假记载、\n误导性陈述或者重大遗漏。 \n基金管理人承诺以诚实信用、 勤勉尽责的原则管理和运用基金资产， 但不保证基金一定\n盈利。 \n基金的过往业绩并不代表其未来表现。 投资有风险， 投资者在作出投资决策前应仔细阅\n读本基金的招募说明书。 \n本报告中财务资料未经审计。 \n本报告期自 2024 年 1 月 1 日起至 3 月 31 日止"
+  },
+  "official_pdf_ok": true,
+  "pre_phase1_ready": true
+}

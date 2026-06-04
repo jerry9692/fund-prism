@@ -5,7 +5,7 @@
 能够正确序列化和反序列化。
 """
 
-from datetime import date, datetime
+from datetime import date
 
 from fund_research.core.enums import (
     ConclusionStatus,

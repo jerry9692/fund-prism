@@ -27,8 +27,8 @@ def test_engine() -> Generator[Engine, None, None]:
 @pytest.fixture(scope="function")
 def test_session(test_engine: Engine) -> Generator[Session, None, None]:
     """创建测试数据库会话。"""
-    TestSession = sessionmaker(bind=test_engine)
-    session = TestSession()
+    test_session_factory = sessionmaker(bind=test_engine)
+    session = test_session_factory()
     yield session
     session.close()
 
@@ -40,10 +40,10 @@ def test_client(test_engine: Engine) -> Generator[TestClient, None, None]:
 
     from fund_research.api.deps import get_session
 
-    TestSession = sessionmaker(bind=test_engine)
+    test_session_factory = sessionmaker(bind=test_engine)
 
     def override_get_session() -> Generator[Session, None, None]:
-        session = TestSession()
+        session = test_session_factory()
         try:
             yield session
         finally:

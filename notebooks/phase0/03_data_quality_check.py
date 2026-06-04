@@ -158,6 +158,23 @@ def main():
     # ============================================================
     logger.info("5/5 生成质量基线摘要...")
 
+    fund_granularity = (
+        granularity.groupby("fund_code")["granularity"]
+        .agg(lambda values: sorted(set(values)))
+        .reset_index()
+    )
+    funds_with_full_holdings = int(
+        fund_granularity["granularity"].apply(lambda values: "full_semiannual" in values).sum()
+    )
+    funds_with_partial_only = int(
+        fund_granularity["granularity"].apply(
+            lambda values: "full_semiannual" not in values and "partial_semiannual" in values
+        ).sum()
+    )
+    funds_with_top10_quarterly = int(
+        fund_granularity["granularity"].apply(lambda values: "top10_quarterly" in values).sum()
+    )
+
     report = {
         "generated_at": date.today().isoformat(),
         "total_funds": len(fund_codes),
@@ -170,8 +187,10 @@ def main():
         },
         "holdings_disclosure": {
             "granularity_distribution": gran_summary.to_dict(),
-            "funds_with_full_holdings": int((granularity["granularity"] != "top10_only").sum()),
-            "funds_top10_only": int((granularity["granularity"] == "top10_only").sum()),
+            "report_period_count": int(len(granularity)),
+            "funds_with_full_holdings": funds_with_full_holdings,
+            "funds_with_partial_only": funds_with_partial_only,
+            "funds_with_top10_quarterly": funds_with_top10_quarterly,
         },
         "industry_coverage": {
             "avg_rows": round(ind_summary["industry_rows"].mean(), 0),
