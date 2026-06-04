@@ -12,6 +12,7 @@
 """
 
 import sys
+import re
 from pathlib import Path
 from datetime import date, datetime
 import time
@@ -45,6 +46,17 @@ SOURCE_META = {
     "underlying_source": "天天基金(东方财富)",
     "source_level": "B",
 }
+
+
+def _parse_report_period(text: str) -> str | None:
+    """"2024年1季度股票投资明细" → "2024-03-31" """
+    m = re.match(r'(\d{4})年(\d)季度', str(text))
+    if not m:
+        return None
+    y, q = int(m.group(1)), int(m.group(2))
+    month = q * 3
+    day = {12: 31, 9: 30, 6: 30, 3: 31}[month]
+    return f"{y}-{month:02d}-{day:02d}"
 
 
 def db_connect():
@@ -81,6 +93,7 @@ def _create_tables(conn):
     CREATE TABLE IF NOT EXISTS fund_holdings (
         fund_code VARCHAR,
         report_period VARCHAR,
+        report_date DATE,
         stock_code VARCHAR,
         stock_name VARCHAR,
         weight_pct DOUBLE,
@@ -252,12 +265,14 @@ def pull_fund_holdings(conn, fund_code: str) -> bool:
                 logger.debug(f"  [{fund_code}] holdings {yr}: empty")
                 continue
 
-            # 构建批量插入 DataFrame
+            # 构建批量插入 DataFrame（含 report_date 解析）
             rows = []
             for _, row in df.iterrows():
+                rp = str(row.iloc[6]) if len(row) > 6 else yr
                 rows.append({
                     "fund_code": fund_code,
-                    "report_period": str(row.iloc[6]) if len(row) > 6 else yr,
+                    "report_period": rp,
+                    "report_date": _parse_report_period(rp),
                     "stock_code": str(row.iloc[1]),
                     "stock_name": str(row.iloc[2]),
                     "weight_pct": float(row.iloc[3]) if pd.notna(row.iloc[3]) else None,
@@ -272,8 +287,8 @@ def pull_fund_holdings(conn, fund_code: str) -> bool:
             conn.register("_tmp_holdings", batch_df)
             conn.execute("""
                 INSERT OR REPLACE INTO fund_holdings
-                SELECT fund_code, report_period, stock_code, stock_name, weight_pct,
-                       shares_held, market_value, rank, fetch_timestamp, akshare_version
+                SELECT fund_code, report_period, report_date, stock_code, stock_name,
+                       weight_pct, shares_held, market_value, rank, fetch_timestamp, akshare_version
                 FROM _tmp_holdings
             """)
             conn.unregister("_tmp_holdings")

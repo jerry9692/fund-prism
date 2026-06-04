@@ -35,12 +35,12 @@
   },
   "holdings_disclosure": {
     "granularity_distribution": {
-      "top50_or_partial": 162,
-      "full_stock_holdings": 143,
-      "top10_only": 51
+      "top10_quarterly": 178,
+      "full_semiannual": 142,
+      "partial_semiannual": 36
     },
-    "funds_with_full_holdings": 305,
-    "funds_top10_only": 51
+    "funds_with_full_holdings": 356,
+    "funds_top10_only": 0
   },
   "industry_coverage": {
     "avg_rows": 32.0

@@ -100,29 +100,41 @@ def main():
     logger.info("3/5 持仓披露粒度...")
     granularity = conn.execute("""
         SELECT fund_code,
-               report_period,
+               report_date,
+               EXTRACT(QUARTER FROM report_date) as quarter,
                COUNT(*) as stock_count
         FROM fund_holdings
-        GROUP BY fund_code, report_period
-        ORDER BY fund_code, report_period
+        WHERE report_date IS NOT NULL
+        GROUP BY fund_code, report_date, quarter
+        ORDER BY fund_code, report_date
     """).fetchdf()
 
-    # 标注披露粒度
-    def label_granularity(count):
-        if count <= 10:
-            return "top10_only"
-        elif count <= 50:
-            return "top50_or_partial"
-        else:
-            return "full_stock_holdings"
+    # 基于报告期类型标注披露粒度（而非持仓数量）
+    # Q1/Q3 = 季度报告（仅前十大），Q2/Q4 = 半年度/年度报告（全部持仓）
+    def label_granularity(row):
+        q = row["quarter"]
+        count = row["stock_count"]
+        if q in (1, 3):
+            return "top10_quarterly"  # 季度报告仅披露前十大
+        else:  # Q2, Q4
+            if count <= 15:
+                return "top10_quarterly"  # 异常：半年度报告但只有前十大（可能是数据缺失）
+            elif count <= 50:
+                return "partial_semiannual"  # 半年度但持仓较少（小型基金/债基转型）
+            else:
+                return "full_semiannual"  # 半年度/年度全部持仓
 
-    granularity["granularity"] = granularity["stock_count"].apply(label_granularity)
+    granularity["granularity"] = granularity.apply(label_granularity, axis=1)
     granularity.to_csv(OUTPUT_DIR / "disclosure_granularity.csv", index=False)
     logger.info(f"披露粒度已保存: {OUTPUT_DIR / 'disclosure_granularity.csv'}")
 
     # 统计
     gran_summary = granularity["granularity"].value_counts()
     logger.info(f"披露粒度分布:\n{gran_summary.to_string()}")
+
+    # 按季度统计
+    quarter_summary = granularity.groupby("quarter")["stock_count"].agg(["mean", "min", "max", "count"])
+    logger.info(f"各季度持仓数量:\n{quarter_summary.to_string()}")
 
     # ============================================================
     # 4. 行业配置覆盖
