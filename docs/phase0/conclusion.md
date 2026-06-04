@@ -6,6 +6,10 @@
 
 在免费公开数据约束下，主动权益基金研究的四个核心模块（收益风险指标、公开持仓分析、风格/行业暴露、静态归因）所需数据均可达。主要限制在于持仓粒度（季度仅前十大）、而非数据不可得。
 
+**审计修复**（2026-06-04）：
+- `report_period` 中文文本已解析为标准日期（`report_date` 列）
+- 披露粒度标签已从任意数量阈值改为基于季度号分类
+
 ---
 
 ## 1. 执行摘要
@@ -27,7 +31,7 @@
 | DEL-1 | 原始字段→标准字段映射 v0.1 | `config/field_mapping_v0.1.yaml` | ✅ |
 | DEL-2 | AKShare 字段盘点报告 | `docs/phase0/akshare-field-inventory-p0.json` | ✅ |
 | DEL-3 | A 级官方披露路径验证 | `docs/phase0/official-source-paths.md` | ✅ |
-| DEL-4 | 持仓披露粒度报告 | `docs/phase0/disclosure_granularity.csv` | ✅ |
+| DEL-4 | 持仓披露粒度报告（按季度分类） | `docs/phase0/disclosure_granularity.csv` | ✅ 已修复 |
 | DEL-5 | 字段覆盖率矩阵 | 见质量基线报告 | ✅ |
 | DEL-6 | 数据源风险登记册 | `docs/phase0/source-risk-register.md` | ✅ |
 | DEL-7 | 算法可行性评估表 | `docs/phase0/algorithm-feasibility.md` | ✅ |
