@@ -1,0 +1,48 @@
+{
+  "generated_at": "2026-06-04",
+  "total_funds": 30,
+  "fetch_success": [
+    {
+      "entity_type": "basic_info",
+      "total": 30,
+      "success": 30.0,
+      "rate_pct": 100.0
+    },
+    {
+      "entity_type": "holdings",
+      "total": 30,
+      "success": 30.0,
+      "rate_pct": 100.0
+    },
+    {
+      "entity_type": "industry",
+      "total": 30,
+      "success": 30.0,
+      "rate_pct": 100.0
+    },
+    {
+      "entity_type": "nav",
+      "total": 30,
+      "success": 30.0,
+      "rate_pct": 100.0
+    }
+  ],
+  "fetch_failures": 0,
+  "nav_quality": {
+    "avg_rows": 3560.0,
+    "acc_nav_missing_pct": 0.0,
+    "avg_anomaly_rate_pct": 0.0
+  },
+  "holdings_disclosure": {
+    "granularity_distribution": {
+      "top50_or_partial": 162,
+      "full_stock_holdings": 143,
+      "top10_only": 51
+    },
+    "funds_with_full_holdings": 305,
+    "funds_top10_only": 51
+  },
+  "industry_coverage": {
+    "avg_rows": 32.0
+  }
+}

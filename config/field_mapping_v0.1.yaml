@@ -1,0 +1,487 @@
+# ================================================================
+# 原始字段 → 标准字段映射表 v0.1
+#
+# 基于第零阶段 AKShare 1.18.64 字段盘点结果。
+# 每个数据源记录：真实函数名、底层来源、原始列名到标准字段的映射。
+#
+# 标准字段命名规范：
+#   - 全英文小写 + 下划线
+#   - 日期字段以 _date 结尾
+#   - 比例字段以 _pct 结尾（值为 0-100 或 0-1，见 unit 字段）
+# ================================================================
+
+metadata:
+  generated_date: "2026-06-04"
+  akshare_version: "1.18.64"
+  python_version: "3.12.7"
+
+# ================================================================
+# 1. 基金列表
+# ================================================================
+fund_list:
+  source: akshare.fund_name_em
+  akshare_version: "1.18.64"
+  underlying_source: 天天基金（东方财富）
+  underlying_source_level: B
+  call_signature: "ak.fund_name_em()"
+  call_cost: "~56s (全量 26951 只)"
+  fields:
+    - raw_name: "基金代码"
+      canonical_name: fund_code
+      data_type: str
+      unit: null
+      required: true
+      transform: "直接使用，保持 6 位字符串"
+      note: "如 000001"
+    - raw_name: "拼音缩写"
+      canonical_name: pinyin_abbr
+      data_type: str
+      unit: null
+      required: false
+    - raw_name: "基金名称"
+      canonical_name: fund_name
+      data_type: str
+      unit: null
+      required: true
+    - raw_name: "基金类型"
+      canonical_name: fund_type_raw
+      data_type: str
+      unit: null
+      required: true
+      note: "原始分类，如'混合型-偏股'，需映射到平台的 FundCategory/FundSubCategory"
+    - raw_name: "拼音全称"
+      canonical_name: pinyin_full
+      data_type: str
+      unit: null
+      required: false
+
+# ================================================================
+# 2. 基金基本信息
+# ================================================================
+fund_basic_info:
+  source: akshare.fund_individual_basic_info_xq
+  akshare_version: "1.18.64"
+  underlying_source: 天天基金（东方财富）
+  underlying_source_level: B
+  call_signature: "ak.fund_individual_basic_info_xq(symbol='000001')"
+  call_cost: "~4s/只"
+  output_format: "转置表 (item/value)，14 行 × 2 列"
+  pivot_required: true
+  fields:
+    - raw_name: "基金代码"
+      canonical_name: fund_code
+      data_type: str
+      required: true
+    - raw_name: "基金简称"
+      canonical_name: short_name
+      data_type: str
+      required: true
+    - raw_name: "基金全称"
+      canonical_name: full_name
+      data_type: str
+      required: true
+    - raw_name: "成立时间"
+      canonical_name: inception_date
+      data_type: date
+      required: true
+      transform: "pd.to_datetime"
+    - raw_name: "最新规模"
+      canonical_name: latest_scale
+      data_type: str
+      unit: "亿元（带单位字符串，需解析）"
+      required: false
+      transform: "提取数字部分，如 '26.44亿' → 26.44"
+      note: "仅最新规模，无历史规模序列"
+    - raw_name: "基金公司"
+      canonical_name: company_name
+      data_type: str
+      required: true
+    - raw_name: "基金经理"
+      canonical_name: manager_names_raw
+      data_type: str
+      required: true
+      note: "可能包含多人，用空格或'、'分隔"
+    - raw_name: "托管银行"
+      canonical_name: custodian_bank
+      data_type: str
+      required: false
+    - raw_name: "基金类型"
+      canonical_name: fund_type_raw
+      data_type: str
+      required: true
+    - raw_name: "投资策略"
+      canonical_name: investment_strategy
+      data_type: str
+      required: false
+      note: "长文本，仅做证据引用，不参与计算"
+    - raw_name: "投资目标"
+      canonical_name: investment_objective
+      data_type: str
+      required: false
+    - raw_name: "业绩比较基准"
+      canonical_name: benchmark
+      data_type: str
+      required: false
+      note: "关键字段，用于静态归因的基准选择"
+
+# ================================================================
+# 3. 基金净值
+# ================================================================
+fund_nav:
+  source: akshare.fund_open_fund_info_em
+  akshare_version: "1.18.64"
+  underlying_source: 天天基金（东方财富）
+  underlying_source_level: B
+  call_signature: "ak.fund_open_fund_info_em(symbol='000001', indicator='单位净值走势')"
+  call_cost: "~4s/只"
+  note: "需调用两次：一次取单位净值+日增长率，一次取累计净值"
+  indicators:
+    unit_nav:
+      param: "单位净值走势"
+      call_cost: "~4s"
+      fields:
+        - raw_name: "净值日期"
+          canonical_name: trade_date
+          data_type: date
+          unit: null
+          required: true
+          transform: "pd.to_datetime"
+        - raw_name: "单位净值"
+          canonical_name: unit_nav
+          data_type: float
+          unit: CNY
+          required: true
+        - raw_name: "日增长率"
+          canonical_name: daily_return
+          data_type: float
+          unit: "百分比数值（如 1.23 表示 1.23%）"
+          required: true
+          transform: "除以 100 转为小数形式"
+          note: "⚠️ 关键：此值为百分比形式，存入数据库前需 /100！"
+    accumulated_nav:
+      param: "累计净值走势"
+      call_cost: "~4s"
+      fields:
+        - raw_name: "净值日期"
+          canonical_name: trade_date
+          data_type: date
+          unit: null
+          required: true
+          transform: "pd.to_datetime"
+        - raw_name: "累计净值"
+          canonical_name: accumulated_nav
+          data_type: float
+          unit: CNY
+          required: true
+          note: "用于计算复权净值调整因子"
+  missing:
+    - "⚠️ AKShare 不直接提供复权净值(adjusted_nav)，需用累计净值 ÷ 单位净值推算复权因子"
+    - "⚠️ 分红拆分信息需单独从 fund_fh_em 获取"
+
+# ================================================================
+# 4. 基金公开持仓（前十大重仓股）
+# ================================================================
+fund_portfolio_hold:
+  source: akshare.fund_portfolio_hold_em
+  akshare_version: "1.18.64"
+  underlying_source: 天天基金（东方财富）
+  underlying_source_level: B
+  call_signature: "ak.fund_portfolio_hold_em(symbol='000001', date='2025')"
+  call_cost: "~12s/只/年"
+  note: "date 参数为年份字符串如'2024'或'2025'。⚠️ 仅前十大重仓股！"
+  disclosure_granularity: top10_only
+  fields:
+    - raw_name: "序号"
+      canonical_name: rank
+      data_type: int
+      required: true
+    - raw_name: "股票代码"
+      canonical_name: stock_code
+      data_type: str
+      required: true
+      transform: "保持原始格式（6位数字字符串）"
+    - raw_name: "股票名称"
+      canonical_name: stock_name
+      data_type: str
+      required: true
+    - raw_name: "占净值比例"
+      canonical_name: weight_pct
+      data_type: float
+      unit: "百分比（如 3.46 表示 3.46%）"
+      required: true
+    - raw_name: "持股数"
+      canonical_name: shares_held
+      data_type: float
+      unit: 万股
+      required: true
+    - raw_name: "持仓市值"
+      canonical_name: market_value
+      data_type: float
+      unit: 万元
+      required: true
+    - raw_name: "季度"
+      canonical_name: report_period
+      data_type: str
+      required: true
+      transform: "解析出报告期日期，如'2024年1季度股票投资明细' → 2024-03-31"
+      note: "文本格式，需正则提取年份+季度"
+  missing:
+    - "⚠️ 无行业字段 — 需通过 stock_code 关联 stock_main 表获取行业"
+    - "⚠️ 无持仓变动方向 — 需通过与上期对比计算"
+    - "⚠️ 无债券持仓、转债持仓"
+
+# ================================================================
+# 5. 行业配置
+# ================================================================
+fund_industry_allocation:
+  source: akshare.fund_portfolio_industry_allocation_em
+  akshare_version: "1.18.64"
+  underlying_source: 天天基金（东方财富）
+  underlying_source_level: B
+  call_signature: "ak.fund_portfolio_industry_allocation_em(symbol='000001', date='2025')"
+  call_cost: "~1s"
+  fields:
+    - raw_name: "序号"
+      canonical_name: rank
+      data_type: int
+    - raw_name: "行业名称"
+      canonical_name: industry_name
+      data_type: str
+      required: true
+      note: "申万行业分类"
+    - raw_name: "占净值比例"
+      canonical_name: weight_pct
+      data_type: float
+      unit: "百分比"
+      required: true
+    - raw_name: "市值"
+      canonical_name: market_value
+      data_type: float
+      unit: 万元
+    - raw_name: "截止时间"
+      canonical_name: report_date
+      data_type: date
+      required: true
+      transform: "pd.to_datetime"
+
+# ================================================================
+# 6. 基金经理
+# ================================================================
+fund_manager:
+  source: akshare.fund_manager_em
+  akshare_version: "1.18.64"
+  underlying_source: 天天基金（东方财富）
+  underlying_source_level: B
+  call_signature: "ak.fund_manager_em()"
+  call_cost: "~86s（全量 34671 人）"
+  note: "返回全量数据，需用基金代码筛选 '现任基金代码' 列（注意：该列是逗号分隔的多基金字符串）"
+  fields:
+    - raw_name: "序号"
+      canonical_name: rank
+      data_type: int
+    - raw_name: "姓名"
+      canonical_name: name
+      data_type: str
+      required: true
+    - raw_name: "基金公司"
+      canonical_name: company_name
+      data_type: str
+      required: true
+    - raw_name: "现任基金代码"
+      canonical_name: current_fund_codes_raw
+      data_type: str
+      required: true
+      note: "⚠️ 逗号分隔的多基金代码字符串，如 '001924,002849,003003'。筛选时需注意部分匹配。"
+      transform: "str.split(',')"
+    - raw_name: "现任基金名称"
+      canonical_name: current_fund_names_raw
+      data_type: str
+    - raw_name: "累计从业时间"
+      canonical_name: experience_days
+      data_type: int
+      unit: 天
+      required: true
+    - raw_name: "现任基金资产总规模"
+      canonical_name: total_aum
+      data_type: float
+      unit: 亿元
+    - raw_name: "现任基金最佳回报"
+      canonical_name: best_return
+      data_type: float
+      unit: "%"
+      note: "百分比数值"
+  missing:
+    - "⚠️ 无任职起始日期/结束日期 — 无法直接计算任职区间收益"
+    - "⚠️ 无历史管理基金记录"
+
+# ================================================================
+# 7. 股票日行情
+# ================================================================
+stock_daily:
+  source: akshare.stock_zh_a_hist
+  akshare_version: "1.18.64"
+  underlying_source: 东方财富/新浪
+  underlying_source_level: B
+  call_signature: "ak.stock_zh_a_hist(symbol='600519', period='daily', start_date='20240101', end_date='20240630', adjust='qfq')"
+  call_cost: "~3s/只/半年"
+  fields:
+    - raw_name: "日期"
+      canonical_name: trade_date
+      data_type: date
+      required: true
+      transform: "pd.to_datetime"
+    - raw_name: "股票代码"
+      canonical_name: stock_code
+      data_type: str
+      required: true
+    - raw_name: "开盘"
+      canonical_name: open_price
+      data_type: float
+      unit: CNY
+    - raw_name: "收盘"
+      canonical_name: close_price
+      data_type: float
+      unit: CNY
+      required: true
+    - raw_name: "最高"
+      canonical_name: high_price
+      data_type: float
+      unit: CNY
+    - raw_name: "最低"
+      canonical_name: low_price
+      data_type: float
+      unit: CNY
+    - raw_name: "成交量"
+      canonical_name: volume
+      data_type: int
+      unit: 股
+    - raw_name: "成交额"
+      canonical_name: amount
+      data_type: float
+      unit: 元
+    - raw_name: "振幅"
+      canonical_name: amplitude_pct
+      data_type: float
+      unit: "%"
+    - raw_name: "涨跌幅"
+      canonical_name: daily_return_pct
+      data_type: float
+      unit: "%"
+      transform: "除以 100 转为小数形式"
+      note: "⚠️ 需与基金净值日增长率保持一致的数值形式"
+    - raw_name: "涨跌额"
+      canonical_name: change_amount
+      data_type: float
+      unit: CNY
+    - raw_name: "换手率"
+      canonical_name: turnover_rate_pct
+      data_type: float
+      unit: "%"
+
+# ================================================================
+# 8. 持仓变动（用于换手率估算）
+# ================================================================
+fund_portfolio_change:
+  source: akshare.fund_portfolio_change_em
+  akshare_version: "1.18.64"
+  underlying_source: 天天基金（东方财富）
+  underlying_source_level: B
+  call_signature: "ak.fund_portfolio_change_em(symbol='000001', date='2025')"
+  call_cost: "~1s"
+  note: "包含本期累计买入/卖出金额，可用于估算换手率"
+  fields:
+    - raw_name: "序号"
+      canonical_name: rank
+      data_type: int
+    - raw_name: "股票代码"
+      canonical_name: stock_code
+      data_type: str
+    - raw_name: "股票名称"
+      canonical_name: stock_name
+      data_type: str
+    - raw_name: "本期累计买入金额"  # (or 卖出)
+      canonical_name: cumulative_amount
+      data_type: float
+      unit: 万元
+      note: "列名根据'季度'字段动态变化（买入详单 vs 卖出详单）"
+    - raw_name: "占期初基金资产净值比例"
+      canonical_name: pct_of_beginning_nav
+      data_type: float
+      unit: "%"
+    - raw_name: "季度"
+      canonical_name: report_period
+      data_type: str
+      required: true
+      note: "如'2025年4季度累计买入股票明细'"
+
+# ================================================================
+# 待验证/待修复接口
+# ================================================================
+# ================================================================
+# 9. 持有人结构
+# ================================================================
+fund_holder_structure:
+  source: akshare.fund_hold_structure_em
+  akshare_version: "1.18.64"
+  underlying_source: 天天基金（东方财富）
+  underlying_source_level: B
+  call_signature: "ak.fund_hold_structure_em()"
+  call_cost: "~8s"
+  note: "⚠️ 无参函数，返回 N 条记录的 DataFrame，需用基金代码列筛选目标基金"
+  fields:
+    - raw_name: "序号"
+      canonical_name: rank
+      data_type: int
+    - raw_name: "截止日期"
+      canonical_name: report_date
+      data_type: date
+      required: true
+      transform: "pd.to_datetime"
+      note: "半年度频率"
+    - raw_name: "基金代码"  # 待确认实际列名
+      canonical_name: fund_code
+      data_type: str
+      required: true
+    - raw_name: "持有人户数"
+      canonical_name: total_holders
+      data_type: int
+    - raw_name: "机构持有比例"
+      canonical_name: institutional_pct
+      data_type: float
+      unit: "%"
+    - raw_name: "个人持有比例"
+      canonical_name: individual_pct
+      data_type: float
+      unit: "%"
+    - raw_name: "内部持有比例"
+      canonical_name: employee_pct
+      data_type: float
+      unit: "%"
+    - raw_name: "总份额"
+      canonical_name: total_shares
+      data_type: float
+      unit: 万份
+
+# ================================================================
+# 待验证/待修复接口
+# ================================================================
+pending:
+  - name: fund_fee_em
+    issue: "返回空 DataFrame，参数签名待确认"
+    priority: P1
+  - name: fund_aum_em
+    issue: "仅返回基金公司级规模，缺少基金级历史规模序列"
+    priority: P1
+    workaround: "fund_individual_basic_info_xq 提供'最新规模'字段"
+  - name: fund_announcement_report_em
+    issue: "未测试"
+    priority: P2
+  - name: fund_portfolio_bond_hold_em
+    issue: "未测试"
+    priority: P2
+  - name: index_daily
+    issue: "index_zh_a_hist 连接超时，候选函数: stock_zh_index_daily, stock_zh_index_daily_em, stock_zh_index_daily_tx"
+    priority: P1
+  - name: fund_fh_em
+    issue: "分红拆分数据未测试，后续需用于计算复权净值"
+    priority: P1

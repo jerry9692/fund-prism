@@ -1,0 +1,345 @@
+{
+  "metadata": {
+    "akshare_version": "1.18.64",
+    "test_date": "2026-06-04",
+    "test_fund": "000001"
+  },
+  "interfaces": [
+    {
+      "concept_name": "fund_basic_info",
+      "akshare_function": "fund_individual_basic_info_xq",
+      "params": {
+        "symbol": "000001"
+      },
+      "elapsed_seconds": 4.21,
+      "underlying_source": "天天基金(东方财富)",
+      "source_level": "B",
+      "errors": [],
+      "row_count": 14,
+      "raw_columns": [
+        "item",
+        "value"
+      ],
+      "column_count": 2,
+      "columns_detail": [
+        {
+          "raw_name": "item",
+          "dtype": "str",
+          "missing_rate": 0.0,
+          "examples": [
+            "基金代码",
+            "基金名称",
+            "基金全称"
+          ]
+        },
+        {
+          "raw_name": "value",
+          "dtype": "object",
+          "missing_rate": 0.0714,
+          "examples": [
+            "000001",
+            "华夏成长混合",
+            "华夏成长证券投资基金"
+          ]
+        }
+      ]
+    },
+    {
+      "concept_name": "fund_nav",
+      "akshare_function": "fund_open_fund_info_em",
+      "params": {
+        "symbol": "000001",
+        "indicator": "单位净值走势"
+      },
+      "elapsed_seconds": 4.29,
+      "underlying_source": "天天基金(东方财富)",
+      "source_level": "B",
+      "errors": [],
+      "row_count": 5934,
+      "raw_columns": [
+        "净值日期",
+        "单位净值",
+        "日增长率"
+      ],
+      "column_count": 3,
+      "columns_detail": [
+        {
+          "raw_name": "净值日期",
+          "dtype": "object",
+          "missing_rate": 0.0,
+          "examples": [
+            "2001-12-18",
+            "2001-12-21",
+            "2001-12-28"
+          ]
+        },
+        {
+          "raw_name": "单位净值",
+          "dtype": "float64",
+          "missing_rate": 0.0,
+          "examples": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        },
+        {
+          "raw_name": "日增长率",
+          "dtype": "float64",
+          "missing_rate": 0.0,
+          "examples": [
+            0.0,
+            0.0,
+            0.0
+          ]
+        }
+      ]
+    },
+    {
+      "concept_name": "fund_portfolio_hold",
+      "akshare_function": "fund_portfolio_hold_em",
+      "params": {
+        "symbol": "000001",
+        "date": "2024"
+      },
+      "elapsed_seconds": 12.17,
+      "underlying_source": "天天基金(东方财富)",
+      "source_level": "B",
+      "errors": [],
+      "row_count": 369,
+      "raw_columns": [
+        "序号",
+        "股票代码",
+        "股票名称",
+        "占净值比例",
+        "持股数",
+        "持仓市值",
+        "季度"
+      ],
+      "column_count": 7,
+      "columns_detail": [
+        {
+          "raw_name": "序号",
+          "dtype": "int64",
+          "missing_rate": 0.0,
+          "examples": [
+            1,
+            2,
+            3
+          ]
+        },
+        {
+          "raw_name": "股票代码",
+          "dtype": "str",
+          "missing_rate": 0.0,
+          "examples": [
+            "002025",
+            "600862",
+            "600941"
+          ]
+        },
+        {
+          "raw_name": "股票名称",
+          "dtype": "str",
+          "missing_rate": 0.0,
+          "examples": [
+            "航天电器",
+            "中航高科",
+            "中国移动"
+          ]
+        },
+        {
+          "raw_name": "占净值比例",
+          "dtype": "float64",
+          "missing_rate": 0.0,
+          "examples": [
+            3.46,
+            3.24,
+            2.86
+          ]
+        },
+        {
+          "raw_name": "持股数",
+          "dtype": "float64",
+          "missing_rate": 0.0,
+          "examples": [
+            209.92,
+            380.43,
+            62.11
+          ]
+        },
+        {
+          "raw_name": "持仓市值",
+          "dtype": "float64",
+          "missing_rate": 0.0,
+          "examples": [
+            7947.67,
+            7441.16,
+            6568.75
+          ]
+        },
+        {
+          "raw_name": "季度",
+          "dtype": "str",
+          "missing_rate": 0.0,
+          "examples": [
+            "2024年1季度股票投资明细",
+            "2024年1季度股票投资明细",
+            "2024年1季度股票投资明细"
+          ]
+        }
+      ]
+    },
+    {
+      "concept_name": "stock_daily",
+      "akshare_function": "stock_zh_a_hist",
+      "params": {
+        "symbol": "600519",
+        "period": "daily",
+        "adjust": "qfq"
+      },
+      "elapsed_seconds": 3.3,
+      "underlying_source": "东方财富/新浪",
+      "source_level": "B",
+      "errors": [],
+      "row_count": 117,
+      "raw_columns": [
+        "日期",
+        "股票代码",
+        "开盘",
+        "收盘",
+        "最高",
+        "最低",
+        "成交量",
+        "成交额",
+        "振幅",
+        "涨跌幅",
+        "涨跌额",
+        "换手率"
+      ],
+      "column_count": 12,
+      "columns_detail": [
+        {
+          "raw_name": "日期",
+          "dtype": "object",
+          "missing_rate": 0.0,
+          "examples": [
+            "2024-01-02",
+            "2024-01-03",
+            "2024-01-04"
+          ]
+        },
+        {
+          "raw_name": "股票代码",
+          "dtype": "str",
+          "missing_rate": 0.0,
+          "examples": [
+            "600519",
+            "600519",
+            "600519"
+          ]
+        },
+        {
+          "raw_name": "开盘",
+          "dtype": "float64",
+          "missing_rate": 0.0,
+          "examples": [
+            1608.68,
+            1574.79,
+            1586.68
+          ]
+        },
+        {
+          "raw_name": "收盘",
+          "dtype": "float64",
+          "missing_rate": 0.0,
+          "examples": [
+            1578.69,
+            1587.68,
+            1562.68
+          ]
+        },
+        {
+          "raw_name": "最高",
+          "dtype": "float64",
+          "missing_rate": 0.0,
+          "examples": [
+            1611.87,
+            1588.9,
+            1586.68
+          ]
+        },
+        {
+          "raw_name": "最低",
+          "dtype": "float64",
+          "missing_rate": 0.0,
+          "examples": [
+            1571.78,
+            1570.01,
+            1556.61
+          ]
+        },
+        {
+          "raw_name": "成交量",
+          "dtype": "int64",
+          "missing_rate": 0.0,
+          "examples": [
+            32156,
+            20229,
+            21551
+          ]
+        },
+        {
+          "raw_name": "成交额",
+          "dtype": "float64",
+          "missing_rate": 0.0,
+          "examples": [
+            5440082548.0,
+            3411400667.0,
+            3603970147.0
+          ]
+        },
+        {
+          "raw_name": "振幅",
+          "dtype": "float64",
+          "missing_rate": 0.0,
+          "examples": [
+            2.48,
+            1.2,
+            1.89
+          ]
+        },
+        {
+          "raw_name": "涨跌幅",
+          "dtype": "float64",
+          "missing_rate": 0.0,
+          "examples": [
+            -2.53,
+            0.57,
+            -1.57
+          ]
+        },
+        {
+          "raw_name": "涨跌额",
+          "dtype": "float64",
+          "missing_rate": 0.0,
+          "examples": [
+            -40.99,
+            8.99,
+            -25.0
+          ]
+        },
+        {
+          "raw_name": "换手率",
+          "dtype": "float64",
+          "missing_rate": 0.0,
+          "examples": [
+            0.26,
+            0.16,
+            0.17
+          ]
+        }
+      ]
+    }
+  ]
+}
