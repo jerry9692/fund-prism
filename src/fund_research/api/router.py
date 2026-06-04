@@ -6,6 +6,7 @@ Tool API 路由定义。
 """
 
 from datetime import date
+from typing import Annotated
 
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy import text
@@ -18,10 +19,31 @@ from fund_research.core.schemas import APIResponse
 
 router = APIRouter(prefix="/api/v1", tags=["Tool API v1"])
 
+SessionDep = Annotated[Session, Depends(get_session)]
+StartDateQuery = Annotated[date | None, Query(description="起始日期")]
+EndDateQuery = Annotated[date | None, Query(description="结束日期")]
+ReportDateQuery = Annotated[
+    date | None,
+    Query(description="报告期（如不传则返回最新）"),
+]
+WindowQuery = Annotated[
+    int,
+    Query(ge=20, le=504, description="滚动窗口（交易日）"),
+]
+TemplateQuery = Annotated[
+    str,
+    Query(
+        description=(
+            "研究包模板: single_fund_checkup / manager_profile / style_drift / holdings_deep_dive"
+        ),
+    ),
+]
+
 
 # ============================================================
 # 根路由 & 健康检查
 # ============================================================
+
 
 @router.get("/")
 def root() -> dict:
@@ -35,7 +57,7 @@ def root() -> dict:
 
 
 @router.get("/health")
-def health_check(db: Session = Depends(get_session)) -> dict:
+def health_check(db: SessionDep) -> dict:
     """健康检查。"""
     db_ok = False
     try:
@@ -55,10 +77,11 @@ def health_check(db: Session = Depends(get_session)) -> dict:
 # 1. get_fund_profile — 基金基本信息
 # ============================================================
 
+
 @router.get("/funds/{fund_code}/profile")
 def get_fund_profile(
     fund_code: str,
-    db: Session = Depends(get_session),
+    db: SessionDep,
 ) -> APIResponse[dict]:
     """
     获取基金基础信息、经理、分类、规模、费率。
@@ -67,7 +90,7 @@ def get_fund_profile(
            category, sub_category, inception_date, status,
            scale_history, fee_info
     """
-    # TODO: 第零阶段实现数据库查询
+    # TODO: 一期实现数据库查询
     return APIResponse(
         data=None,
         metadata={
@@ -77,7 +100,7 @@ def get_fund_profile(
             "implemented": False,
         },
         evidence=[],
-        warnings=["接口骨架已就绪，数据查询将在第零阶段实现"],
+        warnings=["接口骨架已就绪，数据查询将在一期实现"],
         conclusion_status=ConclusionStatus.NEEDS_REVIEW,
     )
 
@@ -86,12 +109,13 @@ def get_fund_profile(
 # 2. get_nav_metrics — 净值与收益风险指标
 # ============================================================
 
+
 @router.get("/funds/{fund_code}/nav-metrics")
 def get_nav_metrics(
     fund_code: str,
-    start: date | None = Query(None, description="起始日期"),
-    end: date | None = Query(None, description="结束日期"),
-    db: Session = Depends(get_session),
+    db: SessionDep,
+    start: StartDateQuery = None,
+    end: EndDateQuery = None,
 ) -> APIResponse[dict]:
     """
     获取净值指标：收益、回撤、波动、夏普、卡玛、索提诺、信息比率等。
@@ -110,7 +134,7 @@ def get_nav_metrics(
             "implemented": False,
         },
         evidence=[],
-        warnings=["接口骨架已就绪，将在第零阶段实现"],
+        warnings=["接口骨架已就绪，将在一期实现"],
         conclusion_status=ConclusionStatus.NEEDS_REVIEW,
     )
 
@@ -119,11 +143,12 @@ def get_nav_metrics(
 # 3. get_disclosed_holdings — 公开披露持仓
 # ============================================================
 
+
 @router.get("/funds/{fund_code}/holdings")
 def get_disclosed_holdings(
     fund_code: str,
-    report_date: date | None = Query(None, description="报告期（如不传则返回最新）"),
-    db: Session = Depends(get_session),
+    db: SessionDep,
+    report_date: ReportDateQuery = None,
 ) -> APIResponse[dict]:
     """
     获取公开披露持仓。
@@ -142,7 +167,7 @@ def get_disclosed_holdings(
             "implemented": False,
         },
         evidence=[],
-        warnings=["接口骨架已就绪，将在第零阶段实现"],
+        warnings=["接口骨架已就绪，将在一期实现"],
         conclusion_status=ConclusionStatus.NEEDS_REVIEW,
     )
 
@@ -151,11 +176,12 @@ def get_disclosed_holdings(
 # 4. run_exposure_analysis — 风格/行业暴露 + 静态归因
 # ============================================================
 
+
 @router.post("/analysis/exposure")
 def run_exposure_analysis(
     fund_code: str,
-    window: int = Query(60, ge=20, le=504, description="滚动窗口（交易日）"),
-    db: Session = Depends(get_session),
+    db: SessionDep,
+    window: WindowQuery = 60,
 ) -> APIResponse[dict]:
     """
     运行风格/行业暴露分析和静态归因。
@@ -177,7 +203,7 @@ def run_exposure_analysis(
             "implemented": False,
         },
         evidence=[],
-        warnings=["接口骨架已就绪，将在第零阶段后实现"],
+        warnings=["接口骨架已就绪，将在一期实现"],
         conclusion_status=ConclusionStatus.NEEDS_REVIEW,
     )
 
@@ -186,14 +212,12 @@ def run_exposure_analysis(
 # 5. build_research_packet — 生成研究包
 # ============================================================
 
+
 @router.post("/research/packet")
 def build_research_packet(
     fund_code: str,
-    template: str = Query(
-        "single_fund_checkup",
-        description="研究包模板: single_fund_checkup / manager_profile / style_drift / holdings_deep_dive",
-    ),
-    db: Session = Depends(get_session),
+    db: SessionDep,
+    template: TemplateQuery = "single_fund_checkup",
 ) -> APIResponse[dict]:
     """
     生成标准化研究包（JSON + Markdown）。
@@ -212,6 +236,6 @@ def build_research_packet(
             "implemented": False,
         },
         evidence=[],
-        warnings=["接口骨架已就绪，将在第零阶段后实现"],
+        warnings=["接口骨架已就绪，将在一期实现"],
         conclusion_status=ConclusionStatus.NEEDS_REVIEW,
     )

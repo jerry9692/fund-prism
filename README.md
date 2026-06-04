@@ -4,7 +4,9 @@
 
 面向个人研究者、量化学习者和 AI Agent 的可信基金研究底座。在免费公开数据约束下，提供可解释、可追踪、可复现的基金研究能力。
 
-> ✅ **第零阶段完成（2026-06-04）— 30 只样本基金 100% 拉取成功，一期数据基础已验证**
+> ✅ **第零阶段与一期开工前置验证完成（2026-06-04）— 30 只样本基金 B 级便捷数据 100% 拉取成功，一期可开工**
+>
+> 风格指数、分红、费率替代路径和巨潮 A 级 PDF 证据最小闭环已验证。详见 [pre_phase1_readiness.md](./docs/phase0/pre_phase1_readiness.md)。
 >
 > 详细需求文档：[需求书 v0.4](./AI-oriented开源个人基金研究平台需求书_v0.4.md) | 第零阶段总结：[conclusion.md](./docs/phase0/conclusion.md)
 
@@ -58,8 +60,8 @@ fund-research init            # 初始化数据库
 fund-research init -d ./mydb.duckdb  # 指定数据库路径
 fund-research serve           # 启动 API (默认 :8000)
 fund-research serve -p 9000   # 指定端口
-fund-research check-data      # 数据源健康检查（第零阶段实现）
-fund-research update          # 更新本地数据（第零阶段实现）
+fund-research check-data      # 检查第零阶段本地产物
+fund-research update          # 更新本地数据（一期数据适配器阶段实现）
 ```
 
 ## 项目结构

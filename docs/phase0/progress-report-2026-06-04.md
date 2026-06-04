@@ -2,7 +2,7 @@
 
 ## 摘要
 
-第零阶段全部完成。包括：环境搭建、30 只样本基金选择、10 个 AKShare 接口字段盘点、原始字段→标准字段映射表、30 只基金全量 P0 数据拉取入 DuckDB（100% 成功率）、数据质量检查、披露粒度标注（按季度分类）、A 级官方披露路径验证（证监会 XBRL 专区）、算法可行性评估、数据源风险登记册、以及审计修复（report_period 日期解析 + 披露粒度标签重分类）。
+第零阶段和一期开工前置验证已完成。包括：环境搭建、30 只样本基金选择、AKShare 必需接口原始字段盘点、原始字段→标准字段映射表、30 只基金全量 P0 数据拉取入 DuckDB（100% 成功率）、数据质量检查、披露粒度标注（按季度分类）、A 级官方 PDF 证据最小闭环、算法可行性评估、数据源风险登记册、以及审计修复（report_period 日期解析 + 披露粒度标签重分类 + 质量摘要统计修正）。
 
 **结论: 通过。一期可以开工。**
 
@@ -34,6 +34,8 @@
 
 样本 CSV 字段：`fund_code, short_name, company, expected_style, expected_turnover, added_reason, confirmed_turnover, confirmed_turnover_source, num_reports_available`
 
+审计修复后，`num_reports_available` 已按 `disclosure_granularity.csv` 回填；`confirmed_turnover` 明确标记为 `pending`，待 `fund_portfolio_change_em` 批量计算后再确认，不把预期换手误当事实。
+
 已验证全部 30 只存在于 AKShare 的 `fund_name_em()` 输出中。
 
 **替补说明**：原始样本中 110011 (易方达优质精选) 在 AKShare 基金列表中不存在（可能因代码变更或更名），已替换为 110009 (易方达价值精选)。
@@ -46,27 +48,27 @@
 
 **盘点结果**: `docs/phase0/akshare-field-inventory-p0.json`
 
-对以下 8 个接口完成了实际调用测试，记录了真实函数名、参数签名、返回字段、耗时和注意事项：
+当前可审计的原始盘点 JSON 覆盖以下 4 个概念接口；字段映射表和进度记录还包含更多接口，但这些接口需要补充原始调用结果后，才能称为“已文档化跑通”：
 
-#### P0 接口（核心，全部跑通）
+#### P0 接口（有原始盘点 JSON）
 
 | 序号 | 概念名 | AKShare 真实函数 | 参数 | 行/列 | 耗时 | 关键发现 |
 |------|--------|-----------------|------|-------|------|----------|
-| 1 | 基金列表 | `fund_name_em()` | 无 | 26951×5 | ~56s | 列：基金代码/拼音缩写/基金名称/基金类型/拼音全称 |
-| 2 | 基金基本信息 | `fund_individual_basic_info_xq(symbol)` | symbol="000001" | 14×2 | ~4s | **转置表格式** (item/value)，需 pivot；有"最新规模""业绩比较基准" |
-| 3 | 单位净值+日增长率 | `fund_open_fund_info_em(symbol, indicator)` | indicator="单位净值走势" | 5934×3 | ~4s | 列：净值日期/单位净值/日增长率 |
-| 4 | 累计净值 | `fund_open_fund_info_em(symbol, indicator)` | indicator="累计净值走势" | 5934×2 | ~4s | 列：净值日期/累计净值。**需调用两次才能拿到完整净值数据** |
-| 5 | 前十大持仓 | `fund_portfolio_hold_em(symbol, date)` | date="2025" | 369×7 | ~12s | ⚠️ **仅前十大重仓股**，无行业字段，季度文本格式需解析 |
-| 6 | 股票日行情 | `stock_zh_a_hist(symbol, period, start, end, adjust)` | adjust="qfq" | 117×12 | ~3s | 支持前复权，日频可用 |
+| 1 | 基金基本信息 | `fund_individual_basic_info_xq(symbol)` | symbol="000001" | 14×2 | ~4s | **转置表格式** (item/value)，需 pivot；有"最新规模""业绩比较基准" |
+| 2 | 基金净值 | `fund_open_fund_info_em(symbol, indicator)` | indicator="单位净值走势" | 5934×3 | ~4s | 列：净值日期/单位净值/日增长率；累计净值需第二次调用 |
+| 3 | 前十大持仓 | `fund_portfolio_hold_em(symbol, date)` | date="2024" | 369×7 | ~12s | ⚠️ **仅前十大重仓股**，无行业字段，季度文本格式需解析 |
+| 4 | 股票日行情 | `stock_zh_a_hist(symbol, period, start, end, adjust)` | adjust="qfq" | 117×12 | ~3s | 支持前复权，日频可用 |
 
-#### P1 接口（已跑通）
+#### P1 接口（字段映射已记录，需补原始盘点 JSON）
 
 | 序号 | 概念名 | AKShare 真实函数 | 关键发现 |
 |------|--------|-----------------|----------|
-| 7 | 基金经理 | `fund_manager_em()` | 全量 34671 人，~86s。现任基金代码是**逗号分隔字符串**，筛选需注意。缺少任职起始日期和历史管理记录 |
-| 8 | 行业配置 | `fund_portfolio_industry_allocation_em(symbol, date)` | 26 行×5 列。申万行业分类。有占净值比例和市值 |
-| 9 | 持仓变动 | `fund_portfolio_change_em(symbol, date)` | 含累计买入/卖出金额。**可用于估算换手率** |
-| 10 | 持有人结构 | `fund_hold_structure_em()` | ⚠️ **无参函数**。半年度频率。含机构/个人/内部员工持有比例 |
+| 5 | 基金列表 | `fund_name_em()` | 全量基金列表，用于样本选择；需补入 inventory JSON |
+| 6 | 行业配置 | `fund_portfolio_industry_allocation_em(symbol, date)` | 已批量拉取 2025 年行业配置；需补入 inventory JSON |
+| 7 | 基金经理 | `fund_manager_em()` | 全量经理列表，筛选逻辑需注意逗号分隔代码；需补入 inventory JSON |
+| 8 | 持仓变动 | `fund_portfolio_change_em(symbol, date)` | 可用于估算换手率；需补入 inventory JSON |
+| 9 | 持有人结构 | `fund_hold_structure_em()` | 半年度频率；需补入 inventory JSON |
+| 10 | 指数日行情 | `stock_zh_index_daily_tx(symbol)` | 总结中记录为可用，但风格指数 symbol 仍需逐个确认 |
 
 #### 待测试接口
 
@@ -92,7 +94,7 @@
 - `transform`: 需要的转换逻辑
 - `note`: 关键注意事项
 
-已覆盖 9 个数据源的完整映射：
+已覆盖 9 个数据源的映射，其中部分接口仍标为待验证/待修复：
 1. `fund_list` — 基金列表
 2. `fund_basic_info` — 基金基本信息
 3. `fund_nav` — 基金净值（含 unit_nav 和 accumulated_nav 两个 indicator）
@@ -127,7 +129,7 @@
 
 | 风险 | 等级 | 说明 |
 |------|------|------|
-| AKShare 单点依赖 | 高 | 目前所有测试均依赖 AKShare → 天天基金(东方财富) 底层。如果 AKShare 失效，所有数据路径中断 |
+| AKShare 单点依赖 | 高 | 当前结构化批量数据依赖 AKShare → 天天基金(东方财富) 底层。A 级路径仅部分验证，尚未形成可替代的结构化接入 |
 | `fund_name_em()` 慢 | 中 | 全量 26951 只需 ~56s，不宜高频调用。需本地缓存 |
 | `fund_manager_em()` 慢 | 中 | 全量 34671 人需 ~86s。同样需缓存 |
 
@@ -146,11 +148,17 @@ fund-research/
 │   └── phase0/
 │       ├── akshare-field-inventory-p0.json  # [NEW] P0接口盘点原始数据
 │       ├── progress-report-2026-06-04.md    # [NEW] 本文件
-│       └── phase-0-data-availability.md     # 第零阶段需求文档
+│       ├── conclusion.md                     # [NEW] 阶段总结
+│       ├── official-source-paths.md          # [NEW] 官方路径验证
+│       ├── quality_baseline_summary.json     # [NEW] 质量基线摘要
+│       └── phase-0-data-availability.md      # 第零阶段需求文档
 └── notebooks/
     └── phase0/
         ├── 00_sample_selection.py           # [NEW] 样本选择脚本
-        └── 01_field_inventory.py            # [NEW] 字段盘点脚本
+        ├── 01_field_inventory.py            # [NEW] 字段盘点脚本
+        ├── 02_full_data_pull.py             # [NEW] 全量拉取脚本
+        ├── 03_data_quality_check.py         # [NEW] 数据质量检查脚本
+        └── 04_fix_report_period.py          # [NEW] report_period 修复脚本
 ```
 
 ## 5. 如何复现
@@ -180,15 +188,11 @@ cat config/field_mapping_v0.1.yaml
 
 | 优先级 | 任务 | 预估耗时 | 产出 |
 |--------|------|----------|------|
-| P0 | 对 30 只基金全量拉取 P0 数据入 DuckDB | 2-3天 | 本地 DuckDB 数据库 |
-| P0 | 找到可用的指数日行情函数并测试 | 0.5天 | 更新 field_mapping |
-| P1 | 数据质量检查（覆盖率、缺失模式、异常值） | 2-3天 | `data-quality-baseline.md` |
-| P1 | 持仓披露粒度标注（top10_only vs full） | 1天 | `disclosure-granularity.md` |
-| P1 | 修复 fund_fee_em / 测试 fund_fh_em | 0.5天 | 更新 field_mapping |
-| P2 | A 级官方披露路径验证 | 1天 | `official-source-paths.md` |
-| P2 | 算法可行性评估矩阵 | 1天 | `algorithm-feasibility.md` |
-| P2 | 数据源风险登记册 | 0.5天 | `source-risk-register.md` |
-| P2 | 第零阶段总结报告 | 1天 | `conclusion.md` |
+| P0 | 补齐 AKShare 必需接口原始盘点 JSON | 已完成 | `akshare-field-inventory-p0.json` |
+| P0 | 找到可用的风格指数 symbol 并测试 | 已完成 | `pre_phase1_readiness.md` |
+| P0 | 完成 1 只样本基金官方 PDF 下载与解析证据 | 已完成 | `pre_phase1_readiness.md` |
+| P1 | 测试分红和费率替代路径 | 已完成 | `field_mapping_v0.1.yaml` |
+| P1 | 将 `field_mapping_v0.1.yaml` 映射逻辑写入正式数据适配器 | 一期第一个开发任务 | 一期 adapter |
 
 ## 7. 协作注意事项
 
@@ -210,6 +214,8 @@ cat config/field_mapping_v0.1.yaml
 | 3 | manager、holder_structure、portfolio_change 未批量拉取（P1 数据，一期不需要） | 低 | 📋 二期前补上 |
 | 4 | industry 表仅 2025 年数据 | 低 | 📋 一期如需多年数据再补 |
 | 5 | 000001 无业绩比较基准（基金特性，非错误） | 信息 | — |
+| 6 | 质量摘要把报告期记录数误写为基金数 | 中 | ✅ 已修复 |
+| 7 | A 级官方源和 10 个 AKShare 接口存在过度声明 | 中 | ✅ 已补一期开工前置验证 |
 
 ### 8.2 修复内容
 
@@ -222,4 +228,4 @@ cat config/field_mapping_v0.1.yaml
 
 ### 8.3 审计结论
 
-数据质量过关，4 个问题均非阻塞性。一期开发可以直接启动。
+数据质量主体过关，一期开工前置验证已通过。一期开发可以启动。

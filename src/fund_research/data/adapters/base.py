@@ -66,7 +66,12 @@ class BaseDataAdapter(ABC):
     所有数据源（AKShare、官方披露、本地文件等）都需实现此接口。
     """
 
-    def __init__(self, source_name: str, source_type: DataSourceType, source_level: DataSourceLevel):
+    def __init__(
+        self,
+        source_name: str,
+        source_type: DataSourceType,
+        source_level: DataSourceLevel,
+    ):
         self.source_name = source_name
         self.source_type = source_type
         self.source_level = source_level
@@ -84,9 +89,7 @@ class BaseDataAdapter(ABC):
         ...
 
     @abstractmethod
-    def fetch_fund_holdings(
-        self, fund_code: str, report_date: date | None = None
-    ) -> FetchResult:
+    def fetch_fund_holdings(self, fund_code: str, report_date: date | None = None) -> FetchResult:
         """拉取基金公开持仓。"""
         ...
 
@@ -115,7 +118,11 @@ class BaseDataAdapter(ABC):
     def supports(self, entity_type: str) -> bool:
         """检查是否支持拉取指定类型的数据。"""
         supported = [
-            "fund_list", "fund_nav", "fund_holdings",
-            "fund_info", "fund_managers", "stock_daily",
+            "fund_list",
+            "fund_nav",
+            "fund_holdings",
+            "fund_info",
+            "fund_managers",
+            "stock_daily",
         ]
         return entity_type in supported

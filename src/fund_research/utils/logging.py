@@ -9,6 +9,17 @@ from pathlib import Path
 
 from loguru import logger
 
+CONSOLE_LOG_FORMAT = (
+    "<green>{time:YYYY-MM-DD HH:mm:ss}</green> | "
+    "<level>{level: <8}</level> | "
+    "<cyan>{name}</cyan>:<cyan>{function}</cyan>:<cyan>{line}</cyan> - "
+    "<level>{message}</level>"
+)
+
+FILE_LOG_FORMAT = (
+    "{time:YYYY-MM-DD HH:mm:ss.SSS} | {level: <8} | {name}:{function}:{line} - {message}"
+)
+
 
 def setup_logging(
     log_level: str = "INFO",
@@ -31,7 +42,7 @@ def setup_logging(
     logger.add(
         sys.stderr,
         level=log_level,
-        format="<green>{time:YYYY-MM-DD HH:mm:ss}</green> | <level>{level: <8}</level> | <cyan>{name}</cyan>:<cyan>{function}</cyan>:<cyan>{line}</cyan> - <level>{message}</level>",
+        format=CONSOLE_LOG_FORMAT,
         colorize=True,
     )
 
@@ -42,7 +53,7 @@ def setup_logging(
         logger.add(
             str(log_path),
             level=log_level,
-            format="{time:YYYY-MM-DD HH:mm:ss.SSS} | {level: <8} | {name}:{function}:{line} - {message}",
+            format=FILE_LOG_FORMAT,
             rotation=rotation,
             retention=retention,
             encoding="utf-8",

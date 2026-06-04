@@ -73,6 +73,7 @@ class Settings(BaseSettings):
     def platform_version(self) -> str:
         """平台版本号。"""
         from fund_research import __version__
+
         return __version__
 
 

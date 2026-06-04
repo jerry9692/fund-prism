@@ -11,7 +11,6 @@ from datetime import date, datetime
 from sqlalchemy import (
     JSON,
     Boolean,
-    Column,
     Date,
     DateTime,
     Float,
@@ -21,11 +20,12 @@ from sqlalchemy import (
     Text,
     UniqueConstraint,
 )
-from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
+from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 
 class Base(DeclarativeBase):
     """SQLAlchemy 声明式基类。"""
+
     pass
 
 
@@ -33,15 +33,19 @@ class Base(DeclarativeBase):
 # 基金主数据
 # ============================================================
 
+
 class FundMain(Base):
     """基金主表。"""
+
     __tablename__ = "fund_main"
 
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
     fund_code: Mapped[str] = mapped_column(String(20), unique=True, index=True, comment="基金代码")
     short_name: Mapped[str] = mapped_column(String(100), comment="基金简称")
     full_name: Mapped[str] = mapped_column(String(200), comment="基金全称")
-    fund_company_id: Mapped[int | None] = mapped_column(ForeignKey("fund_company.id"), comment="基金公司 ID")
+    fund_company_id: Mapped[int | None] = mapped_column(
+        ForeignKey("fund_company.id"), comment="基金公司 ID"
+    )
     custodian_bank: Mapped[str | None] = mapped_column(String(100), comment="托管行")
     inception_date: Mapped[date | None] = mapped_column(Date, comment="成立日")
     expiry_date: Mapped[date | None] = mapped_column(Date, comment="到期日")
@@ -59,9 +63,13 @@ class FundMain(Base):
 
     # Timestamps
     data_source: Mapped[str | None] = mapped_column(String(50), comment="数据来源")
-    data_source_level: Mapped[str | None] = mapped_column(String(10), comment="数据源等级 A/B/C/LOCAL")
+    data_source_level: Mapped[str | None] = mapped_column(
+        String(10), comment="数据源等级 A/B/C/LOCAL"
+    )
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.now)
-    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.now, onupdate=datetime.now)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime, default=datetime.now, onupdate=datetime.now
+    )
 
     def __repr__(self) -> str:
         return f"<FundMain({self.fund_code}) {self.short_name}>"
@@ -69,13 +77,16 @@ class FundMain(Base):
 
 class FundCategory(Base):
     """基金分类表。"""
+
     __tablename__ = "fund_category"
 
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
     fund_code: Mapped[str] = mapped_column(String(20), index=True, comment="基金代码")
     category_level: Mapped[str] = mapped_column(String(10), comment="分类级别 primary/secondary")
     category_name: Mapped[str] = mapped_column(String(50), comment="分类名称")
-    category_version: Mapped[str | None] = mapped_column(String(20), comment="分类版本（口径版本化）")
+    category_version: Mapped[str | None] = mapped_column(
+        String(20), comment="分类版本（口径版本化）"
+    )
     effective_date: Mapped[date | None] = mapped_column(Date, comment="生效日期")
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.now)
 
@@ -87,19 +98,25 @@ class FundCategory(Base):
 # 基金经理
 # ============================================================
 
+
 class FundManager(Base):
     """基金经理表。"""
+
     __tablename__ = "fund_manager"
 
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
-    manager_id: Mapped[str] = mapped_column(String(20), unique=True, index=True, comment="基金经理 ID")
+    manager_id: Mapped[str] = mapped_column(
+        String(20), unique=True, index=True, comment="基金经理 ID"
+    )
     name: Mapped[str] = mapped_column(String(50), comment="姓名")
     gender: Mapped[str | None] = mapped_column(String(10), comment="性别")
     education: Mapped[str | None] = mapped_column(String(100), comment="学历")
     experience_years: Mapped[float | None] = mapped_column(Float, comment="从业年限")
     bio: Mapped[str | None] = mapped_column(Text, comment="简介")
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.now)
-    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.now, onupdate=datetime.now)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime, default=datetime.now, onupdate=datetime.now
+    )
 
     def __repr__(self) -> str:
         return f"<FundManager({self.manager_id}) {self.name}>"
@@ -107,6 +124,7 @@ class FundManager(Base):
 
 class FundManagerTenure(Base):
     """基金经理任职记录表。"""
+
     __tablename__ = "fund_manager_tenure"
 
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
@@ -131,12 +149,16 @@ class FundManagerTenure(Base):
 # 基金公司
 # ============================================================
 
+
 class FundCompany(Base):
     """基金公司表。"""
+
     __tablename__ = "fund_company"
 
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
-    company_id: Mapped[str] = mapped_column(String(20), unique=True, index=True, comment="基金公司 ID")
+    company_id: Mapped[str] = mapped_column(
+        String(20), unique=True, index=True, comment="基金公司 ID"
+    )
     name: Mapped[str] = mapped_column(String(100), comment="公司名称")
     short_name: Mapped[str | None] = mapped_column(String(50), comment="公司简称")
     established_date: Mapped[date | None] = mapped_column(Date, comment="成立日期")
@@ -144,7 +166,9 @@ class FundCompany(Base):
     fund_count: Mapped[int | None] = mapped_column(Integer, comment="管理基金数量")
     manager_count: Mapped[int | None] = mapped_column(Integer, comment="基金经理数量")
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.now)
-    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.now, onupdate=datetime.now)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime, default=datetime.now, onupdate=datetime.now
+    )
 
     def __repr__(self) -> str:
         return f"<FundCompany({self.company_id}) {self.name}>"
@@ -154,8 +178,10 @@ class FundCompany(Base):
 # 净值与规模
 # ============================================================
 
+
 class FundNAV(Base):
     """基金净值表。"""
+
     __tablename__ = "fund_nav"
 
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
@@ -171,9 +197,7 @@ class FundNAV(Base):
     data_source_level: Mapped[str | None] = mapped_column(String(10), comment="数据源等级")
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.now)
 
-    __table_args__ = (
-        UniqueConstraint("fund_code", "trade_date", name="uq_fund_trade_date"),
-    )
+    __table_args__ = (UniqueConstraint("fund_code", "trade_date", name="uq_fund_trade_date"),)
 
     def __repr__(self) -> str:
         return f"<FundNAV({self.fund_code} @ {self.trade_date})>"
@@ -181,6 +205,7 @@ class FundNAV(Base):
 
 class FundScale(Base):
     """基金规模表。"""
+
     __tablename__ = "fund_scale"
 
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
@@ -191,13 +216,12 @@ class FundScale(Base):
     share_change: Mapped[float | None] = mapped_column(Float, comment="份额变动（亿份）")
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.now)
 
-    __table_args__ = (
-        UniqueConstraint("fund_code", "report_date", name="uq_fund_scale_date"),
-    )
+    __table_args__ = (UniqueConstraint("fund_code", "report_date", name="uq_fund_scale_date"),)
 
 
 class FundFee(Base):
     """基金费率表。"""
+
     __tablename__ = "fund_fee"
 
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
@@ -216,8 +240,10 @@ class FundFee(Base):
 # 持仓
 # ============================================================
 
+
 class FundDisclosedHoldings(Base):
     """基金公开披露持仓表。"""
+
     __tablename__ = "fund_disclosed_holdings"
 
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
@@ -243,7 +269,9 @@ class FundDisclosedHoldings(Base):
 
     __table_args__ = (
         UniqueConstraint(
-            "fund_code", "report_date", "security_code",
+            "fund_code",
+            "report_date",
+            "security_code",
             name="uq_fund_report_security",
         ),
     )
@@ -254,6 +282,7 @@ class FundDisclosedHoldings(Base):
 
 class HolderStructure(Base):
     """持有人结构表。"""
+
     __tablename__ = "holder_structure"
 
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
@@ -267,17 +296,17 @@ class HolderStructure(Base):
     data_source_level: Mapped[str | None] = mapped_column(String(10), comment="数据源等级")
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.now)
 
-    __table_args__ = (
-        UniqueConstraint("fund_code", "report_date", name="uq_holder_date"),
-    )
+    __table_args__ = (UniqueConstraint("fund_code", "report_date", name="uq_holder_date"),)
 
 
 # ============================================================
 # 股票与行业
 # ============================================================
 
+
 class StockMain(Base):
     """股票主表。"""
+
     __tablename__ = "stock_main"
 
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
@@ -293,7 +322,9 @@ class StockMain(Base):
     listing_date: Mapped[date | None] = mapped_column(Date, comment="上市日期")
     is_delisted: Mapped[bool] = mapped_column(Boolean, default=False, comment="是否已退市")
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.now)
-    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.now, onupdate=datetime.now)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime, default=datetime.now, onupdate=datetime.now
+    )
 
     def __repr__(self) -> str:
         return f"<StockMain({self.stock_code}) {self.stock_name}>"
@@ -301,6 +332,7 @@ class StockMain(Base):
 
 class StockDaily(Base):
     """股票日行情表。"""
+
     __tablename__ = "stock_daily"
 
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
@@ -320,17 +352,18 @@ class StockDaily(Base):
     data_source_level: Mapped[str | None] = mapped_column(String(10), comment="数据源等级")
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.now)
 
-    __table_args__ = (
-        UniqueConstraint("stock_code", "trade_date", name="uq_stock_trade_date"),
-    )
+    __table_args__ = (UniqueConstraint("stock_code", "trade_date", name="uq_stock_trade_date"),)
 
 
 class IndustryCategory(Base):
     """行业分类表。"""
+
     __tablename__ = "industry_category"
 
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
-    classification_type: Mapped[str] = mapped_column(String(30), comment="分类体系（申万/中信/GICS）")
+    classification_type: Mapped[str] = mapped_column(
+        String(30), comment="分类体系（申万/中信/GICS）"
+    )
     classification_version: Mapped[str | None] = mapped_column(String(20), comment="分类版本")
     industry_code: Mapped[str] = mapped_column(String(20), comment="行业代码")
     industry_name: Mapped[str] = mapped_column(String(50), comment="行业名称")
@@ -340,7 +373,9 @@ class IndustryCategory(Base):
 
     __table_args__ = (
         UniqueConstraint(
-            "classification_type", "classification_version", "industry_code",
+            "classification_type",
+            "classification_version",
+            "industry_code",
             name="uq_industry_type_version_code",
         ),
     )
@@ -350,12 +385,16 @@ class IndustryCategory(Base):
 # 指标注册表
 # ============================================================
 
+
 class MetricRegistry(Base):
     """指标注册表（需求书 7.4）。"""
+
     __tablename__ = "metric_registry"
 
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
-    field_name: Mapped[str] = mapped_column(String(100), unique=True, index=True, comment="字段名（英文 ID）")
+    field_name: Mapped[str] = mapped_column(
+        String(100), unique=True, index=True, comment="字段名（英文 ID）"
+    )
     name_zh: Mapped[str] = mapped_column(String(100), comment="中文名")
     name_en: Mapped[str | None] = mapped_column(String(100), comment="英文名")
     entity_type: Mapped[str] = mapped_column(String(30), comment="所属实体类型")
@@ -363,7 +402,9 @@ class MetricRegistry(Base):
     unit: Mapped[str | None] = mapped_column(String(20), comment="单位")
     formula: Mapped[str | None] = mapped_column(Text, comment="计算公式")
     input_fields: Mapped[str | None] = mapped_column(Text, comment="输入数据字段（JSON数组）")
-    applicable_fund_types: Mapped[str | None] = mapped_column(Text, comment="适用基金类型（JSON数组）")
+    applicable_fund_types: Mapped[str | None] = mapped_column(
+        Text, comment="适用基金类型（JSON数组）"
+    )
     update_frequency: Mapped[str] = mapped_column(String(20), comment="更新频率")
     missing_handling: Mapped[str | None] = mapped_column(Text, comment="缺失值处理策略")
     outlier_handling: Mapped[str | None] = mapped_column(Text, comment="极值处理策略")
@@ -374,7 +415,9 @@ class MetricRegistry(Base):
     version: Mapped[str] = mapped_column(String(10), default="1.0.0", comment="指标版本")
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, comment="是否启用")
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.now)
-    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.now, onupdate=datetime.now)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime, default=datetime.now, onupdate=datetime.now
+    )
 
     def __repr__(self) -> str:
         return f"<MetricRegistry({self.field_name}) {self.name_zh}>"
@@ -384,8 +427,10 @@ class MetricRegistry(Base):
 # 算法结果
 # ============================================================
 
+
 class StyleExposureResult(Base):
     """风格/行业暴露结果表。"""
+
     __tablename__ = "style_exposure_result"
 
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
@@ -394,19 +439,28 @@ class StyleExposureResult(Base):
     algorithm_name: Mapped[str] = mapped_column(String(50), comment="算法名称")
     algorithm_version: Mapped[str] = mapped_column(String(10), comment="算法版本")
     parameters: Mapped[dict | None] = mapped_column(JSON, comment="运行参数")
-    exposure_type: Mapped[str] = mapped_column(String(30), comment="暴露类型（style/industry/combined）")
-    exposure_values: Mapped[dict] = mapped_column(JSON, comment="暴露数值（{大盘:0.6, 成长:0.4, ...}）")
+    exposure_type: Mapped[str] = mapped_column(
+        String(30), comment="暴露类型（style/industry/combined）"
+    )
+    exposure_values: Mapped[dict] = mapped_column(
+        JSON, comment="暴露数值（{大盘:0.6, 成长:0.4, ...}）"
+    )
     residual: Mapped[float | None] = mapped_column(Float, comment="残差/未解释部分")
     r_squared: Mapped[float | None] = mapped_column(Float, comment="回归 R²")
     confidence: Mapped[str | None] = mapped_column(String(20), comment="置信度等级")
-    conclusion_status: Mapped[str] = mapped_column(String(20), default="computed", comment="结论状态")
+    conclusion_status: Mapped[str] = mapped_column(
+        String(20), default="computed", comment="结论状态"
+    )
     warnings: Mapped[dict | None] = mapped_column(JSON, comment="警告信息")
     input_coverage: Mapped[float | None] = mapped_column(Float, comment="输入数据覆盖率")
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.now)
 
     __table_args__ = (
         UniqueConstraint(
-            "fund_code", "calc_date", "algorithm_name", "algorithm_version",
+            "fund_code",
+            "calc_date",
+            "algorithm_name",
+            "algorithm_version",
             name="uq_exposure_fund_date_algo",
         ),
     )
@@ -414,6 +468,7 @@ class StyleExposureResult(Base):
 
 class StaticAttributionResult(Base):
     """静态归因/残差结果表。"""
+
     __tablename__ = "static_attribution_result"
 
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
@@ -433,13 +488,18 @@ class StaticAttributionResult(Base):
     residual_pct: Mapped[float | None] = mapped_column(Float, comment="残差占比(%)")
     detail: Mapped[dict | None] = mapped_column(JSON, comment="分项明细")
     confidence: Mapped[str | None] = mapped_column(String(20), comment="置信度")
-    conclusion_status: Mapped[str] = mapped_column(String(20), default="computed", comment="结论状态")
+    conclusion_status: Mapped[str] = mapped_column(
+        String(20), default="computed", comment="结论状态"
+    )
     warnings: Mapped[dict | None] = mapped_column(JSON, comment="警告信息")
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.now)
 
     __table_args__ = (
         UniqueConstraint(
-            "fund_code", "report_date", "algorithm_name", "algorithm_version",
+            "fund_code",
+            "report_date",
+            "algorithm_name",
+            "algorithm_version",
             name="uq_attribution_fund_date_algo",
         ),
     )
@@ -449,8 +509,10 @@ class StaticAttributionResult(Base):
 # 研究包与证据
 # ============================================================
 
+
 class ResearchPacketRecord(Base):
     """研究包存储表。"""
+
     __tablename__ = "research_packet"
 
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
@@ -472,6 +534,7 @@ class ResearchPacketRecord(Base):
 
 class EvidenceRecord(Base):
     """证据存储表。"""
+
     __tablename__ = "evidence"
 
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
@@ -488,7 +551,9 @@ class EvidenceRecord(Base):
     report_location: Mapped[str | None] = mapped_column(String(500), comment="报告定位")
     data_summary: Mapped[str | None] = mapped_column(Text, comment="数据摘要")
     confidence: Mapped[str] = mapped_column(String(20), default="needs_review", comment="置信度")
-    conclusion_status: Mapped[str] = mapped_column(String(20), default="needs_review", comment="结论状态")
+    conclusion_status: Mapped[str] = mapped_column(
+        String(20), default="needs_review", comment="结论状态"
+    )
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.now)
 
     def __repr__(self) -> str:
@@ -499,8 +564,10 @@ class EvidenceRecord(Base):
 # 数据质量与操作日志
 # ============================================================
 
+
 class DataSourceSnapshot(Base):
     """数据源与数据快照表。"""
+
     __tablename__ = "data_source_snapshot"
 
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
@@ -526,6 +593,7 @@ class DataSourceSnapshot(Base):
 
 class TaskLog(Base):
     """任务日志表。"""
+
     __tablename__ = "task_log"
 
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
@@ -548,6 +616,7 @@ class TaskLog(Base):
 
 class ToolAPICallLog(Base):
     """Tool API 调用日志表。"""
+
     __tablename__ = "tool_api_call_log"
 
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)

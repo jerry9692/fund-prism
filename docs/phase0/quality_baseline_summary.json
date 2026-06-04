@@ -39,8 +39,10 @@
       "full_semiannual": 142,
       "partial_semiannual": 36
     },
-    "funds_with_full_holdings": 356,
-    "funds_top10_only": 0
+    "report_period_count": 356,
+    "funds_with_full_holdings": 26,
+    "funds_with_partial_only": 4,
+    "funds_with_top10_quarterly": 30
   },
   "industry_coverage": {
     "avg_rows": 32.0

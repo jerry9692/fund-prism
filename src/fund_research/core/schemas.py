@@ -28,6 +28,7 @@ T = TypeVar("T")
 # 算法元数据（需求书 5.4 第 4 条）
 # ============================================================
 
+
 class AlgorithmMetadata(BaseModel):
     """每次算法计算的元数据，跟随所有算法结果。"""
 
@@ -45,6 +46,7 @@ class AlgorithmMetadata(BaseModel):
 # 证据记录（需求书 6.3.3）
 # ============================================================
 
+
 class EvidenceRecord(BaseModel):
     """单条证据记录，用于追溯结论来源。"""
 
@@ -54,19 +56,25 @@ class EvidenceRecord(BaseModel):
     source: str = Field(..., description="数据来源标识")
     source_level: DataSourceLevel = Field(..., description="数据源等级")
     date_range: tuple[date, date] | None = Field(None, description="数据日期区间 [start, end]")
-    algorithm_metadata: AlgorithmMetadata | None = Field(None, description="算法元数据（如为算法产出）")
+    algorithm_metadata: AlgorithmMetadata | None = Field(
+        None, description="算法元数据（如为算法产出）"
+    )
     report_snippet: str | None = Field(None, description="公告/报告原文片段")
     report_location: str | None = Field(None, description="报告定位：标题、页码/章节")
     data_summary: str | None = Field(None, description="数据摘要")
-    confidence: ConfidenceLevel = Field(ConfidenceLevel.NEEDS_REVIEW, description="该证据自身的可信度")
+    confidence: ConfidenceLevel = Field(
+        ConfidenceLevel.NEEDS_REVIEW, description="该证据自身的可信度"
+    )
 
 
 # ============================================================
 # 字段覆盖率
 # ============================================================
 
+
 class FieldCoverage(BaseModel):
     """数据字段覆盖率信息。"""
+
     field_name: str = Field(..., description="字段名")
     coverage_rate: float = Field(..., ge=0, le=1, description="覆盖率（0-1）")
     missing_count: int = Field(0, description="缺失数量")
@@ -78,6 +86,7 @@ class FieldCoverage(BaseModel):
 # 研究包（需求书 6.3.2）
 # ============================================================
 
+
 class ResearchPacketMetadata(BaseModel):
     """研究包元数据。"""
 
@@ -86,13 +95,17 @@ class ResearchPacketMetadata(BaseModel):
     data_date: date = Field(..., description="数据截止日期")
     template: str = Field(default="single_fund_checkup", description="研究包模板")
     platform_version: str = Field(default="0.1.0", description="平台版本")
-    data_source_levels: list[DataSourceLevel] = Field(default_factory=list, description="使用的数据源等级")
+    data_source_levels: list[DataSourceLevel] = Field(
+        default_factory=list, description="使用的数据源等级"
+    )
     algorithm_versions: dict[str, str] = Field(default_factory=dict, description="各算法版本")
     missing_fields: list[str] = Field(default_factory=list, description="缺失字段列表")
     conclusion_statuses: dict[str, ConclusionStatus] = Field(
         default_factory=dict, description="各部分结论状态"
     )
-    overall_confidence: ConfidenceLevel = Field(ConfidenceLevel.NEEDS_REVIEW, description="研究包整体置信度")
+    overall_confidence: ConfidenceLevel = Field(
+        ConfidenceLevel.NEEDS_REVIEW, description="研究包整体置信度"
+    )
     disclaimer: str = Field("算法结果仅用于个人研究，不构成投资建议。", description="免责声明")
 
 
@@ -124,6 +137,7 @@ class ResearchPacket(BaseModel):
 # ============================================================
 # API 响应结构（需求书 6.3.4 接口要求）
 # ============================================================
+
 
 class APIDataResult(BaseModel, Generic[T]):
     """API 数据返回体。"""
