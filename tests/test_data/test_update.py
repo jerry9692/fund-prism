@@ -335,6 +335,30 @@ class QuarterTextHoldingsAdapter(FakeAkshareAdapter):
         )
 
 
+class MissingManagerStartDateAdapter(FakeAkshareAdapter):
+    """Fake adapter matching current AKShare manager rows without start_date."""
+
+    def fetch_fund_managers(self, fund_code: str) -> FetchResult:
+        return self._result(
+            "fund_managers",
+            [
+                {
+                    "manager_id": "m_current",
+                    "name": "张三",
+                    "current_fund_codes": fund_code,
+                    "experience_years": "3.77",
+                }
+            ],
+        )
+
+
+class EmptyFeeAdapter(FakeAkshareAdapter):
+    """Fake adapter with fee rows that cannot populate canonical fee fields."""
+
+    def fetch_fee_detail(self, fund_code: str) -> FetchResult:
+        return self._result("fund_fee_detail", [{"fee_type": "其他费用"}])
+
+
 class _FakeResponse:
     def __init__(self, content: bytes):
         self.content = content
@@ -626,6 +650,31 @@ def test_upsert_akshare_fund_managers_writes_manager_and_tenure(
     assert tenure.is_current is True
 
 
+def test_upsert_akshare_fund_managers_allows_missing_start_date(
+    test_session: Session,
+) -> None:
+    """Current manager snapshots without start_date should still populate managers."""
+    summary = upsert_akshare_fund_managers(
+        test_session,
+        {"000001"},
+        adapter=MissingManagerStartDateAdapter(),
+    )
+    manager = test_session.scalar(
+        select(FundManager).where(FundManager.manager_id == "m_current")
+    )
+    tenure = test_session.scalar(
+        select(FundManagerTenure).where(FundManagerTenure.fund_code == "000001")
+    )
+
+    assert summary.inserted == 1
+    assert any("start_date 使用抓取日期" in warning for warning in summary.warnings)
+    assert manager is not None
+    assert manager.experience_years == 3.77
+    assert tenure is not None
+    assert tenure.start_date == date.today()
+    assert tenure.is_current is True
+
+
 def test_upsert_akshare_fund_fees_writes_fee_detail(test_session: Session) -> None:
     """AKShare fee detail update should populate fund_fee."""
     summary = upsert_akshare_fund_fees(
@@ -641,6 +690,20 @@ def test_upsert_akshare_fund_fees_writes_fee_detail(test_session: Session) -> No
     assert fee.custody_fee_pct == 0.25
     assert fee.sales_service_fee_pct == 0.0
     assert fee.effective_date == date(2024, 1, 1)
+
+
+def test_upsert_akshare_fund_fees_skips_empty_fee_payload(test_session: Session) -> None:
+    """Fee update should not persist rows with all canonical fee fields empty."""
+    summary = upsert_akshare_fund_fees(
+        test_session,
+        {"000001"},
+        adapter=EmptyFeeAdapter(),
+    )
+    fee_count = test_session.scalar(select(func.count()).select_from(FundFee))
+
+    assert summary.skipped == 1
+    assert fee_count == 0
+    assert any("基金费率字段缺失" in warning for warning in summary.warnings)
 
 
 def test_upsert_akshare_fund_scale_writes_latest_scale_snapshot(

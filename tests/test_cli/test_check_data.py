@@ -1,6 +1,6 @@
 """CLI check-data tests."""
 
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 
 from sqlalchemy import insert
@@ -86,3 +86,45 @@ def test_check_data_fails_when_source_snapshot_failed(tmp_path: Path) -> None:
     assert result.exit_code == 1
     assert "失败快照" in result.output
     assert "failed=1" in result.output
+
+
+def test_check_data_uses_latest_source_snapshot_status(tmp_path: Path) -> None:
+    """A superseded source failure should not block readiness checks."""
+    db_path = tmp_path / "fund_research.sqlite"
+    init_db(str(db_path))
+    engine = create_engine_from_path(str(db_path))
+    from sqlalchemy.orm import sessionmaker
+
+    session_factory = sessionmaker(bind=engine)
+    with session_factory() as session:
+        seed_metric_registry(session)
+    now = datetime.now()
+    with engine.begin() as connection:
+        connection.execute(
+            insert(DataSourceSnapshot),
+            [
+                {
+                    "source_name": "akshare",
+                    "source_type": DataSourceType.OPEN_API.value,
+                    "source_level": DataSourceLevel.B.value,
+                    "fetch_timestamp": now - timedelta(minutes=1),
+                    "entity_type": "fund_managers",
+                    "is_success": False,
+                    "error_message": "old source failure",
+                },
+                {
+                    "source_name": "akshare",
+                    "source_type": DataSourceType.OPEN_API.value,
+                    "source_level": DataSourceLevel.B.value,
+                    "fetch_timestamp": now,
+                    "entity_type": "fund_managers",
+                    "is_success": True,
+                    "error_message": None,
+                },
+            ],
+        )
+
+    result = CliRunner().invoke(app, ["check-data", "--db-path", str(db_path)])
+
+    assert result.exit_code == 0
+    assert "failed=0" in result.output

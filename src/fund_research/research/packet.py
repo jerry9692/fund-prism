@@ -123,7 +123,7 @@ def _fund_managers(db: Session, fund_code: str) -> list[dict]:
             {
                 "manager_id": tenure.manager_id,
                 "name": manager.name if manager else None,
-                "start_date": str(tenure.start_date),
+                "start_date": str(tenure.start_date) if tenure.start_date else None,
                 "end_date": str(tenure.end_date) if tenure.end_date else None,
                 "is_current": tenure.is_current,
                 "tenure_days": tenure.tenure_days,
@@ -235,6 +235,12 @@ def _manager_info(
         for manager in current_managers
         if manager.get("tenure_days") is not None
     ]
+    warnings = []
+    if current_managers and all(
+        manager.get("tenure_days") is None for manager in current_managers
+    ):
+        warnings.append("基金经理任期天数缺失，短任期风险判断需复核")
+
     return (
         {
             "current_managers": current_managers,
@@ -246,7 +252,7 @@ def _manager_info(
             "current_tenure_days_max": max(current_tenure_days) if current_tenure_days else None,
         },
         ConclusionStatus.FACT,
-        [],
+        warnings,
     )
 
 

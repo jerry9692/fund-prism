@@ -165,8 +165,16 @@ def calculate_style_exposure(
 
     y = regression_data["fund_return"].to_numpy(dtype=float)
     x = regression_data[available_factor_names].to_numpy(dtype=float)
+    if len(available_factor_names) > 1:
+        condition_number = float(np.linalg.cond(x))
+        if condition_number > 30:
+            warnings.append(
+                "风格因子可能存在较强共线性，OLS 暴露系数不应直接解释为配置权重"
+            )
     x_with_intercept = np.column_stack([np.ones(len(x)), x])
     coefficients, *_ = np.linalg.lstsq(x_with_intercept, y, rcond=None)
+    if any(abs(value) > 1 for value in coefficients[1:]):
+        warnings.append("存在绝对值超过 1 的 OLS 暴露系数，需结合残差和因子共线性复核")
     y_hat = x_with_intercept @ coefficients
     residuals = y - y_hat
     ss_res = float(np.sum(residuals**2))
@@ -188,4 +196,3 @@ def calculate_style_exposure(
         factor_symbols=factor_symbols,
         warnings=warnings,
     )
-

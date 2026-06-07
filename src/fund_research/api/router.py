@@ -290,7 +290,7 @@ def _fund_managers(db: Session, fund_code: str) -> list[dict]:
             {
                 "manager_id": tenure.manager_id,
                 "name": manager.name if manager else None,
-                "start_date": str(tenure.start_date),
+                "start_date": str(tenure.start_date) if tenure.start_date else None,
                 "end_date": str(tenure.end_date) if tenure.end_date else None,
                 "is_current": tenure.is_current,
                 "tenure_days": tenure.tenure_days,

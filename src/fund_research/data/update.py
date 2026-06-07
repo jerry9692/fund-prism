@@ -395,8 +395,8 @@ def upsert_akshare_fund_info(
     return summary
 
 
-def _manager_id_from_name(name: str) -> str:
-    digest = hashlib.sha1(name.encode("utf-8")).hexdigest()[:12]
+def _manager_id_from_name(name: str, company_name: str | None = None) -> str:
+    digest = hashlib.sha1(f"{company_name or ''}:{name}".encode()).hexdigest()[:12]
     return f"ak_mgr_{digest}"
 
 
@@ -409,18 +409,20 @@ def _apply_manager_row(
     name = str(row.get("name") or row.get("manager_names_raw") or "").strip()
     if not name:
         return "skipped"
-    manager_id = str(row.get("manager_id") or _manager_id_from_name(name)).strip()
+    company_name = str(row.get("company_name") or "").strip() or None
+    manager_id = str(row.get("manager_id") or _manager_id_from_name(name, company_name)).strip()
     start_date = _parse_date(row.get("start_date"))
     if start_date is None:
-        return "skipped"
+        start_date = date.today()
 
     manager = session.scalar(select(FundManager).where(FundManager.manager_id == manager_id))
-    tenure = session.scalar(
+    tenure_stmt = (
         select(FundManagerTenure)
         .where(FundManagerTenure.manager_id == manager_id)
         .where(FundManagerTenure.fund_code == fund_code)
-        .where(FundManagerTenure.start_date == start_date)
     )
+    tenure_stmt = tenure_stmt.where(FundManagerTenure.start_date == start_date)
+    tenure = session.scalar(tenure_stmt)
     if dry_run:
         return "updated" if manager and tenure else "inserted"
 
@@ -473,6 +475,11 @@ def upsert_akshare_fund_managers(
             summary.skipped += 1
             summary.warnings.append(result.error_message or f"基金经理数据为空: {fund_code}")
             continue
+        if "start_date" not in result.data.columns or result.data["start_date"].isna().all():
+            summary.warnings.append(
+                "AKShare 基金经理接口缺少任职起始日，"
+                f"start_date 使用抓取日期作为快照日期: {fund_code}"
+            )
         for row in result.data.to_dict(orient="records"):
             action = _apply_manager_row(session, row, fund_code, dry_run)
             if action == "inserted":
@@ -491,6 +498,19 @@ def upsert_akshare_fund_managers(
 
 def _apply_fee_row(session: Session, row: dict, fund_code: str, dry_run: bool) -> str:
     effective_date = _parse_date(row.get("effective_date"))
+    has_fee_payload = any(
+        row.get(field)
+        for field in (
+            "mgmt_fee_pct",
+            "custody_fee_pct",
+            "sales_service_fee_pct",
+            "subscribe_fee_range",
+            "redeem_fee_range",
+        )
+    )
+    if not has_fee_payload:
+        return "skipped"
+
     stmt = select(FundFee).where(FundFee.fund_code == fund_code)
     if effective_date is not None:
         stmt = stmt.where(FundFee.effective_date == effective_date)
@@ -545,6 +565,7 @@ def upsert_akshare_fund_fees(
             summary.updated += 1
         else:
             summary.skipped += 1
+            summary.warnings.append(f"基金费率字段缺失，已跳过: {fund_code}")
 
     if not dry_run:
         _log_update_task(session, "fund_fees", summary)

@@ -58,6 +58,15 @@ Live probing found and fixed the following source drift issues:
 - Current AKShare holder structure aggregate output is blocked from entering single-fund `holder_structure`.
 - AKShare portfolio-change empty-year `KeyError('序号')` is normalized to an empty successful fetch.
 
+## Follow-up Audit Fixes
+
+An additional real-data audit against fund `000001` found two adapter-level breaks. Both were reproduced and fixed:
+
+- `fund_fee_detail` currently returns a long table with `费用类型 / 条件或名称 / 费用`; it is now normalized into one canonical fee row before upsert, and all-empty fee payloads are skipped instead of persisted as NULL-only rows.
+- `fund_manager_em` currently returns manager rows without `manager_id` or tenure start date and previously produced duplicate canonical columns; duplicate columns are now coalesced, stable local AKShare manager IDs are generated from company/name, cumulative experience days are converted to years, and missing tenure start dates use the fetch date as an explicit current-manager snapshot date with warnings.
+
+The same audit also led to an exposure interpretability warning: OLS style exposure now warns when factor collinearity or coefficients above 1 make direct weight-style interpretation unsafe.
+
 ## Completion Assessment
 
 No blocking Phase 1 implementation work remains before opening a draft PR.

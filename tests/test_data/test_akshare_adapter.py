@@ -4,6 +4,7 @@ import types
 from datetime import date
 
 import pandas as pd
+import pytest
 
 from fund_research.data.adapters.akshare import AkshareAdapter
 
@@ -182,6 +183,51 @@ def test_fetch_fund_managers_standardizes_manager_columns() -> None:
     assert row["experience_years"] == "8年"
 
 
+def test_fetch_fund_managers_handles_current_akshare_shape() -> None:
+    """Current AKShare manager table should not produce duplicate canonical columns."""
+    fake_ak = types.SimpleNamespace(
+        fund_manager_em=lambda: pd.DataFrame(
+            [
+                {
+                    "序号": 1,
+                    "姓名": "张三",
+                    "所属公司": "华夏基金",
+                    "现任基金代码": "000001",
+                    "现任基金": "华夏成长混合",
+                    "累计从业时间": 1376,
+                    "现任基金资产总规模": 2.85,
+                    "现任基金最佳回报": 40.55,
+                },
+                {
+                    "序号": 2,
+                    "姓名": "李四",
+                    "所属公司": "华夏基金",
+                    "现任基金代码": "020005",
+                    "现任基金": "其他基金",
+                    "累计从业时间": 365,
+                    "现任基金资产总规模": 1.0,
+                    "现任基金最佳回报": 10.0,
+                },
+            ]
+        )
+    )
+    adapter = AkshareAdapter(ak_module=fake_ak)
+
+    result = adapter.fetch_fund_managers("000001")
+
+    assert result.is_success is True
+    assert result.record_count == 1
+    assert result.data is not None
+    assert result.data.columns[result.data.columns.duplicated()].tolist() == []
+    row = result.data.iloc[0]
+    assert row["manager_id"].startswith("ak_mgr_")
+    assert row["name"] == "张三"
+    assert row["company_name"] == "华夏基金"
+    assert row["current_fund_codes"] == "000001"
+    assert row["current_fund_names"] == "华夏成长混合"
+    assert row["experience_years"] == pytest.approx(1376 / 365.25)
+
+
 def test_fetch_fund_dividends_filters_and_standardizes_columns() -> None:
     """Dividend rows should be normalized and filtered by fund code."""
     fake_ak = types.SimpleNamespace(
@@ -239,6 +285,33 @@ def test_fetch_fee_detail_pivots_fee_items() -> None:
     assert row["custody_fee_pct"] == "0.25%"
     assert row["sales_service_fee_pct"] == "0%"
     assert row["subscribe_fee_range"] == "0%-1.5%"
+
+
+def test_fetch_fee_detail_normalizes_current_akshare_fee_table() -> None:
+    """Current AKShare fee detail long table should become one canonical fee row."""
+    fake_ak = types.SimpleNamespace(
+        fund_individual_detail_info_xq=lambda symbol: pd.DataFrame(
+            [
+                {"费用类型": "买入规则", "条件或名称": "0.0万<买入金额<100.0万", "费用": 1.5},
+                {"费用类型": "卖出规则", "条件或名称": "0.0天<持有期限<7.0天", "费用": 1.5},
+                {"费用类型": "其他费用", "条件或名称": "基金管理费", "费用": 1.2},
+                {"费用类型": "其他费用", "条件或名称": "基金托管费", "费用": 0.2},
+            ]
+        )
+    )
+    adapter = AkshareAdapter(ak_module=fake_ak)
+
+    result = adapter.fetch_fee_detail("000001")
+
+    assert result.is_success is True
+    assert result.record_count == 1
+    assert result.data is not None
+    row = result.data.iloc[0]
+    assert row["mgmt_fee_pct"] == 1.2
+    assert row["custody_fee_pct"] == 0.2
+    assert row["sales_service_fee_pct"] is None
+    assert row["subscribe_fee_range"] == "0.0万<买入金额<100.0万: 1.5"
+    assert row["redeem_fee_range"] == "0.0天<持有期限<7.0天: 1.5"
 
 
 def test_fetch_fund_scale_pivots_latest_scale() -> None:

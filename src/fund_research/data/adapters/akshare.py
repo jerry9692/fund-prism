@@ -1,5 +1,6 @@
 """AKShare data adapter for Phase 1."""
 
+import hashlib
 from collections.abc import Callable
 from datetime import date
 from time import perf_counter
@@ -19,6 +20,7 @@ COLUMN_MAP = {
     "基金类型": "fund_type_raw",
     "基金公司": "company_name",
     "基金管理人": "company_name",
+    "所属公司": "company_name",
     "基金经理": "manager_names_raw",
     "基金经理ID": "manager_id",
     "基金经理编号": "manager_id",
@@ -26,7 +28,9 @@ COLUMN_MAP = {
     "姓名": "name",
     "基金经理姓名": "name",
     "现任基金代码": "current_fund_codes",
-    "现任基金": "current_fund_codes",
+    "现任基金": "current_fund_names",
+    "现任基金资产总规模": "current_fund_aum",
+    "现任基金最佳回报": "best_return",
     "任职日期": "start_date",
     "起始日期": "start_date",
     "任职起始日": "start_date",
@@ -55,6 +59,9 @@ COLUMN_MAP = {
     "申购费率": "subscribe_fee_range",
     "赎回费率": "redeem_fee_range",
     "费率生效日期": "effective_date",
+    "费用类型": "fee_type",
+    "条件或名称": "fee_name",
+    "费用": "fee_value",
     "截止日期": "report_date",
     "机构持有比列": "institutional_pct",
     "机构持有比例": "institutional_pct",
@@ -134,6 +141,31 @@ COLUMN_MAP = {
     "amount": "amount",
     "Amount": "amount",
 }
+
+
+def _coalesce_duplicate_columns(data: pd.DataFrame) -> pd.DataFrame:
+    """Coalesce duplicate canonical columns after alias renaming."""
+    if not data.columns.has_duplicates:
+        return data
+
+    coalesced = pd.DataFrame(index=data.index)
+    for column in dict.fromkeys(data.columns):
+        same_name = data.loc[:, data.columns == column]
+        if isinstance(same_name, pd.Series):
+            coalesced[column] = same_name
+        else:
+            coalesced[column] = same_name.bfill(axis=1).iloc[:, 0]
+    return coalesced
+
+
+def _manager_id_from_identity(name: str, company_name: str | None = None) -> str:
+    identity = f"{company_name or ''}:{name}"
+    digest = hashlib.sha1(identity.encode()).hexdigest()[:12]
+    return f"ak_mgr_{digest}"
+
+
+def _format_fee_rule(condition: Any, fee: Any) -> str:
+    return f"{condition}: {fee}"
 
 
 class AkshareAdapter(BaseDataAdapter):
@@ -228,11 +260,45 @@ class AkshareAdapter(BaseDataAdapter):
             standardized = pd.DataFrame([row])
 
         standardized = standardized.rename(columns=COLUMN_MAP)
+        standardized = _coalesce_duplicate_columns(standardized)
         if "daily_return" in standardized.columns:
             standardized["daily_return"] = pd.to_numeric(
                 standardized["daily_return"], errors="coerce"
             ) / 100
         return standardized
+
+    def _normalize_fee_detail(self, data: pd.DataFrame) -> pd.DataFrame:
+        if not {"fee_type", "fee_name", "fee_value"}.issubset(data.columns):
+            return data
+
+        rows = data.copy()
+        fee_name = rows["fee_name"].fillna("").astype(str)
+        fee_type = rows["fee_type"].fillna("").astype(str)
+
+        def first_fee(keyword: str) -> Any:
+            matches = rows[fee_name.str.contains(keyword, regex=False)]
+            if matches.empty:
+                return None
+            return matches.iloc[0]["fee_value"]
+
+        buy_rules = rows[fee_type.str.contains("买入", regex=False)]
+        sell_rules = rows[fee_type.str.contains("卖出", regex=False)]
+        normalized = {
+            "mgmt_fee_pct": first_fee("管理费"),
+            "custody_fee_pct": first_fee("托管费"),
+            "sales_service_fee_pct": first_fee("销售服务费"),
+            "subscribe_fee_range": "; ".join(
+                _format_fee_rule(row["fee_name"], row["fee_value"])
+                for row in buy_rules.to_dict(orient="records")
+            )
+            or None,
+            "redeem_fee_range": "; ".join(
+                _format_fee_rule(row["fee_name"], row["fee_value"])
+                for row in sell_rules.to_dict(orient="records")
+            )
+            or None,
+        }
+        return pd.DataFrame([normalized])
 
     def fetch_fund_list(self) -> FetchResult:
         """拉取基金列表。"""
@@ -341,10 +407,34 @@ class AkshareAdapter(BaseDataAdapter):
         """拉取基金经理全量表。"""
         result = self._call("fund_managers", self.ak.fund_manager_em)
         if result.is_success and result.data is not None and "current_fund_codes" in result.data:
+            result.data["current_fund_codes"] = (
+                result.data["current_fund_codes"].astype(str).str.zfill(6)
+            )
             result.data = result.data[
-                result.data["current_fund_codes"].fillna("").astype(str).str.contains(fund_code)
+                result.data["current_fund_codes"].fillna("").astype(str) == fund_code
             ]
+            if "manager_id" not in result.data.columns and "name" in result.data.columns:
+                result.data = result.data.copy()
+                company_names = (
+                    result.data["company_name"]
+                    if "company_name" in result.data.columns
+                    else pd.Series([None] * len(result.data), index=result.data.index)
+                )
+                result.data["manager_id"] = [
+                    _manager_id_from_identity(
+                        str(name), str(company) if pd.notna(company) else None
+                    )
+                    for name, company in zip(result.data["name"], company_names, strict=False)
+                ]
+            if "experience_years" in result.data.columns:
+                raw_experience = result.data["experience_years"]
+                experience = pd.to_numeric(raw_experience, errors="coerce")
+                normalized_experience = experience.where(experience <= 100, experience / 365.25)
+                result.data["experience_years"] = normalized_experience.where(
+                    experience.notna(), raw_experience
+                )
             result.record_count = len(result.data)
+            result.field_count = len(result.data.columns)
         return result
 
     def fetch_stock_daily(
@@ -376,11 +466,16 @@ class AkshareAdapter(BaseDataAdapter):
 
     def fetch_fee_detail(self, fund_code: str) -> FetchResult:
         """拉取基金费率详情。"""
-        return self._call(
+        result = self._call(
             "fund_fee_detail",
             self.ak.fund_individual_detail_info_xq,
             symbol=fund_code,
         )
+        if result.is_success and result.data is not None:
+            result.data = self._normalize_fee_detail(result.data)
+            result.record_count = len(result.data)
+            result.field_count = len(result.data.columns)
+        return result
 
     def fetch_announcements(self, fund_code: str) -> FetchResult:
         """拉取基金公告列表。"""

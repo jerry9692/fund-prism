@@ -64,3 +64,38 @@ def test_calculate_style_exposure_downgrades_short_input() -> None:
     assert result.exposure_values == {}
     assert f"可用回归样本不足 {MIN_OBSERVATIONS} 条，风格暴露需复核" in result.warnings
 
+
+def test_calculate_style_exposure_warns_on_collinear_factors() -> None:
+    """Highly collinear factors should be surfaced as interpretation warnings."""
+    start = date(2024, 1, 1)
+    fund_rows = []
+    factor_rows = []
+    factor_symbols = {"large_cap": "sh000300", "mid_cap": "sh000905"}
+    for index in range(40):
+        trade_date = start + timedelta(days=index)
+        base_return = 0.001 * ((index % 7) - 3)
+        fund_rows.append({"trade_date": trade_date, "daily_return": 3.0 * base_return})
+        factor_rows.extend(
+            [
+                {
+                    "stock_code": "sh000300",
+                    "trade_date": trade_date,
+                    "daily_return": base_return,
+                },
+                {
+                    "stock_code": "sh000905",
+                    "trade_date": trade_date,
+                    "daily_return": base_return * 1.0001,
+                },
+            ]
+        )
+
+    result = calculate_style_exposure(
+        pd.DataFrame(fund_rows),
+        pd.DataFrame(factor_rows),
+        window=30,
+        factor_symbols=factor_symbols,
+    )
+
+    assert any("共线性" in warning for warning in result.warnings)
+    assert any("超过 1" in warning for warning in result.warnings)

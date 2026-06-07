@@ -350,10 +350,15 @@ def check_data(
                     .select_from(MetricRegistry)
                     .where(MetricRegistry.is_active.is_(True))
                 )
-                failed_snapshots = session.scalar(
-                    select(func.count())
-                    .select_from(DataSourceSnapshot)
-                    .where(DataSourceSnapshot.is_success.is_(False))
+                snapshots = session.scalars(select(DataSourceSnapshot)).all()
+                latest_snapshots: dict[tuple[str, str], DataSourceSnapshot] = {}
+                for snapshot in snapshots:
+                    key = (snapshot.entity_type, snapshot.source_name)
+                    previous = latest_snapshots.get(key)
+                    if previous is None or snapshot.fetch_timestamp > previous.fetch_timestamp:
+                        latest_snapshots[key] = snapshot
+                failed_snapshots = sum(
+                    1 for snapshot in latest_snapshots.values() if not snapshot.is_success
                 )
                 failed_tasks = session.scalar(
                     select(func.count())
