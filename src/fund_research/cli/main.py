@@ -10,7 +10,9 @@ CLI 入口。
 
 import csv
 import json
+from datetime import date
 from pathlib import Path
+from typing import Annotated
 
 import typer
 from rich.console import Console
@@ -18,6 +20,7 @@ from rich.panel import Panel
 from rich.table import Table
 
 from fund_research import __version__
+from fund_research.analysis.exposure import DEFAULT_STYLE_FACTORS
 from fund_research.utils.logging import setup_logging
 
 app = typer.Typer(
@@ -27,6 +30,142 @@ app = typer.Typer(
 )
 
 console = Console()
+
+UPDATE_ENTITY_ORDER = [
+    "sample-funds",
+    "fund-info",
+    "fund-managers",
+    "fund-scale",
+    "fund-fees",
+    "fund-nav",
+    "fund-dividends",
+    "fund-holdings",
+    "fund-industry-allocation",
+    "fund-portfolio-change",
+    "holder-structure",
+    "stock-daily",
+    "index-daily",
+    "official-pdf",
+]
+UPDATE_DOMAIN_ALIASES = {
+    "sample": "sample-funds",
+    "samples": "sample-funds",
+    "sample-funds": "sample-funds",
+    "profile": "fund-info",
+    "fund-info": "fund-info",
+    "manager": "fund-managers",
+    "managers": "fund-managers",
+    "fund-managers": "fund-managers",
+    "scale": "fund-scale",
+    "fund-scale": "fund-scale",
+    "fee": "fund-fees",
+    "fees": "fund-fees",
+    "fund-fees": "fund-fees",
+    "nav": "fund-nav",
+    "fund-nav": "fund-nav",
+    "dividend": "fund-dividends",
+    "dividends": "fund-dividends",
+    "fund-dividends": "fund-dividends",
+    "holdings": "fund-holdings",
+    "fund-holdings": "fund-holdings",
+    "industry": "fund-industry-allocation",
+    "industry-allocation": "fund-industry-allocation",
+    "fund-industry-allocation": "fund-industry-allocation",
+    "change": "fund-portfolio-change",
+    "changes": "fund-portfolio-change",
+    "portfolio-change": "fund-portfolio-change",
+    "fund-portfolio-change": "fund-portfolio-change",
+    "holder": "holder-structure",
+    "holder-structure": "holder-structure",
+    "stock": "stock-daily",
+    "stock-daily": "stock-daily",
+    "index": "index-daily",
+    "index-daily": "index-daily",
+    "official-pdf": "official-pdf",
+    "pdf": "official-pdf",
+    "all": "all",
+}
+
+UpdateEntityArg = Annotated[
+    str,
+    typer.Argument(
+        help=(
+            "要更新的数据类型 "
+            "(sample-funds/fund-info/fund-managers/fund-scale/fund-fees/fund-nav/"
+            "fund-dividends/fund-holdings/fund-industry-allocation/"
+            "fund-portfolio-change/holder-structure/stock-daily/index-daily/official-pdf/all)"
+        )
+    ),
+]
+FundCodeOption = Annotated[
+    list[str] | None,
+    typer.Option("--fund-code", "-f", help="只更新指定基金代码，可重复传入"),
+]
+StockCodeOption = Annotated[
+    list[str] | None,
+    typer.Option("--stock-code", help="只更新指定股票代码，可重复传入"),
+]
+IndexSymbolOption = Annotated[
+    list[str] | None,
+    typer.Option("--index-symbol", help="只更新指定指数 symbol，可重复传入"),
+]
+SamplePathOption = Annotated[
+    Path | None,
+    typer.Option("--sample", help="样本基金 CSV 路径；不传则读取 FUND_SAMPLE_FUNDS_PATH"),
+]
+DbPathOption = Annotated[
+    str | None,
+    typer.Option("--db-path", "-d", help="数据库文件路径"),
+]
+DryRunOption = Annotated[
+    bool,
+    typer.Option("--dry-run", help="只预览更新，不写入数据库"),
+]
+DomainsOption = Annotated[
+    str | None,
+    typer.Option("--domains", help="按数据域更新，逗号分隔，如 profile,nav,holdings"),
+]
+StartDateOption = Annotated[
+    str | None,
+    typer.Option("--start", "--from", help="净值/行情起始日期 YYYY-MM-DD"),
+]
+EndDateOption = Annotated[
+    str | None,
+    typer.Option("--end", "--to", help="净值/行情结束日期 YYYY-MM-DD"),
+]
+ReportDateOption = Annotated[
+    str | None,
+    typer.Option("--report-date", help="持仓报告期 YYYY-MM-DD"),
+]
+YearOption = Annotated[
+    int | None,
+    typer.Option("--year", help="分红年度 YYYY"),
+]
+
+
+def _selected_update_entities(entity: str, domains: str | None) -> list[str]:
+    """Resolve positional update entity and optional domain aliases into ordered entities."""
+    if domains:
+        requested = []
+        for raw_domain in domains.split(","):
+            domain = raw_domain.strip().lower().replace("_", "-")
+            if not domain:
+                continue
+            mapped = UPDATE_DOMAIN_ALIASES.get(domain)
+            if mapped is None:
+                raise ValueError(domain)
+            if mapped == "all":
+                return UPDATE_ENTITY_ORDER.copy()
+            requested.append(mapped)
+        unique_requested = set(requested)
+        return [item for item in UPDATE_ENTITY_ORDER if item in unique_requested]
+
+    normalized_entity = entity.strip().lower().replace("_", "-")
+    if normalized_entity == "all":
+        return UPDATE_ENTITY_ORDER.copy()
+    if normalized_entity not in UPDATE_ENTITY_ORDER:
+        raise ValueError(normalized_entity)
+    return [normalized_entity]
 
 
 @app.command()
@@ -42,6 +181,10 @@ def init(
     ),
 ) -> None:
     """初始化数据库（创建所有表）。"""
+    from sqlalchemy.orm import sessionmaker
+
+    from fund_research.data.metric_registry import seed_metric_registry
+    from fund_research.db.session import create_engine_from_path
     from fund_research.db.session import init_db as db_init
 
     path = Path(db_path)
@@ -49,8 +192,16 @@ def init(
 
     with console.status("[bold cyan]正在初始化数据库..."):
         db_init(db_path)
+        engine = create_engine_from_path(db_path)
+        session_factory = sessionmaker(bind=engine)
+        with session_factory() as session:
+            summary = seed_metric_registry(session)
 
-    console.print(f"[green]✓[/] 数据库已初始化: {path.absolute()}")
+    console.print(f"[green]OK[/] 数据库已初始化: {path.absolute()}")
+    console.print(
+        "[green]OK[/] 指标注册表已同步: "
+        f"inserted={summary.inserted}, updated={summary.updated}, skipped={summary.skipped}"
+    )
     console.print("[dim]提示: 使用 'fund-research serve' 启动 API 服务[/dim]")
 
 
@@ -82,11 +233,17 @@ def serve(
 
 
 @app.command()
-def check_data() -> None:
-    """检查第零阶段本地产物状态。"""
+def check_data(
+    db_path: DbPathOption = None,
+) -> None:
+    """检查第零阶段本地产物和一期本地数据库状态。"""
+    from fund_research.config.settings import get_settings
+
     project_root = Path.cwd()
+    settings = get_settings()
+    configured_sample_path = settings.sample_funds_path_absolute
     checks = [
-        ("样本基金", project_root / "data" / "samples" / "sample_funds_v0.1.csv"),
+        ("样本基金", configured_sample_path),
         ("字段映射", project_root / "config" / "field_mapping_v0.1.yaml"),
         ("接口盘点", project_root / "docs" / "phase0" / "akshare-field-inventory-p0.json"),
         ("质量摘要", project_root / "docs" / "phase0" / "quality_baseline_summary.json"),
@@ -106,7 +263,7 @@ def check_data() -> None:
         ok = ok and exists
         table.add_row(name, "[green]OK[/]" if exists else "[red]缺失[/]", str(path))
 
-    sample_path = project_root / "data" / "samples" / "sample_funds_v0.1.csv"
+    sample_path = configured_sample_path
     if sample_path.exists():
         with sample_path.open(encoding="utf-8", newline="") as f:
             sample_count = sum(1 for _ in csv.DictReader(f))
@@ -154,20 +311,299 @@ def check_data() -> None:
             ok = False
             table.add_row("一期开工验证", "[red]异常[/]", f"JSON 解析失败: {exc}")
 
+    try:
+        from sqlalchemy import func, inspect, select, text
+        from sqlalchemy.orm import sessionmaker
+
+        from fund_research.db.models import Base, DataSourceSnapshot, MetricRegistry, TaskLog
+        from fund_research.db.session import create_engine_from_path
+
+        engine = create_engine_from_path(db_path)
+        with engine.connect() as connection:
+            connection.execute(text("SELECT 1"))
+        table.add_row(
+            "数据库连接",
+            "[green]OK[/]",
+            db_path or "默认 FUND_DB_PATH / ./data/fund_research.duckdb",
+        )
+
+        existing_tables = set(inspect(engine).get_table_names())
+        core_tables = set(Base.metadata.tables)
+        missing_tables = sorted(core_tables - existing_tables)
+        tables_ok = not missing_tables
+        ok = ok and tables_ok
+        table.add_row(
+            "一期核心表",
+            "[green]OK[/]" if tables_ok else "[red]缺失[/]",
+            (
+                f"{len(core_tables)}/{len(core_tables)}"
+                if tables_ok
+                else f"missing={', '.join(missing_tables[:5])}"
+            ),
+        )
+
+        if "task_log" in existing_tables:
+            session_factory = sessionmaker(bind=engine)
+            with session_factory() as session:
+                metric_count = session.scalar(
+                    select(func.count())
+                    .select_from(MetricRegistry)
+                    .where(MetricRegistry.is_active.is_(True))
+                )
+                failed_snapshots = session.scalar(
+                    select(func.count())
+                    .select_from(DataSourceSnapshot)
+                    .where(DataSourceSnapshot.is_success.is_(False))
+                )
+                failed_tasks = session.scalar(
+                    select(func.count())
+                    .select_from(TaskLog)
+                    .where(TaskLog.status == "failed")
+                )
+            metric_ok = bool(metric_count)
+            ok = ok and metric_ok
+            table.add_row(
+                "指标注册表",
+                "[green]OK[/]" if metric_ok else "[red]为空[/]",
+                f"active={metric_count}",
+            )
+            snapshots_ok = failed_snapshots == 0
+            ok = ok and snapshots_ok
+            table.add_row(
+                "失败快照",
+                "[green]OK[/]" if snapshots_ok else "[red]异常[/]",
+                f"failed={failed_snapshots}",
+            )
+            tasks_ok = failed_tasks == 0
+            ok = ok and tasks_ok
+            table.add_row(
+                "失败任务",
+                "[green]OK[/]" if tasks_ok else "[red]异常[/]",
+                f"failed={failed_tasks}",
+            )
+        else:
+            ok = False
+            table.add_row("失败任务", "[red]无法检查[/]", "task_log 表缺失")
+    except Exception as exc:
+        ok = False
+        table.add_row("数据库检查", "[red]异常[/]", str(exc))
+
     console.print(table)
     if ok:
-        console.print("[green]OK[/] Phase 0 本地产物检查通过")
+        console.print("[green]OK[/] Phase 0 本地产物与一期数据库检查通过")
     else:
         raise typer.Exit(code=1)
 
 
 @app.command()
 def update(
-    entity: str = typer.Argument("all", help="要更新的数据类型 (fund_list/fund_nav/all)"),
+    entity: UpdateEntityArg = "sample-funds",
+    fund_code: FundCodeOption = None,
+    stock_code: StockCodeOption = None,
+    index_symbol: IndexSymbolOption = None,
+    sample: SamplePathOption = None,
+    db_path: DbPathOption = None,
+    dry_run: DryRunOption = False,
+    domains: DomainsOption = None,
+    start: StartDateOption = None,
+    end: EndDateOption = None,
+    report_date: ReportDateOption = None,
+    year: YearOption = None,
 ) -> None:
     """更新本地数据。"""
-    console.print("[bold yellow]数据更新功能将在一期数据适配器阶段实现[/bold yellow]")
-    console.print(f"请求更新: {entity}")
+    from sqlalchemy.orm import sessionmaker
+
+    from fund_research.config.settings import get_settings
+    from fund_research.data.update import (
+        UpdateSummary,
+        latest_holding_stock_codes,
+        load_sample_funds,
+        upsert_akshare_fund_dividends,
+        upsert_akshare_fund_fees,
+        upsert_akshare_fund_holdings,
+        upsert_akshare_fund_industry_allocation,
+        upsert_akshare_fund_info,
+        upsert_akshare_fund_managers,
+        upsert_akshare_fund_nav,
+        upsert_akshare_fund_portfolio_changes,
+        upsert_akshare_fund_scale,
+        upsert_akshare_holder_structure,
+        upsert_akshare_index_daily,
+        upsert_akshare_official_pdf_evidence,
+        upsert_akshare_stock_daily,
+        upsert_sample_funds,
+    )
+    from fund_research.db.session import create_engine_from_path, init_db
+
+    try:
+        selected_entities = _selected_update_entities(entity, domains)
+    except ValueError as exc:
+        console.print(f"[red]暂不支持的数据类型:[/] {exc}")
+        raise typer.Exit(code=1) from None
+
+    sample = sample or get_settings().sample_funds_path_absolute
+    if not sample.exists():
+        console.print(f"[red]样本文件不存在:[/] {sample}")
+        raise typer.Exit(code=1)
+
+    init_db(db_path)
+    engine = create_engine_from_path(db_path)
+    session_factory = sessionmaker(bind=engine)
+    selected_codes = set(fund_code) if fund_code else {
+        row.get("fund_code", "").strip()
+        for row in load_sample_funds(sample)
+        if row.get("fund_code", "").strip()
+    }
+    start_date = date.fromisoformat(start) if start else None
+    end_date = date.fromisoformat(end) if end else None
+    holding_report_date = date.fromisoformat(report_date) if report_date else None
+    summaries: list[UpdateSummary] = []
+    with session_factory() as session:
+        if "sample-funds" in selected_entities:
+            summaries.append(
+                upsert_sample_funds(
+                    session,
+                    sample,
+                    fund_codes=set(fund_code) if fund_code else None,
+                    dry_run=dry_run,
+                )
+            )
+        if "fund-info" in selected_entities:
+            summaries.append(
+                upsert_akshare_fund_info(session, selected_codes, dry_run=dry_run)
+            )
+        if "fund-managers" in selected_entities:
+            summaries.append(
+                upsert_akshare_fund_managers(session, selected_codes, dry_run=dry_run)
+            )
+        if "fund-scale" in selected_entities:
+            summaries.append(
+                upsert_akshare_fund_scale(session, selected_codes, dry_run=dry_run)
+            )
+        if "fund-fees" in selected_entities:
+            summaries.append(
+                upsert_akshare_fund_fees(session, selected_codes, dry_run=dry_run)
+            )
+        if "fund-nav" in selected_entities:
+            summaries.append(
+                upsert_akshare_fund_nav(
+                    session,
+                    selected_codes,
+                    start_date=start_date,
+                    end_date=end_date,
+                    dry_run=dry_run,
+                )
+            )
+        if "fund-dividends" in selected_entities:
+            summaries.append(
+                upsert_akshare_fund_dividends(
+                    session,
+                    selected_codes,
+                    year=year,
+                    dry_run=dry_run,
+                )
+            )
+        if "fund-holdings" in selected_entities:
+            summaries.append(
+                upsert_akshare_fund_holdings(
+                    session,
+                    selected_codes,
+                    report_date=holding_report_date,
+                    dry_run=dry_run,
+                )
+            )
+        if "fund-industry-allocation" in selected_entities:
+            summaries.append(
+                upsert_akshare_fund_industry_allocation(
+                    session,
+                    selected_codes,
+                    report_date=holding_report_date,
+                    dry_run=dry_run,
+                )
+            )
+        if "fund-portfolio-change" in selected_entities:
+            summaries.append(
+                upsert_akshare_fund_portfolio_changes(
+                    session,
+                    selected_codes,
+                    report_date=holding_report_date,
+                    dry_run=dry_run,
+                )
+            )
+        if "holder-structure" in selected_entities:
+            summaries.append(
+                upsert_akshare_holder_structure(session, selected_codes, dry_run=dry_run)
+            )
+        if "stock-daily" in selected_entities:
+            selected_stock_codes = set(stock_code) if stock_code else latest_holding_stock_codes(
+                session,
+                selected_codes,
+            )
+            if selected_stock_codes:
+                summaries.append(
+                    upsert_akshare_stock_daily(
+                        session,
+                        selected_stock_codes,
+                        start_date=start_date,
+                        end_date=end_date,
+                        dry_run=dry_run,
+                    )
+                )
+            else:
+                summaries.append(
+                    UpdateSummary(
+                        entity="stock_daily",
+                        source="akshare",
+                        requested=0,
+                        dry_run=dry_run,
+                        warnings=["未指定股票代码，且本地最新持仓中没有可更新的股票代码"],
+                    )
+                )
+        if "index-daily" in selected_entities:
+            selected_index_symbols = set(index_symbol) if index_symbol else set(
+                DEFAULT_STYLE_FACTORS.values()
+            )
+            summaries.append(
+                upsert_akshare_index_daily(
+                    session,
+                    selected_index_symbols,
+                    start_date=start_date,
+                    end_date=end_date,
+                    dry_run=dry_run,
+                )
+            )
+        if "official-pdf" in selected_entities:
+            summaries.append(
+                upsert_akshare_official_pdf_evidence(
+                    session,
+                    selected_codes,
+                    dry_run=dry_run,
+                )
+            )
+
+    table = Table(title="数据更新摘要")
+    table.add_column("entity")
+    table.add_column("requested")
+    table.add_column("inserted")
+    table.add_column("updated")
+    table.add_column("skipped")
+    table.add_column("warnings")
+    for summary in summaries:
+        data = summary.to_dict()
+        table.add_row(
+            str(data["entity"]),
+            str(data["requested"]),
+            str(data["inserted"]),
+            str(data["updated"]),
+            str(data["skipped"]),
+            json.dumps(data["warnings"], ensure_ascii=False),
+        )
+
+    console.print(table)
+    if dry_run:
+        console.print("[yellow]DRY-RUN[/] 未写入数据库")
+    else:
+        console.print("[green]OK[/] 数据更新完成")
 
 
 @app.callback()

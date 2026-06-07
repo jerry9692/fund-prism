@@ -10,6 +10,7 @@ import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import Engine, create_engine
 from sqlalchemy.orm import Session, sessionmaker
+from sqlalchemy.pool import StaticPool
 
 from fund_research.api.app import create_app
 from fund_research.db.models import Base
@@ -18,7 +19,12 @@ from fund_research.db.models import Base
 @pytest.fixture(scope="function")
 def test_engine() -> Generator[Engine, None, None]:
     """创建测试用 SQLite 内存数据库引擎。"""
-    engine = create_engine("sqlite:///:memory:", echo=False)
+    engine = create_engine(
+        "sqlite://",
+        echo=False,
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
     Base.metadata.create_all(bind=engine)
     yield engine
     Base.metadata.drop_all(bind=engine)

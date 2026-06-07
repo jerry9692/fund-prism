@@ -94,9 +94,9 @@ agent = [
 fund-research = "fund_research.cli.main:app"
 
 [project.urls]
-Homepage = "https://github.com/user/fund-research"
-Documentation = "https://github.com/user/fund-research"
-Repository = "https://github.com/user/fund-research"
+Homepage = "https://github.com/jerry9692/fund-prism"
+Documentation = "https://github.com/jerry9692/fund-prism"
+Repository = "https://github.com/jerry9692/fund-prism"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/fund_research"]

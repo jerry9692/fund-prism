@@ -23,6 +23,7 @@ class Settings(BaseSettings):
     # --- 数据存储 ---
     db_path: str = "./data/fund_research.duckdb"
     cache_dir: str = "./data/cache"
+    sample_funds_path: str = "./data/samples/sample_funds_v0.1.csv"
 
     # --- 日志 ---
     log_level: str = "INFO"
@@ -38,6 +39,8 @@ class Settings(BaseSettings):
 
     # --- 数据源 ---
     tushare_token: str = ""
+    source_timeout_seconds: float = 20.0
+    source_retry_count: int = 2
 
     # --- 免责声明 ---
     disclaimer: str = "本平台所有算法结果仅用于个人研究和方法验证，不构成投资建议。"
@@ -58,6 +61,14 @@ class Settings(BaseSettings):
         if not path.is_absolute():
             path = Path.cwd() / path
         path.mkdir(parents=True, exist_ok=True)
+        return path
+
+    @property
+    def sample_funds_path_absolute(self) -> Path:
+        """默认样本基金文件的绝对路径。"""
+        path = Path(self.sample_funds_path)
+        if not path.is_absolute():
+            path = Path.cwd() / path
         return path
 
     @property

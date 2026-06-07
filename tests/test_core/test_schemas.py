@@ -75,6 +75,7 @@ def test_evidence_record() -> None:
     assert evidence.source_level == DataSourceLevel.B
     assert evidence.date_range == (date(2024, 1, 1), date(2024, 12, 31))
     assert evidence.confidence == ConfidenceLevel.HIGH
+    assert evidence.conclusion_status == ConclusionStatus.NEEDS_REVIEW
 
 
 def test_research_packet_metadata() -> None:

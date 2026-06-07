@@ -7,9 +7,11 @@ SQLAlchemy ORM 模型。
 """
 
 from datetime import date, datetime
+from secrets import randbits
 
 from sqlalchemy import (
     JSON,
+    BigInteger,
     Boolean,
     Date,
     DateTime,
@@ -21,6 +23,21 @@ from sqlalchemy import (
     UniqueConstraint,
 )
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
+
+
+def generate_int_id() -> int:
+    """Generate a positive local integer ID without relying on DB autoincrement."""
+    return randbits(63)
+
+
+def id_column():
+    """Surrogate primary key compatible with DuckDB and SQLite."""
+    return mapped_column(
+        BigInteger,
+        primary_key=True,
+        autoincrement=False,
+        default=generate_int_id,
+    )
 
 
 class Base(DeclarativeBase):
@@ -39,7 +56,7 @@ class FundMain(Base):
 
     __tablename__ = "fund_main"
 
-    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    id: Mapped[int] = id_column()
     fund_code: Mapped[str] = mapped_column(String(20), unique=True, index=True, comment="基金代码")
     short_name: Mapped[str] = mapped_column(String(100), comment="基金简称")
     full_name: Mapped[str] = mapped_column(String(200), comment="基金全称")
@@ -80,7 +97,7 @@ class FundCategory(Base):
 
     __tablename__ = "fund_category"
 
-    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    id: Mapped[int] = id_column()
     fund_code: Mapped[str] = mapped_column(String(20), index=True, comment="基金代码")
     category_level: Mapped[str] = mapped_column(String(10), comment="分类级别 primary/secondary")
     category_name: Mapped[str] = mapped_column(String(50), comment="分类名称")
@@ -104,7 +121,7 @@ class FundManager(Base):
 
     __tablename__ = "fund_manager"
 
-    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    id: Mapped[int] = id_column()
     manager_id: Mapped[str] = mapped_column(
         String(20), unique=True, index=True, comment="基金经理 ID"
     )
@@ -127,7 +144,7 @@ class FundManagerTenure(Base):
 
     __tablename__ = "fund_manager_tenure"
 
-    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    id: Mapped[int] = id_column()
     manager_id: Mapped[str] = mapped_column(String(20), index=True, comment="基金经理 ID")
     fund_code: Mapped[str] = mapped_column(String(20), index=True, comment="基金代码")
     start_date: Mapped[date] = mapped_column(Date, comment="任职起始日")
@@ -155,7 +172,7 @@ class FundCompany(Base):
 
     __tablename__ = "fund_company"
 
-    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    id: Mapped[int] = id_column()
     company_id: Mapped[str] = mapped_column(
         String(20), unique=True, index=True, comment="基金公司 ID"
     )
@@ -184,7 +201,7 @@ class FundNAV(Base):
 
     __tablename__ = "fund_nav"
 
-    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    id: Mapped[int] = id_column()
     fund_code: Mapped[str] = mapped_column(String(20), index=True, comment="基金代码")
     trade_date: Mapped[date] = mapped_column(Date, index=True, comment="交易日")
     unit_nav: Mapped[float | None] = mapped_column(Float, comment="单位净值")
@@ -208,7 +225,7 @@ class FundScale(Base):
 
     __tablename__ = "fund_scale"
 
-    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    id: Mapped[int] = id_column()
     fund_code: Mapped[str] = mapped_column(String(20), index=True, comment="基金代码")
     report_date: Mapped[date] = mapped_column(Date, comment="报告期")
     total_nav: Mapped[float | None] = mapped_column(Float, comment="资产净值（亿元）")
@@ -224,7 +241,7 @@ class FundFee(Base):
 
     __tablename__ = "fund_fee"
 
-    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    id: Mapped[int] = id_column()
     fund_code: Mapped[str] = mapped_column(String(20), index=True, comment="基金代码")
     mgmt_fee_pct: Mapped[float | None] = mapped_column(Float, comment="管理费率")
     custody_fee_pct: Mapped[float | None] = mapped_column(Float, comment="托管费率")
@@ -246,7 +263,7 @@ class FundDisclosedHoldings(Base):
 
     __tablename__ = "fund_disclosed_holdings"
 
-    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    id: Mapped[int] = id_column()
     fund_code: Mapped[str] = mapped_column(String(20), index=True, comment="基金代码")
     report_date: Mapped[date] = mapped_column(Date, index=True, comment="报告期")
     asset_type: Mapped[str] = mapped_column(String(20), comment="资产类型")
@@ -285,7 +302,7 @@ class HolderStructure(Base):
 
     __tablename__ = "holder_structure"
 
-    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    id: Mapped[int] = id_column()
     fund_code: Mapped[str] = mapped_column(String(20), index=True, comment="基金代码")
     report_date: Mapped[date] = mapped_column(Date, comment="报告期（半年度）")
     individual_pct: Mapped[float | None] = mapped_column(Float, comment="个人投资者持有比例(%)")
@@ -309,7 +326,7 @@ class StockMain(Base):
 
     __tablename__ = "stock_main"
 
-    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    id: Mapped[int] = id_column()
     stock_code: Mapped[str] = mapped_column(String(20), unique=True, index=True, comment="股票代码")
     stock_name: Mapped[str] = mapped_column(String(50), comment="股票名称")
     exchange: Mapped[str | None] = mapped_column(String(10), comment="交易所")
@@ -335,7 +352,7 @@ class StockDaily(Base):
 
     __tablename__ = "stock_daily"
 
-    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    id: Mapped[int] = id_column()
     stock_code: Mapped[str] = mapped_column(String(20), index=True, comment="股票代码")
     trade_date: Mapped[date] = mapped_column(Date, index=True, comment="交易日")
     open_price: Mapped[float | None] = mapped_column(Float, comment="开盘价")
@@ -360,7 +377,7 @@ class IndustryCategory(Base):
 
     __tablename__ = "industry_category"
 
-    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    id: Mapped[int] = id_column()
     classification_type: Mapped[str] = mapped_column(
         String(30), comment="分类体系（申万/中信/GICS）"
     )
@@ -391,7 +408,7 @@ class MetricRegistry(Base):
 
     __tablename__ = "metric_registry"
 
-    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    id: Mapped[int] = id_column()
     field_name: Mapped[str] = mapped_column(
         String(100), unique=True, index=True, comment="字段名（英文 ID）"
     )
@@ -433,7 +450,7 @@ class StyleExposureResult(Base):
 
     __tablename__ = "style_exposure_result"
 
-    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    id: Mapped[int] = id_column()
     fund_code: Mapped[str] = mapped_column(String(20), index=True, comment="基金代码")
     calc_date: Mapped[date] = mapped_column(Date, index=True, comment="计算日期")
     algorithm_name: Mapped[str] = mapped_column(String(50), comment="算法名称")
@@ -471,7 +488,7 @@ class StaticAttributionResult(Base):
 
     __tablename__ = "static_attribution_result"
 
-    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    id: Mapped[int] = id_column()
     fund_code: Mapped[str] = mapped_column(String(20), index=True, comment="基金代码")
     report_date: Mapped[date] = mapped_column(Date, index=True, comment="报告期")
     benchmark: Mapped[str | None] = mapped_column(String(200), comment="基准组合")
@@ -515,7 +532,7 @@ class ResearchPacketRecord(Base):
 
     __tablename__ = "research_packet"
 
-    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    id: Mapped[int] = id_column()
     packet_id: Mapped[str] = mapped_column(String(64), unique=True, index=True, comment="研究包 ID")
     fund_code: Mapped[str] = mapped_column(String(20), index=True, comment="基金代码")
     template: Mapped[str] = mapped_column(String(50), comment="研究包模板")
@@ -537,7 +554,7 @@ class EvidenceRecord(Base):
 
     __tablename__ = "evidence"
 
-    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    id: Mapped[int] = id_column()
     evidence_id: Mapped[str] = mapped_column(String(64), unique=True, index=True, comment="证据 ID")
     entity_id: Mapped[str] = mapped_column(String(64), index=True, comment="关联实体 ID")
     entity_type: Mapped[str] = mapped_column(String(30), comment="实体类型")
@@ -570,7 +587,7 @@ class DataSourceSnapshot(Base):
 
     __tablename__ = "data_source_snapshot"
 
-    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    id: Mapped[int] = id_column()
     source_name: Mapped[str] = mapped_column(String(50), comment="数据源名称")
     source_type: Mapped[str] = mapped_column(String(30), comment="数据源类型")
     source_level: Mapped[str] = mapped_column(String(10), comment="数据源等级")
@@ -596,7 +613,7 @@ class TaskLog(Base):
 
     __tablename__ = "task_log"
 
-    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    id: Mapped[int] = id_column()
     task_id: Mapped[str] = mapped_column(String(64), unique=True, index=True, comment="任务 ID")
     task_type: Mapped[str] = mapped_column(String(30), comment="任务类型")
     status: Mapped[str] = mapped_column(String(20), default="pending", comment="任务状态")
@@ -619,7 +636,7 @@ class ToolAPICallLog(Base):
 
     __tablename__ = "tool_api_call_log"
 
-    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    id: Mapped[int] = id_column()
     call_id: Mapped[str] = mapped_column(String(64), unique=True, index=True, comment="调用 ID")
     tool_name: Mapped[str] = mapped_column(String(50), index=True, comment="API 名称")
     caller: Mapped[str | None] = mapped_column(String(50), comment="调用方（user/agent/notebook）")

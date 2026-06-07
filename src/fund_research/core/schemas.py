@@ -65,6 +65,9 @@ class EvidenceRecord(BaseModel):
     confidence: ConfidenceLevel = Field(
         ConfidenceLevel.NEEDS_REVIEW, description="该证据自身的可信度"
     )
+    conclusion_status: ConclusionStatus = Field(
+        ConclusionStatus.NEEDS_REVIEW, description="该证据支持的结论状态"
+    )
 
 
 # ============================================================
@@ -122,6 +125,7 @@ class ResearchPacket(BaseModel):
     manager_info: dict[str, Any] | None = Field(None, description="基金经理信息")
     nav_metrics: dict[str, Any] | None = Field(None, description="净值指标")
     disclosed_holdings: dict[str, Any] | None = Field(None, description="公开披露持仓")
+    holder_structure: dict[str, Any] | None = Field(None, description="持有人结构")
     exposure: dict[str, Any] | None = Field(None, description="风格/行业暴露")
     attribution: dict[str, Any] | None = Field(None, description="静态归因结果")
     residuals: dict[str, Any] | None = Field(None, description="未解释残差")

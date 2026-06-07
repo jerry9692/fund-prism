@@ -1,4 +1,4 @@
-# Fund Research Platform
+# Fund Prism
 
 **AI-oriented 开源个人基金研究平台**
 
@@ -27,8 +27,8 @@
 
 ```bash
 # 克隆仓库
-git clone <repo-url>
-cd fund-research
+git clone https://github.com/jerry9692/fund-prism.git
+cd fund-prism
 
 # 创建虚拟环境
 python -m venv .venv
@@ -37,9 +37,6 @@ source .venv/bin/activate  # Linux/Mac
 
 # 安装依赖
 pip install -e ".[dev]"
-
-# 复制环境配置
-cp .env.example .env
 
 # 初始化数据库
 fund-research init
@@ -60,8 +57,16 @@ fund-research init            # 初始化数据库
 fund-research init -d ./mydb.duckdb  # 指定数据库路径
 fund-research serve           # 启动 API (默认 :8000)
 fund-research serve -p 9000   # 指定端口
-fund-research check-data      # 检查第零阶段本地产物
-fund-research update          # 更新本地数据（一期数据适配器阶段实现）
+fund-research check-data      # 检查第零阶段产物与一期数据库
+fund-research update sample-funds
+fund-research update fund-info -f 000001
+fund-research update fund-nav -f 000001 --from 2024-01-01 --to 2024-12-31
+fund-research update fund-dividends -f 000001 --year 2024
+fund-research update fund-industry-allocation -f 000001 --report-date 2024-06-30
+fund-research update fund-portfolio-change -f 000001 --report-date 2024-06-30
+fund-research update --domains profile,nav,holdings -f 000001
+fund-research update --domains industry,changes -f 000001
+fund-research update all --dry-run
 ```
 
 ## 项目结构
@@ -76,7 +81,7 @@ fund-research/
 │   │   ├── enums.py                 # 枚举定义（基金类型、数据源等级、结论状态等）
 │   │   └── schemas.py               # Pydantic 模型（APIResponse, ResearchPacket, Evidence）
 │   ├── db/                          # 数据库层
-│   │   ├── models.py                # SQLAlchemy ORM 模型（20 张一期核心表）
+│   │   ├── models.py                # SQLAlchemy ORM 模型（一期核心表）
 │   │   ├── session.py               # 会话管理（DuckDB/SQLite）
 │   │   └── migrations/              # Alembic 迁移脚本
 │   ├── config/                      # Python 配置
@@ -121,7 +126,7 @@ fund-research/
 |------|------|------|
 | 框架搭建 | 项目结构、依赖、数据模型、API 骨架 | ✅ 完成 |
 | 第零阶段 | 数据可得性与口径试验 | ✅ 完成 |
-| 一期 | 可信 AI-ready MVP（单基金体检 + 研究包 + 证据链） | 🔜 进行中 |
+| 一期 | 可信 AI-ready MVP（单基金体检 + 研究包 + 证据链） | 🚧 进行中 |
 | 二期 | 算法验证与受控估计（模拟持仓实验、综合评分基础版） | 📋 计划中 |
 | 三期 | 发现能力与研究工作台（基金画像指纹、相似基金、异常发现） | 📋 计划中 |
 | 四期 | ETF/指数、组合与更多资产类型 | 📋 计划中 |
@@ -133,19 +138,16 @@ fund-research/
 
 ```bash
 # 运行测试
-pytest
+python -m pytest
 
 # 代码检查
-ruff check src/ tests/
+python -m ruff check src tests
 
-# 类型检查
-mypy src/
+# Phase 0 / Phase 1 本地检查
+fund-research check-data
 
-# 生成数据库迁移
-alembic revision --autogenerate -m "description"
-
-# 执行数据库迁移
-alembic upgrade head
+# 可选：类型检查
+python -m mypy src
 ```
 
 ## 免责声明
