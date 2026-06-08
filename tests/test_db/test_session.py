@@ -33,7 +33,7 @@ def test_init_db_creates_core_tables_in_sqlite(tmp_path: Path) -> None:
     assert "alembic_version" in inspect(engine).get_table_names()
     with engine.connect() as connection:
         version = connection.execute(text("SELECT version_num FROM alembic_version")).scalar_one()
-    assert version == "20260607_0001"
+    assert version == "c775fce6a16e"
 
 
 def test_init_db_creates_core_tables_in_duckdb(tmp_path: Path) -> None:
