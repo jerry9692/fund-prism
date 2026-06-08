@@ -6,7 +6,7 @@ export default function HomePage() {
   const [health, setHealth] = useState<string | null>(null);
 
   useEffect(() => {
-    api.health().then((r) => setHealth(r.data?.status ?? "unknown"))
+    fetch("/api/v1/health").then((r) => r.json()).then((d) => setHealth(d.status || "offline"))
       .catch(() => setHealth("offline"));
   }, []);
 
