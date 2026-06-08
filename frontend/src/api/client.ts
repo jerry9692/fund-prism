@@ -162,7 +162,13 @@ async function request<T>(
 // ---- API functions (one per endpoint) ----
 
 export const api = {
-  health: () => request<{ status: string }>("/api/v1/health"),
+  health: async () => {
+    const res = await fetch(`${BASE_URL}/api/v1/health`);
+    if (!res.ok) {
+      throw new Error(`API error ${res.status}: ${res.statusText}`);
+    }
+    return res.json() as Promise<{ status: string }>;
+  },
 
   getFundProfile: (code: string) =>
     request<FundProfile>(`/api/v1/funds/${code}/profile`),

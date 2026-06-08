@@ -1,6 +1,6 @@
 """Experiment CRUD operations for Phase 2."""
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import date, datetime
 
 from sqlalchemy import select
@@ -79,7 +79,7 @@ def create_experiment(
         algorithm_name=algorithm_name,
         algorithm_version=algorithm_version,
         parameters=parameters,
-        sample_fund_codes=sample_fund_codes or {},
+        sample_fund_codes=sample_fund_codes or [],
         backtest_start=backtest_start,
         backtest_end=backtest_end,
         status="pending",
@@ -113,7 +113,7 @@ def record_result(
     is_success: bool,
     metrics: dict | None = None,
     error_message: str | None = None,
-    warnings: dict | None = None,
+    warnings: list[str] | None = None,
 ) -> ExperimentResult:
     """Record a single experiment result for one fund."""
     result = ExperimentResult(
@@ -123,7 +123,7 @@ def record_result(
         is_success=is_success,
         metrics=metrics or {},
         error_message=error_message,
-        warnings=warnings or {},
+        warnings=warnings or [],
     )
     db.add(result)
     db.commit()

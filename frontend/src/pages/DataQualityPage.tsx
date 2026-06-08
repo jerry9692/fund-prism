@@ -5,7 +5,7 @@ export default function DataQualityPage() {
   const [health, setHealth] = useState<string>("checking");
 
   useEffect(() => {
-    fetch("/api/v1/health").then((r) => r.json()).then((d) => setHealth(d.status || "offline")).catch(() => setHealth("offline"));
+    api.health().then((d) => setHealth(d.status || "offline")).catch(() => setHealth("offline"));
   }, []);
 
   return (

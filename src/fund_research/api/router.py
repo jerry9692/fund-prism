@@ -562,19 +562,28 @@ def get_nav_metrics(
             if r.trade_date >= from_date
         ]
 
-    def _compute(label: str, from_date: date_type | None) -> dict:
+    def _compute(label: str, from_date: date_type | None, expected_days: int | None = None) -> dict:
         rows_slice = _slice(from_date)
         if not rows_slice:
             return {"label": label, "status": "no_data", "warnings": [f"{label}: 无可用净值数据"]}
         result = calculate_nav_metrics(pd.DataFrame(rows_slice))
+        warnings = result.warnings.copy()
+        status = "computed" if result.is_sufficient else "needs_review"
+        if expected_days and result.start_date and result.end_date:
+            covered_days = (result.end_date - result.start_date).days
+            if covered_days < expected_days * 0.8:
+                status = "needs_review"
+                warnings.append(
+                    f"{label}: 数据覆盖约 {covered_days} 天，低于目标区间 {expected_days} 天的 80%"
+                )
         return {
             "label": label,
-            "status": "computed" if result.is_sufficient else "needs_review",
+            "status": status,
             "data": result.to_data(),
             "start_date": str(result.start_date) if result.start_date else None,
             "end_date": str(result.end_date) if result.end_date else None,
             "observations": result.observations,
-            "warnings": result.warnings,
+            "warnings": warnings,
         }
 
     today = date_type.today()
@@ -583,12 +592,12 @@ def get_nav_metrics(
     # 预设区间
     ytd_start = date_type(today.year, 1, 1)
     periods["YTD"] = _compute("今年以来", ytd_start)
-    periods["1M"] = _compute("近1月", latest_date - relativedelta(months=1))
-    periods["3M"] = _compute("近3月", latest_date - relativedelta(months=3))
-    periods["6M"] = _compute("近6月", latest_date - relativedelta(months=6))
-    periods["1Y"] = _compute("近1年", latest_date - relativedelta(years=1))
-    periods["3Y"] = _compute("近3年", latest_date - relativedelta(years=3))
-    periods["5Y"] = _compute("近5年", latest_date - relativedelta(years=5))
+    periods["1M"] = _compute("近1月", latest_date - relativedelta(months=1), 30)
+    periods["3M"] = _compute("近3月", latest_date - relativedelta(months=3), 90)
+    periods["6M"] = _compute("近6月", latest_date - relativedelta(months=6), 180)
+    periods["1Y"] = _compute("近1年", latest_date - relativedelta(years=1), 365)
+    periods["3Y"] = _compute("近3年", latest_date - relativedelta(years=3), 365 * 3)
+    periods["5Y"] = _compute("近5年", latest_date - relativedelta(years=5), 365 * 5)
     periods["since_inception"] = _compute("成立以来", inception_date)
     periods["since_manager"] = _compute("当前经理任职以来", manager_start)
 
@@ -616,12 +625,16 @@ def get_nav_metrics(
             }
 
     dividend_count = sum(1 for r in all_rows if r.dividend is not None)
-    overall_status = ConclusionStatus.COMPUTED
     all_warnings: list[str] = []
     for p in periods.values():
-        if p.get("status") == "needs_review":
-            overall_status = ConclusionStatus.NEEDS_REVIEW
         all_warnings.extend(p.get("warnings", []))
+    has_computed_period = any(p.get("status") == "computed" for p in periods.values())
+    has_computed_custom = bool(custom and custom.get("status") == "computed")
+    overall_status = (
+        ConclusionStatus.COMPUTED
+        if has_computed_period or has_computed_custom
+        else ConclusionStatus.NEEDS_REVIEW
+    )
 
     evidence = [
         EvidenceRecord(
@@ -929,6 +942,78 @@ def screen_funds(
     limit = min(body.get("limit", 50), 200)
     offset = body.get("offset", 0)
 
+    def _calculate_metrics(fund_code: str) -> dict[str, float | None]:
+        nav_rows = db.scalars(
+            select(FundNAV).where(FundNAV.fund_code == fund_code).order_by(FundNAV.trade_date)
+        ).all()
+        if not nav_rows:
+            return {
+                "annualized_return_1y": None,
+                "annualized_return_3y": None,
+                "max_drawdown_1y": None,
+                "sharpe_ratio_1y": None,
+            }
+        latest = nav_rows[-1].trade_date
+        nav_data = [
+            {
+                "trade_date": n.trade_date,
+                "unit_nav": n.unit_nav,
+                "accumulated_nav": n.accumulated_nav,
+                "adjusted_nav": n.adjusted_nav,
+                "daily_return": n.daily_return,
+            }
+            for n in nav_rows
+        ]
+
+        def _period_metrics(from_date: date_type) -> dict[str, float | None]:
+            sliced = [d for d in nav_data if d["trade_date"] >= from_date]
+            if not sliced:
+                return {}
+            result = calculate_nav_metrics(pd.DataFrame(sliced))
+            return result.metrics
+
+        one_year = _period_metrics(latest - relativedelta(years=1))
+        three_year = _period_metrics(latest - relativedelta(years=3))
+        return {
+            "annualized_return_1y": one_year.get("annualized_return"),
+            "annualized_return_3y": three_year.get("annualized_return"),
+            "max_drawdown_1y": one_year.get("max_drawdown"),
+            "sharpe_ratio_1y": one_year.get("sharpe_ratio"),
+        }
+
+    def _data_completeness(
+        fund: FundMain,
+        latest_scale: float | None,
+        manager_start: date_type | None,
+        mgmt_fee: float | None,
+    ) -> float:
+        nav_count = (
+            db.scalar(
+                select(text("count(*)"))
+                .select_from(FundNAV)
+                .where(FundNAV.fund_code == fund.fund_code)
+            )
+            or 0
+        )
+        holdings_count = (
+            db.scalar(
+                select(text("count(*)"))
+                .select_from(FundDisclosedHoldings)
+                .where(FundDisclosedHoldings.fund_code == fund.fund_code)
+            )
+            or 0
+        )
+        checks = [
+            bool(fund.short_name and fund.category),
+            fund.inception_date is not None,
+            latest_scale is not None,
+            manager_start is not None,
+            mgmt_fee is not None,
+            nav_count >= 20,
+            holdings_count > 0,
+        ]
+        return round(sum(1 for item in checks if item) / len(checks), 4)
+
     # 构建基础查询
     stmt = select(FundMain)
     if filters.get("category"):
@@ -994,17 +1079,34 @@ def screen_funds(
         if mgr_row:
             manager_name = mgr_row
 
+        company_name = None
+        if fund.fund_company_id:
+            company = db.get(FundCompany, fund.fund_company_id)
+            company_name = company.name if company else None
+
+        metrics = _calculate_metrics(fund.fund_code)
+        data_completeness = _data_completeness(fund, latest_scale, manager_start, mgmt_fee)
+        if (
+            filters.get("min_data_completeness") is not None
+            and data_completeness < float(filters["min_data_completeness"])
+        ):
+            continue
+
         results.append({
             "fund_code": fund.fund_code,
             "short_name": fund.short_name,
             "full_name": fund.full_name,
+            "company": company_name,
             "category": fund.category,
             "sub_category": fund.sub_category,
             "inception_date": str(fund.inception_date) if fund.inception_date else None,
             "scale_bn": round(float(latest_scale), 2) if latest_scale else None,
             "manager_name": manager_name,
+            "manager": manager_name,
             "manager_tenure_days": tenure_days,
             "mgmt_fee_pct": round(float(mgmt_fee), 4) if mgmt_fee else None,
+            "metrics": metrics,
+            "data_completeness": data_completeness,
             "custodian_bank": fund.custodian_bank,
             "status": fund.status,
             "benchmark": fund.benchmark,
@@ -1012,37 +1114,12 @@ def screen_funds(
 
     total = len(results)
 
-    # 排序: 如果需要按收益/风险排序，需计算 NAV metrics
     metric_sort_keys = {"annualized_return_1y", "annualized_return_3y", "max_drawdown_1y", "sharpe_ratio_1y"}
     if sort_by in metric_sort_keys:
         for r in results:
-            nav_rows = db.scalars(
-                select(FundNAV).where(FundNAV.fund_code == r["fund_code"]).order_by(FundNAV.trade_date)
-            ).all()
-            latest = nav_rows[-1].trade_date if nav_rows else None
-            nav_data = [
-                {"trade_date": n.trade_date, "unit_nav": n.unit_nav, "accumulated_nav": n.accumulated_nav,
-                 "adjusted_nav": n.adjusted_nav, "daily_return": n.daily_return}
-                for n in nav_rows
-            ]
-            if sort_by == "annualized_return_1y" and latest:
-                sliced = [d for d in nav_data if d["trade_date"] >= latest - relativedelta(years=1)]
-                m = calculate_nav_metrics(pd.DataFrame(sliced))
-                r["_sort_value"] = float(m.metrics.get("annualized_return") or -999)
-            elif sort_by == "annualized_return_3y" and latest:
-                sliced = [d for d in nav_data if d["trade_date"] >= latest - relativedelta(years=3)]
-                m = calculate_nav_metrics(pd.DataFrame(sliced))
-                r["_sort_value"] = float(m.metrics.get("annualized_return") or -999)
-            elif sort_by == "max_drawdown_1y" and latest:
-                sliced = [d for d in nav_data if d["trade_date"] >= latest - relativedelta(years=1)]
-                m = calculate_nav_metrics(pd.DataFrame(sliced))
-                r["_sort_value"] = float(m.metrics.get("max_drawdown") or 0)
-            elif sort_by == "sharpe_ratio_1y" and latest:
-                sliced = [d for d in nav_data if d["trade_date"] >= latest - relativedelta(years=1)]
-                m = calculate_nav_metrics(pd.DataFrame(sliced))
-                r["_sort_value"] = float(m.metrics.get("sharpe_ratio") or -999)
-            else:
-                r["_sort_value"] = 0.0
+            r["_sort_value"] = r.get("metrics", {}).get(sort_by)
+            if r["_sort_value"] is None:
+                r["_sort_value"] = -999 if sort_order == "desc" else 999
         reverse = sort_order == "desc"
         results.sort(key=lambda x: x.get("_sort_value", 0), reverse=reverse)
     elif sort_by == "fund_scale":
@@ -1051,6 +1128,8 @@ def screen_funds(
         results.sort(key=lambda x: x.get("manager_tenure_days", 0), reverse=sort_order == "desc")
     elif sort_by == "inception_date":
         results.sort(key=lambda x: x.get("inception_date", ""), reverse=sort_order == "desc")
+    elif sort_by == "data_completeness":
+        results.sort(key=lambda x: x.get("data_completeness", 0), reverse=sort_order == "desc")
     else:  # fund_code default
         results.sort(key=lambda x: x.get("fund_code", ""), reverse=sort_order == "desc")
 
@@ -1070,7 +1149,18 @@ def screen_funds(
             "platform_version": __version__,
             "implemented": True,
         },
-        evidence=[],
+        evidence=[
+            EvidenceRecord(
+                evidence_id="screen_funds:local_tables",
+                entity_id="fund:screen",
+                evidence_type=EvidenceType.RAW_DATA,
+                source="fund_main/fund_scale/fund_manager_tenure/fund_fee/fund_nav",
+                source_level=DataSourceLevel.LOCAL,
+                data_summary="筛选结果来自本地标准化 ORM 表；收益风险指标按本地 fund_nav 计算",
+                confidence=ConfidenceLevel.MEDIUM,
+                conclusion_status=ConclusionStatus.COMPUTED if total > 0 else ConclusionStatus.OBSERVATION,
+            )
+        ],
         warnings=[f"共 {total} 只基金匹配筛选条件"] if total > 0 else ["无匹配基金"],
         conclusion_status=ConclusionStatus.COMPUTED if total > 0 else ConclusionStatus.OBSERVATION,
     )
@@ -1361,6 +1451,18 @@ def diff_research_packets(
     # 对比两个 packet 的 JSON
     lp = left.packet_json if isinstance(left.packet_json, dict) else {}
     rp = right.packet_json if isinstance(right.packet_json, dict) else {}
+    if not fund_code:
+        fund_code = left.fund_code
+    if left.fund_code != right.fund_code:
+        response = APIResponse(
+            data=None,
+            metadata={"tool": "diff_research_packets", "fund_code": fund_code, "platform_version": __version__},
+            evidence=[],
+            warnings=["左右研究包不属于同一基金，不能进行同基金 diff"],
+            conclusion_status=ConclusionStatus.NEEDS_REVIEW,
+        )
+        return _log_tool_api_call(db, "diff_research_packets", body, response, started_at)
+
     diffs: dict[str, Any] = {}
 
     # 规模变化
@@ -1390,6 +1492,22 @@ def diff_research_packets(
                 metric_diffs[key] = {"left": float(lv), "right": float(rv), "delta": round(float(rv) - float(lv), 4)}
     if metric_diffs:
         diffs["nav_metrics"] = metric_diffs
+
+    # 风格暴露变化
+    lp_exposure = (lp.get("exposure") or {}).get("exposure_values", {}) if isinstance(lp.get("exposure"), dict) else {}
+    rp_exposure = (rp.get("exposure") or {}).get("exposure_values", {}) if isinstance(rp.get("exposure"), dict) else {}
+    exposure_diffs = {}
+    for key in set(lp_exposure) | set(rp_exposure):
+        lv = lp_exposure.get(key)
+        rv = rp_exposure.get(key)
+        if (
+            lv is not None and rv is not None
+            and isinstance(lv, (int, float)) and isinstance(rv, (int, float))
+            and abs(float(lv) - float(rv)) > 0.0001
+        ):
+            exposure_diffs[key] = {"left": float(lv), "right": float(rv), "delta": round(float(rv) - float(lv), 4)}
+    if exposure_diffs:
+        diffs["exposure"] = exposure_diffs
 
     # 持仓变化
     def _get_holdings(p: dict) -> list:
@@ -1425,6 +1543,36 @@ def diff_research_packets(
     if lr != rr:
         diffs["risk_alerts"] = {"left": lr, "right": rr}
 
+    # 证据与结论状态变化
+    def _evidence_ids(p: dict) -> set[str]:
+        evidence_items = p.get("evidence", [])
+        if not isinstance(evidence_items, list):
+            return set()
+        return {
+            str(item.get("evidence_id"))
+            for item in evidence_items
+            if isinstance(item, dict) and item.get("evidence_id")
+        }
+
+    le = _evidence_ids(lp)
+    re = _evidence_ids(rp)
+    if le != re:
+        diffs["evidence"] = {
+            "new": sorted(re - le),
+            "removed": sorted(le - re),
+            "unchanged_count": len(le & re),
+        }
+
+    lc = lp.get("conclusion_map", {}) if isinstance(lp.get("conclusion_map"), dict) else {}
+    rc = rp.get("conclusion_map", {}) if isinstance(rp.get("conclusion_map"), dict) else {}
+    conclusion_diffs = {
+        key: {"left": lc.get(key), "right": rc.get(key)}
+        for key in set(lc) | set(rc)
+        if lc.get(key) != rc.get(key)
+    }
+    if conclusion_diffs:
+        diffs["conclusion_status"] = conclusion_diffs
+
     # 汇总
     changed = len(diffs) > 0
     response = APIResponse(
@@ -1441,7 +1589,30 @@ def diff_research_packets(
             "platform_version": __version__,
             "implemented": True,
         },
-        evidence=[],
+        evidence=[
+            EvidenceRecord(
+                evidence_id=f"research_packet:{left.packet_id}",
+                entity_id=f"fund:{left.fund_code}",
+                evidence_type=EvidenceType.RAW_DATA,
+                source="research_packet",
+                source_level=DataSourceLevel.LOCAL,
+                date_range=(left.data_date, left.data_date),
+                data_summary="左侧 Research Packet 快照",
+                confidence=ConfidenceLevel.MEDIUM,
+                conclusion_status=ConclusionStatus.OBSERVATION,
+            ),
+            EvidenceRecord(
+                evidence_id=f"research_packet:{right.packet_id}",
+                entity_id=f"fund:{right.fund_code}",
+                evidence_type=EvidenceType.RAW_DATA,
+                source="research_packet",
+                source_level=DataSourceLevel.LOCAL,
+                date_range=(right.data_date, right.data_date),
+                data_summary="右侧 Research Packet 快照",
+                confidence=ConfidenceLevel.MEDIUM,
+                conclusion_status=ConclusionStatus.OBSERVATION,
+            ),
+        ],
         warnings=warnings if changed else [*warnings, "两个研究包在各模块上均无显著差异"],
         conclusion_status=ConclusionStatus.OBSERVATION if changed else ConclusionStatus.COMPUTED,
     )

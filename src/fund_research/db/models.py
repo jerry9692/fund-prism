@@ -649,3 +649,14 @@ class ToolAPICallLog(Base):
 
     def __repr__(self) -> str:
         return f"<ToolAPICallLog({self.call_id}) {self.tool_name}>"
+
+
+from fund_research.db.models_phase2 import (  # noqa: E402,F401
+    AlgorithmExperiment,
+    DynamicAttributionResult,
+    ExperimentResult,
+    ReviewerAnnotation,
+    ScoringBacktest,
+    ScoringResult,
+    SimulatedHoldingResult,
+)

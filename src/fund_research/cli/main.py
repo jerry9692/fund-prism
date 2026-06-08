@@ -617,7 +617,7 @@ def update(
 
 ExportFormatOption = Annotated[
     str,
-    typer.Option("--format", "-f", help="导出格式: json / markdown / csv"),
+    typer.Option("--format", help="导出格式: json / markdown / csv"),
 ]
 ExportOutputOption = Annotated[
     str | None,
@@ -666,8 +666,18 @@ def export(
     engine = create_engine_from_path(db_path)
     session_factory = sessionmaker(bind=engine)
 
-    output_dir = _Path(output) if output else _Path("./exports")
-    output_dir.mkdir(parents=True, exist_ok=True)
+    output_path = _Path(output) if output else None
+
+    def _resolve_output(default_name: str) -> _Path:
+        if output_path is None:
+            out_dir = _Path("./exports")
+            out_dir.mkdir(parents=True, exist_ok=True)
+            return out_dir / default_name
+        if output_path.suffix:
+            output_path.parent.mkdir(parents=True, exist_ok=True)
+            return output_path
+        output_path.mkdir(parents=True, exist_ok=True)
+        return output_path / default_name
 
     with session_factory() as session:
         if entity == "packet":
@@ -705,13 +715,13 @@ def export(
                 )
 
             if format == "json":
-                out_path = output_dir / f"{fc}_packet_{ts}.json"
+                out_path = _resolve_output(f"{fc}_packet_{ts}.json")
                 content = _json.dumps(record.packet_json, ensure_ascii=False, indent=2)
                 out_path.write_text(content, encoding="utf-8")
                 console.print(f"[green]JSON 已导出:[/] {out_path}")
 
             elif format == "markdown":
-                out_path = output_dir / f"{fc}_packet_{ts}.md"
+                out_path = _resolve_output(f"{fc}_packet_{ts}.md")
                 disclaimer = get_settings().disclaimer
                 md = record.markdown_text or ""
                 header = (
@@ -736,7 +746,7 @@ def export(
                 console.print("[yellow]screen 导出仅支持 CSV 格式，已自动切换[/]")
                 format = "csv"
 
-            out_path = output_dir / f"screen_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv"
+            out_path = _resolve_output(f"screen_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv")
             filter_dict = _json.loads(filters) if filters else {}
             from fund_research.api.router import screen_funds as _screen
 

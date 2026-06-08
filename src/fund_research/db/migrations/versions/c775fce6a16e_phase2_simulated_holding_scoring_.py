@@ -6,17 +6,16 @@ Create Date: 2026-06-08 15:15:31.264713
 
 """
 
-from typing import Sequence, Union
+from collections.abc import Sequence
 
-from alembic import op
 import sqlalchemy as sa
-
+from alembic import op
 
 # revision identifiers, used by Alembic.
 revision: str = "c775fce6a16e"
-down_revision: Union[str, None] = "20260607_0001"
-branch_labels: Union[str, Sequence[str], None] = None
-depends_on: Union[str, Sequence[str], None] = None
+down_revision: str | None = "20260607_0001"
+branch_labels: str | Sequence[str] | None = None
+depends_on: str | Sequence[str] | None = None
 
 
 def upgrade() -> None:
@@ -70,7 +69,7 @@ def upgrade() -> None:
     op.create_table(
         "experiment_result",
         sa.Column("id", sa.BigInteger(), autoincrement=False, nullable=False),
-        sa.Column("experiment_id", sa.Integer(), nullable=False),
+        sa.Column("experiment_id", sa.BigInteger(), nullable=False),
         sa.Column("fund_code", sa.String(length=20), nullable=False),
         sa.Column("calc_date", sa.Date(), nullable=False),
         sa.Column("is_success", sa.Boolean(), nullable=False, server_default=sa.text("1")),
@@ -78,6 +77,7 @@ def upgrade() -> None:
         sa.Column("error_message", sa.Text(), nullable=True),
         sa.Column("warnings", sa.JSON(), nullable=True),
         sa.Column("created_at", sa.DateTime(), nullable=False, server_default=sa.func.now()),
+        sa.ForeignKeyConstraint(["experiment_id"], ["algorithm_experiment.id"]),
         sa.PrimaryKeyConstraint("id"),
     )
     op.create_index("ix_experiment_result_experiment_id", "experiment_result", ["experiment_id"])
