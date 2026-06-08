@@ -188,7 +188,8 @@ export const api = {
 
   getResearchPacket: (code: string, template = "single_fund_checkup") =>
     request<{ packet_id: string; packet: Record<string, unknown> }>(
-      `/api/v1/research/packet?fund_code=${code}&template=${template}`
+      `/api/v1/research/packet?fund_code=${code}&template=${template}`,
+      { method: "POST" }
     ),
 
   diffPackets: (body: Record<string, unknown>) =>
