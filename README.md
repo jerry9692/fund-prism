@@ -4,11 +4,9 @@
 
 面向个人研究者、量化学习者和 AI Agent 的可信基金研究底座。在免费公开数据约束下，提供可解释、可追踪、可复现的基金研究能力。
 
-> ✅ **第零阶段与一期开工前置验证完成（2026-06-04）— 30 只样本基金 B 级便捷数据 100% 拉取成功，一期可开工**
+> ✅ **Phase 1 完成（2026-06-08）— 7 个 Tool API + 4 个分析模块 + CLI 数据管线和导出，MVP 验收全部通关**
 >
-> 风格指数、分红、费率替代路径和巨潮 A 级 PDF 证据最小闭环已验证。详见 [pre_phase1_readiness.md](./docs/phase0/pre_phase1_readiness.md)。
->
-> 详细需求文档：[需求书 v0.4](./AI-oriented开源个人基金研究平台需求书_v0.4.md) | 第零阶段总结：[conclusion.md](./docs/phase0/conclusion.md)
+> 详细需求文档：[需求书 v0.4](./AI-oriented开源个人基金研究平台需求书_v0.4.md) | Phase 1 总结：[completion_report.md](./docs/phase1/completion_report.md)
 
 ## 核心理念
 
@@ -108,15 +106,17 @@ fund-research/
 └── .gitignore
 ```
 
-## 一期 Tool API（5 个接口）
+## 一期 Tool API（7 个接口）
 
 | 接口 | 说明 |
 |------|------|
 | `GET /api/v1/funds/{code}/profile` | 基金基本信息、经理、分类、规模、费率 |
-| `GET /api/v1/funds/{code}/nav-metrics` | 净值指标：收益、回撤、夏普、卡玛等 |
+| `GET /api/v1/funds/{code}/nav-metrics` | 多区间净值指标（YTD/1M/3M/6M/1Y/3Y/5Y/成立以来/经理任职以来） |
 | `GET /api/v1/funds/{code}/holdings` | 公开披露持仓（按报告期） |
+| `POST /api/v1/funds/screen` | 基金筛选与排序 |
 | `POST /api/v1/analysis/exposure` | 风格/行业暴露 + 静态归因 |
 | `POST /api/v1/research/packet` | 生成研究包（JSON + Markdown） |
+| `POST /api/v1/research/diff` | 研究包差异对比 |
 
 每个接口返回统一结构：`{data, metadata, evidence, warnings, conclusion_status}`
 
@@ -126,7 +126,7 @@ fund-research/
 |------|------|------|
 | 框架搭建 | 项目结构、依赖、数据模型、API 骨架 | ✅ 完成 |
 | 第零阶段 | 数据可得性与口径试验 | ✅ 完成 |
-| 一期 | 可信 AI-ready MVP（单基金体检 + 研究包 + 证据链） | 🚧 进行中 |
+| 一期 | 可信 AI-ready MVP（单基金体检 + 研究包 + 证据链） | ✅ 完成 |
 | 二期 | 算法验证与受控估计（模拟持仓实验、综合评分基础版） | 📋 计划中 |
 | 三期 | 发现能力与研究工作台（基金画像指纹、相似基金、异常发现） | 📋 计划中 |
 | 四期 | ETF/指数、组合与更多资产类型 | 📋 计划中 |
