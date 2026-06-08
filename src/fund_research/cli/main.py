@@ -611,6 +611,153 @@ def update(
         console.print("[green]OK[/] 数据更新完成")
 
 
+# ============================================================
+# export — 结构化导出
+# ============================================================
+
+ExportFormatOption = Annotated[
+    str,
+    typer.Option("--format", "-f", help="导出格式: json / markdown / csv"),
+]
+ExportOutputOption = Annotated[
+    str | None,
+    typer.Option("--output", "-o", help="输出文件路径；不传则输出到 ./exports/"),
+]
+ExportLatestOption = Annotated[
+    bool,
+    typer.Option("--latest", help="导出最新研究包（无需指定 packet_id）"),
+]
+ExportPacketIdOption = Annotated[
+    str | None,
+    typer.Option("--packet-id", help="指定研究包 ID"),
+]
+ExportFiltersOption = Annotated[
+    str | None,
+    typer.Option("--filters", help="筛选条件 JSON（screen 导出用）"),
+]
+
+
+@app.command()
+def export(
+    entity: Annotated[
+        str,
+        typer.Argument(help="导出类型: packet / screen"),
+    ],
+    fund_code: FundCodeOption = None,
+    format: ExportFormatOption = "markdown",
+    output: ExportOutputOption = None,
+    latest: ExportLatestOption = False,
+    packet_id: ExportPacketIdOption = None,
+    filters: ExportFiltersOption = None,
+    db_path: DbPathOption = None,
+) -> None:
+    """导出研究包或筛选结果。"""
+    import json as _json
+    from datetime import datetime
+    from pathlib import Path as _Path
+
+    from sqlalchemy import select
+    from sqlalchemy.orm import sessionmaker
+
+    from fund_research.config.settings import get_settings
+    from fund_research.db.models import ResearchPacketRecord
+    from fund_research.db.session import create_engine_from_path
+
+    engine = create_engine_from_path(db_path)
+    session_factory = sessionmaker(bind=engine)
+
+    output_dir = _Path(output) if output else _Path("./exports")
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    with session_factory() as session:
+        if entity == "packet":
+            record = None
+            if packet_id:
+                record = session.scalar(
+                    select(ResearchPacketRecord).where(ResearchPacketRecord.packet_id == packet_id)
+                )
+            elif latest and fund_code:
+                record = session.scalar(
+                    select(ResearchPacketRecord).where(
+                        ResearchPacketRecord.fund_code == fund_code[0],
+                        ResearchPacketRecord.is_latest,
+                    )
+                )
+            elif fund_code:
+                record = session.scalar(
+                    select(ResearchPacketRecord).where(
+                        ResearchPacketRecord.fund_code == fund_code[0]
+                    ).order_by(ResearchPacketRecord.generated_at.desc()).limit(1)
+                )
+
+            if not record:
+                console.print("[red]未找到研究包[/]")
+                raise typer.Exit(code=1)
+
+            fc = fund_code[0] if fund_code else record.fund_code
+            ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+
+            def _source_levels(rec) -> str:
+                if not isinstance(rec.packet_json, dict):
+                    return "N/A"
+                return ", ".join(
+                    rec.packet_json.get("metadata", {}).get("data_source_levels", [])
+                )
+
+            if format == "json":
+                out_path = output_dir / f"{fc}_packet_{ts}.json"
+                content = _json.dumps(record.packet_json, ensure_ascii=False, indent=2)
+                out_path.write_text(content, encoding="utf-8")
+                console.print(f"[green]JSON 已导出:[/] {out_path}")
+
+            elif format == "markdown":
+                out_path = output_dir / f"{fc}_packet_{ts}.md"
+                disclaimer = get_settings().disclaimer
+                md = record.markdown_text or ""
+                header = (
+                    f"# 基金研究包: {fc}\n\n"
+                    f"> 生成日期: {record.generated_at.date().isoformat() if record.generated_at else 'N/A'}"
+                    f" | 数据日期: {record.data_date}\n"
+                    f"> 平台版本: {record.platform_version}"
+                    f" | 数据源等级: {_source_levels(record)}\n"
+                    f"> 整体置信度: {record.overall_confidence}\n"
+                    f"> 免责声明: {disclaimer}\n\n---\n\n"
+                )
+                content = header + md
+                out_path.write_text(content, encoding="utf-8")
+                console.print(f"[green]Markdown 已导出:[/] {out_path}")
+
+            else:
+                console.print(f"[red]不支持的格式:[/] {format}")
+                raise typer.Exit(code=1)
+
+        elif entity == "screen":
+            if format != "csv":
+                console.print("[yellow]screen 导出仅支持 CSV 格式，已自动切换[/]")
+                format = "csv"
+
+            out_path = output_dir / f"screen_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv"
+            filter_dict = _json.loads(filters) if filters else {}
+            from fund_research.api.router import screen_funds as _screen
+
+            result = _screen(session, filter_dict)
+            funds = (result.data or {}).get("funds", [])
+            if not funds:
+                console.print("[yellow]无筛选结果[/]")
+                raise typer.Exit(code=0)
+
+            import csv
+            with open(out_path, "w", newline="", encoding="utf-8-sig") as f:
+                writer = csv.DictWriter(f, fieldnames=funds[0].keys())
+                writer.writeheader()
+                writer.writerows(funds)
+            console.print(f"[green]CSV 已导出:[/] {out_path} ({len(funds)} 条)")
+
+        else:
+            console.print(f"[red]不支持的导出类型:[/] {entity}")
+            raise typer.Exit(code=1)
+
+
 @app.callback()
 def main(
     log_level: str = typer.Option("INFO", "--log-level", "-l", help="日志级别"),
