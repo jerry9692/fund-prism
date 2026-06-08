@@ -62,6 +62,7 @@ from fund_research.db.models import (
     FundManagerTenure,
     FundNAV,
     FundScale,
+    ResearchPacketRecord,
     StaticAttributionResult,
     StockDaily,
     StyleExposureResult,
@@ -509,74 +510,164 @@ def get_nav_metrics(
     """
     获取净值指标：收益、回撤、波动、夏普、卡玛、索提诺、信息比率等。
 
-    支持多区间：今年以来、近1/3/6月、近1/3/5年、成立以来、经理任职以来。
+    返回多区间结果：YTD / 1M / 3M / 6M / 1Y / 3Y / 5Y / since_inception / since_manager。
     每个指标附带计算口径和基准选择。
     """
-    started_at = perf_counter()
-    stmt = select(FundNAV).where(FundNAV.fund_code == fund_code)
-    if start:
-        stmt = stmt.where(FundNAV.trade_date >= start)
-    if end:
-        stmt = stmt.where(FundNAV.trade_date <= end)
-    rows = db.scalars(stmt.order_by(FundNAV.trade_date)).all()
+    from datetime import date as date_type
 
-    nav_data = [
-        {
-            "trade_date": row.trade_date,
-            "unit_nav": row.unit_nav,
-            "accumulated_nav": row.accumulated_nav,
-            "adjusted_nav": row.adjusted_nav,
-            "daily_return": row.daily_return,
-            "dividend": row.dividend,
-            "split_ratio": row.split_ratio,
-        }
-        for row in rows
-    ]
-    result = calculate_nav_metrics(pd.DataFrame(nav_data))
-    dividend_count = sum(1 for row in rows if row.dividend is not None)
-    conclusion_status = (
-        ConclusionStatus.COMPUTED if result.is_sufficient else ConclusionStatus.NEEDS_REVIEW
-    )
-    evidence = []
-    if rows:
-        evidence.append(
-            EvidenceRecord(
-                evidence_id=f"nav:{fund_code}:{result.start_date}:{result.end_date}",
-                entity_id=f"fund:{fund_code}",
-                evidence_type=EvidenceType.TIME_SERIES,
-                source="fund_nav",
-                source_level=DataSourceLevel.B,
-                date_range=(result.start_date, result.end_date),
-                algorithm_metadata=AlgorithmMetadata(
-                    algorithm_name=NAV_METRICS_ALGORITHM_NAME,
-                    algorithm_version=NAV_METRICS_ALGORITHM_VERSION,
-                    parameters={
-                        "start": str(start) if start else None,
-                        "end": str(end) if end else None,
-                        "trading_days_per_year": 252,
-                    },
-                    confidence=(
-                        ConfidenceLevel.MEDIUM
-                        if result.is_sufficient
-                        else ConfidenceLevel.NEEDS_REVIEW
-                    ),
-                    warnings=result.warnings,
-                ),
-                data_summary=(
-                    f"净值记录 {len(rows)} 条，可用收益率 {result.observations} 条，"
-                    f"分红记录 {dividend_count} 条"
-                ),
-                confidence=(
-                    ConfidenceLevel.MEDIUM
-                    if result.is_sufficient
-                    else ConfidenceLevel.NEEDS_REVIEW
-                ),
-                conclusion_status=conclusion_status,
-            )
+    from dateutil.relativedelta import relativedelta
+
+    started_at = perf_counter()
+
+    # 全量净值数据
+    all_rows = db.scalars(
+        select(FundNAV).where(FundNAV.fund_code == fund_code).order_by(FundNAV.trade_date)
+    ).all()
+    if not all_rows:
+        response = APIResponse(
+            data=None,
+            metadata={"tool": "get_nav_metrics", "fund_code": fund_code, "platform_version": __version__},
+            evidence=[],
+            warnings=["基金净值数据不存在或尚未更新到本地数据库"],
+            conclusion_status=ConclusionStatus.NEEDS_REVIEW,
         )
+        return _log_tool_api_call(db, "get_nav_metrics", {"fund_code": fund_code}, response, started_at)
+
+    latest_date = all_rows[-1].trade_date
+
+    # 基金成立日和经理任职日（用于 since_inception / since_manager）
+    fund_row = db.scalar(select(FundMain).where(FundMain.fund_code == fund_code))
+    inception_date = fund_row.inception_date if fund_row else None
+    manager_start = db.scalar(
+        select(FundManagerTenure.start_date).where(
+            FundManagerTenure.fund_code == fund_code,
+            FundManagerTenure.is_current,
+        )
+    )
+
+    def _slice(from_date: date_type | None) -> list[dict]:
+        if from_date is None:
+            return []
+        return [
+            {
+                "trade_date": r.trade_date,
+                "unit_nav": r.unit_nav,
+                "accumulated_nav": r.accumulated_nav,
+                "adjusted_nav": r.adjusted_nav,
+                "daily_return": r.daily_return,
+                "dividend": r.dividend,
+                "split_ratio": r.split_ratio,
+            }
+            for r in all_rows
+            if r.trade_date >= from_date
+        ]
+
+    def _compute(label: str, from_date: date_type | None) -> dict:
+        rows_slice = _slice(from_date)
+        if not rows_slice:
+            return {"label": label, "status": "no_data", "warnings": [f"{label}: 无可用净值数据"]}
+        result = calculate_nav_metrics(pd.DataFrame(rows_slice))
+        return {
+            "label": label,
+            "status": "computed" if result.is_sufficient else "needs_review",
+            "data": result.to_data(),
+            "start_date": str(result.start_date) if result.start_date else None,
+            "end_date": str(result.end_date) if result.end_date else None,
+            "observations": result.observations,
+            "warnings": result.warnings,
+        }
+
+    today = date_type.today()
+    periods: dict[str, dict] = {}
+
+    # 预设区间
+    ytd_start = date_type(today.year, 1, 1)
+    periods["YTD"] = _compute("今年以来", ytd_start)
+    periods["1M"] = _compute("近1月", latest_date - relativedelta(months=1))
+    periods["3M"] = _compute("近3月", latest_date - relativedelta(months=3))
+    periods["6M"] = _compute("近6月", latest_date - relativedelta(months=6))
+    periods["1Y"] = _compute("近1年", latest_date - relativedelta(years=1))
+    periods["3Y"] = _compute("近3年", latest_date - relativedelta(years=3))
+    periods["5Y"] = _compute("近5年", latest_date - relativedelta(years=5))
+    periods["since_inception"] = _compute("成立以来", inception_date)
+    periods["since_manager"] = _compute("当前经理任职以来", manager_start)
+
+    # 自定义区间
+    custom = None
+    if start or end:
+        rows_slice = _slice(start) if start else [
+            {"trade_date": r.trade_date, "unit_nav": r.unit_nav, "accumulated_nav": r.accumulated_nav,
+             "adjusted_nav": r.adjusted_nav, "daily_return": r.daily_return, "dividend": r.dividend,
+             "split_ratio": r.split_ratio}
+            for r in all_rows
+        ]
+        if end and rows_slice:
+            rows_slice = [r for r in rows_slice if r["trade_date"] <= end]
+        if rows_slice:
+            custom_result = calculate_nav_metrics(pd.DataFrame(rows_slice))
+            custom = {
+                "label": f"{start or '最早'} ~ {end or '最新'}",
+                "status": "computed" if custom_result.is_sufficient else "needs_review",
+                "data": custom_result.to_data(),
+                "start_date": str(custom_result.start_date) if custom_result.start_date else None,
+                "end_date": str(custom_result.end_date) if custom_result.end_date else None,
+                "observations": custom_result.observations,
+                "warnings": custom_result.warnings,
+            }
+
+    dividend_count = sum(1 for r in all_rows if r.dividend is not None)
+    overall_status = ConclusionStatus.COMPUTED
+    all_warnings: list[str] = []
+    for p in periods.values():
+        if p.get("status") == "needs_review":
+            overall_status = ConclusionStatus.NEEDS_REVIEW
+        all_warnings.extend(p.get("warnings", []))
+
+    evidence = [
+        EvidenceRecord(
+            evidence_id=f"nav:{fund_code}:{all_rows[0].trade_date}:{latest_date}",
+            entity_id=f"fund:{fund_code}",
+            evidence_type=EvidenceType.TIME_SERIES,
+            source="fund_nav",
+            source_level=DataSourceLevel.B,
+            date_range=(all_rows[0].trade_date, latest_date),
+            algorithm_metadata=AlgorithmMetadata(
+                algorithm_name=NAV_METRICS_ALGORITHM_NAME,
+                algorithm_version=NAV_METRICS_ALGORITHM_VERSION,
+                parameters={"trading_days_per_year": 252},
+                confidence=ConfidenceLevel.MEDIUM,
+                warnings=all_warnings,
+            ),
+            data_summary=(
+                f"净值记录 {len(all_rows)} 条，分红记录 {dividend_count} 条，"
+                f"覆盖 {len(periods)} 个预设区间"
+            ),
+            confidence=ConfidenceLevel.MEDIUM,
+            conclusion_status=overall_status,
+        )
+    ]
 
     response = APIResponse(
-        data=result.to_data() if rows else None,
+        data={
+            "fund_code": fund_code,
+            "periods": {k: {
+                "label": v.get("label"), "status": v.get("status"),
+                "metrics": v.get("data", {}).get("metrics"),
+                "observations": v.get("observations"),
+                "start_date": v.get("start_date"),
+                "end_date": v.get("end_date"),
+                "warnings": v.get("warnings"),
+            } for k, v in periods.items()},
+            "custom": {
+                "label": custom.get("label"),
+                "status": custom.get("status"),
+                "metrics": custom.get("data", {}).get("metrics"),
+                "observations": custom.get("observations"),
+                "start_date": custom.get("start_date"),
+                "end_date": custom.get("end_date"),
+                "warnings": custom.get("warnings"),
+            } if custom else None,
+        },
         metadata={
             "tool": "get_nav_metrics",
             "fund_code": fund_code,
@@ -586,23 +677,19 @@ def get_nav_metrics(
             "implemented": True,
             "algorithm_name": NAV_METRICS_ALGORITHM_NAME,
             "algorithm_version": NAV_METRICS_ALGORITHM_VERSION,
+            "inception_date": str(inception_date) if inception_date else None,
+            "manager_start": str(manager_start) if manager_start else None,
             "dividend_count": dividend_count,
             "data_snapshots": _latest_snapshot_summaries(db, ["fund_nav", "fund_dividends"]),
         },
         evidence=evidence,
-        warnings=result.warnings if rows else ["基金净值数据不存在或尚未更新到本地数据库"],
-        conclusion_status=conclusion_status,
+        warnings=all_warnings,
+        conclusion_status=overall_status,
     )
     return _log_tool_api_call(
-        db,
-        "get_nav_metrics",
-        {
-            "fund_code": fund_code,
-            "start": str(start) if start else None,
-            "end": str(end) if end else None,
-        },
-        response,
-        started_at,
+        db, "get_nav_metrics",
+        {"fund_code": fund_code, "start": str(start) if start else None, "end": str(end) if end else None},
+        response, started_at,
     )
 
 
@@ -799,6 +886,195 @@ def get_disclosed_holdings(
         response,
         started_at,
     )
+
+
+# ============================================================
+# 3.5 screen_funds — 基金筛选与排序
+# ============================================================
+
+
+@router.post("/funds/screen")
+def screen_funds(
+    db: SessionDep,
+    body: dict | None = None,
+) -> APIResponse[dict]:
+    """
+    按条件筛选基金并排序。
+
+    请求体示例:
+    {
+        "filters": {
+            "category": "混合型-偏股",
+            "min_inception_years": 3,
+            "min_scale_bn": 1.0,
+            "max_scale_bn": null,
+            "min_manager_tenure_days": 365,
+            "max_mgmt_fee_pct": null
+        },
+        "sort_by": "annualized_return_3y",
+        "sort_order": "desc",
+        "limit": 50,
+        "offset": 0
+    }
+    """
+    from datetime import date as date_type
+
+    from dateutil.relativedelta import relativedelta
+
+    started_at = perf_counter()
+    body = body or {}
+    filters = body.get("filters", {})
+    sort_by = body.get("sort_by", "fund_code")
+    sort_order = body.get("sort_order", "asc")
+    limit = min(body.get("limit", 50), 200)
+    offset = body.get("offset", 0)
+
+    # 构建基础查询
+    stmt = select(FundMain)
+    if filters.get("category"):
+        stmt = stmt.where(FundMain.category == filters["category"])
+    if filters.get("min_inception_years"):
+        cutoff = date_type.today() - relativedelta(years=int(filters["min_inception_years"]))
+        stmt = stmt.where(FundMain.inception_date <= cutoff)
+
+    candidates = db.scalars(stmt).all()
+    if not candidates:
+        response = APIResponse(
+            data={"funds": [], "total": 0},
+            metadata={"tool": "screen_funds", "filters": filters, "platform_version": __version__},
+            evidence=[],
+            warnings=["无匹配基金"],
+            conclusion_status=ConclusionStatus.OBSERVATION,
+        )
+        return _log_tool_api_call(db, "screen_funds", body, response, started_at)
+
+    # 收集筛选数据
+    results = []
+    for fund in candidates:
+        # 规模过滤
+        latest_scale = db.scalar(
+            select(FundScale.total_nav)
+            .where(FundScale.fund_code == fund.fund_code)
+            .order_by(FundScale.report_date.desc()).limit(1)
+        )
+        if filters.get("min_scale_bn") and (latest_scale is None or latest_scale < float(filters["min_scale_bn"])):
+            continue
+        if filters.get("max_scale_bn") and latest_scale and latest_scale > float(filters["max_scale_bn"]):
+            continue
+
+        # 经理任职天数过滤
+        manager_start = db.scalar(
+            select(FundManagerTenure.start_date).where(
+                FundManagerTenure.fund_code == fund.fund_code,
+                FundManagerTenure.is_current,
+            )
+        )
+        tenure_days = (date_type.today() - manager_start).days if manager_start else 0
+        if filters.get("min_manager_tenure_days") and tenure_days < int(filters["min_manager_tenure_days"]):
+            continue
+
+        # 费率过滤
+        mgmt_fee = None
+        fee_row = db.scalar(
+            select(FundFee).where(FundFee.fund_code == fund.fund_code).order_by(FundFee.effective_date.desc()).limit(1)
+        )
+        if fee_row:
+            mgmt_fee = fee_row.mgmt_fee_pct
+        if filters.get("max_mgmt_fee_pct") and mgmt_fee and mgmt_fee > float(filters["max_mgmt_fee_pct"]):
+            continue
+
+        manager_name = None
+        mgr_row = db.scalar(
+            select(FundManager.name)
+            .join(FundManagerTenure, FundManager.manager_id == FundManagerTenure.manager_id)
+            .where(
+                FundManagerTenure.fund_code == fund.fund_code, FundManagerTenure.is_current
+            )
+        )
+        if mgr_row:
+            manager_name = mgr_row
+
+        results.append({
+            "fund_code": fund.fund_code,
+            "short_name": fund.short_name,
+            "full_name": fund.full_name,
+            "category": fund.category,
+            "sub_category": fund.sub_category,
+            "inception_date": str(fund.inception_date) if fund.inception_date else None,
+            "scale_bn": round(float(latest_scale), 2) if latest_scale else None,
+            "manager_name": manager_name,
+            "manager_tenure_days": tenure_days,
+            "mgmt_fee_pct": round(float(mgmt_fee), 4) if mgmt_fee else None,
+            "custodian_bank": fund.custodian_bank,
+            "status": fund.status,
+            "benchmark": fund.benchmark,
+        })
+
+    total = len(results)
+
+    # 排序: 如果需要按收益/风险排序，需计算 NAV metrics
+    metric_sort_keys = {"annualized_return_1y", "annualized_return_3y", "max_drawdown_1y", "sharpe_ratio_1y"}
+    if sort_by in metric_sort_keys:
+        for r in results:
+            nav_rows = db.scalars(
+                select(FundNAV).where(FundNAV.fund_code == r["fund_code"]).order_by(FundNAV.trade_date)
+            ).all()
+            latest = nav_rows[-1].trade_date if nav_rows else None
+            nav_data = [
+                {"trade_date": n.trade_date, "unit_nav": n.unit_nav, "accumulated_nav": n.accumulated_nav,
+                 "adjusted_nav": n.adjusted_nav, "daily_return": n.daily_return}
+                for n in nav_rows
+            ]
+            if sort_by == "annualized_return_1y" and latest:
+                sliced = [d for d in nav_data if d["trade_date"] >= latest - relativedelta(years=1)]
+                m = calculate_nav_metrics(pd.DataFrame(sliced))
+                r["_sort_value"] = float(m.metrics.get("annualized_return") or -999)
+            elif sort_by == "annualized_return_3y" and latest:
+                sliced = [d for d in nav_data if d["trade_date"] >= latest - relativedelta(years=3)]
+                m = calculate_nav_metrics(pd.DataFrame(sliced))
+                r["_sort_value"] = float(m.metrics.get("annualized_return") or -999)
+            elif sort_by == "max_drawdown_1y" and latest:
+                sliced = [d for d in nav_data if d["trade_date"] >= latest - relativedelta(years=1)]
+                m = calculate_nav_metrics(pd.DataFrame(sliced))
+                r["_sort_value"] = float(m.metrics.get("max_drawdown") or 0)
+            elif sort_by == "sharpe_ratio_1y" and latest:
+                sliced = [d for d in nav_data if d["trade_date"] >= latest - relativedelta(years=1)]
+                m = calculate_nav_metrics(pd.DataFrame(sliced))
+                r["_sort_value"] = float(m.metrics.get("sharpe_ratio") or -999)
+            else:
+                r["_sort_value"] = 0.0
+        reverse = sort_order == "desc"
+        results.sort(key=lambda x: x.get("_sort_value", 0), reverse=reverse)
+    elif sort_by == "fund_scale":
+        results.sort(key=lambda x: x.get("scale_bn") or 0, reverse=sort_order == "desc")
+    elif sort_by == "manager_tenure_days":
+        results.sort(key=lambda x: x.get("manager_tenure_days", 0), reverse=sort_order == "desc")
+    elif sort_by == "inception_date":
+        results.sort(key=lambda x: x.get("inception_date", ""), reverse=sort_order == "desc")
+    else:  # fund_code default
+        results.sort(key=lambda x: x.get("fund_code", ""), reverse=sort_order == "desc")
+
+    # 分页
+    paged = results[offset:offset + limit]
+    # 去掉内部排序字段
+    for r in paged:
+        r.pop("_sort_value", None)
+
+    response = APIResponse(
+        data={"funds": paged, "total": total, "limit": limit, "offset": offset},
+        metadata={
+            "tool": "screen_funds",
+            "filters": filters,
+            "sort_by": sort_by,
+            "sort_order": sort_order,
+            "platform_version": __version__,
+            "implemented": True,
+        },
+        evidence=[],
+        warnings=[f"共 {total} 只基金匹配筛选条件"] if total > 0 else ["无匹配基金"],
+        conclusion_status=ConclusionStatus.COMPUTED if total > 0 else ConclusionStatus.OBSERVATION,
+    )
+    return _log_tool_api_call(db, "screen_funds", body, response, started_at)
 
 
 # ============================================================
@@ -1006,6 +1282,170 @@ def run_exposure_analysis(
         response,
         started_at,
     )
+
+
+# ============================================================
+# 4.5 diff_research_packets — 研究包差异对比
+# ============================================================
+
+
+@router.post("/research/diff")
+def diff_research_packets(
+    db: SessionDep,
+    body: dict | None = None,
+) -> APIResponse[dict]:
+    """
+    对比同一基金两个日期的 Research Packet。
+
+    请求体:
+    {
+        "fund_code": "000001",
+        "left_snapshot": "2026-03-31",
+        "right_snapshot": "2026-06-08"
+    }
+    或:
+    {
+        "fund_code": "000001",
+        "left_packet_id": "pkt_abc",
+        "right_packet_id": "pkt_def"
+    }
+    """
+    from datetime import date as date_type
+
+    started_at = perf_counter()
+    body = body or {}
+    fund_code = body.get("fund_code", "")
+    warnings: list[str] = []
+
+    # 获取两个 packet
+    left = None
+    right = None
+    if body.get("left_packet_id"):
+        left = db.scalar(
+            select(ResearchPacketRecord).where(ResearchPacketRecord.packet_id == body["left_packet_id"])
+        )
+    elif body.get("left_snapshot"):
+        left = db.scalar(
+            select(ResearchPacketRecord).where(
+                ResearchPacketRecord.fund_code == fund_code,
+                ResearchPacketRecord.data_date <= date_type.fromisoformat(body["left_snapshot"]),
+            ).order_by(ResearchPacketRecord.data_date.desc()).limit(1)
+        )
+    if body.get("right_packet_id"):
+        right = db.scalar(
+            select(ResearchPacketRecord).where(ResearchPacketRecord.packet_id == body["right_packet_id"])
+        )
+    elif body.get("right_snapshot"):
+        right = db.scalar(
+            select(ResearchPacketRecord).where(
+                ResearchPacketRecord.fund_code == fund_code,
+                ResearchPacketRecord.data_date <= date_type.fromisoformat(body["right_snapshot"]),
+            ).order_by(ResearchPacketRecord.data_date.desc()).limit(1)
+        )
+
+    if not left or not right:
+        missing = []
+        if not left:
+            missing.append("left")
+        if not right:
+            missing.append("right")
+        response = APIResponse(
+            data=None,
+            metadata={"tool": "diff_research_packets", "fund_code": fund_code, "platform_version": __version__},
+            evidence=[],
+            warnings=[f"缺少研究包: {', '.join(missing)}"],
+            conclusion_status=ConclusionStatus.NEEDS_REVIEW,
+        )
+        return _log_tool_api_call(db, "diff_research_packets", body, response, started_at)
+
+    # 对比两个 packet 的 JSON
+    lp = left.packet_json if isinstance(left.packet_json, dict) else {}
+    rp = right.packet_json if isinstance(right.packet_json, dict) else {}
+    diffs: dict[str, Any] = {}
+
+    # 规模变化
+    ls = (lp.get("fund_profile") or {}).get("latest_scale") if isinstance(lp.get("fund_profile"), dict) else None
+    rs = (rp.get("fund_profile") or {}).get("latest_scale") if isinstance(rp.get("fund_profile"), dict) else None
+    if ls and rs and ls != rs:
+        diffs["scale"] = {"left": ls, "right": rs, "delta": round(float(rs) - float(ls), 2) if ls and rs else None}
+
+    # 经理变化
+    lm = (lp.get("manager_info") or {}).get("current_managers", []) if isinstance(lp.get("manager_info"), dict) else []
+    rm = (rp.get("manager_info") or {}).get("current_managers", []) if isinstance(rp.get("manager_info"), dict) else []
+    if lm != rm:
+        diffs["manager"] = {"left": lm, "right": rm, "changed": True}
+
+    # 净值指标变化
+    lp_metrics = (lp.get("nav_metrics") or {}).get("metrics", {}) if isinstance(lp.get("nav_metrics"), dict) else {}
+    rp_metrics = (rp.get("nav_metrics") or {}).get("metrics", {}) if isinstance(rp.get("nav_metrics"), dict) else {}
+    metric_diffs = {}
+    for key in set(lp_metrics) | set(rp_metrics):
+        lv = lp_metrics.get(key)
+        rv = rp_metrics.get(key)
+        if (
+            lv is not None and rv is not None
+            and isinstance(lv, (int, float)) and isinstance(rv, (int, float))
+            and abs(float(lv) - float(rv)) > 0.0001
+        ):
+                metric_diffs[key] = {"left": float(lv), "right": float(rv), "delta": round(float(rv) - float(lv), 4)}
+    if metric_diffs:
+        diffs["nav_metrics"] = metric_diffs
+
+    # 持仓变化
+    def _get_holdings(p: dict) -> list:
+        dh = p.get("disclosed_holdings") if isinstance(p.get("disclosed_holdings"), dict) else {}
+        return dh.get("holdings", [])
+    lh = _get_holdings(lp)
+    rh = _get_holdings(rp)
+    if lh or rh:
+        left_codes = {h.get("security_code"): h for h in lh}
+        right_codes = {h.get("security_code"): h for h in rh}
+        new_positions = [right_codes[c] for c in right_codes if c not in left_codes]
+        exited_positions = [left_codes[c] for c in left_codes if c not in right_codes]
+        weight_changes = []
+        for c in set(left_codes) & set(right_codes):
+            lw = left_codes[c].get("weight_pct")
+            rw = right_codes[c].get("weight_pct")
+            if lw is not None and rw is not None and abs(float(rw) - float(lw)) > 0.1:
+                weight_changes.append({
+                    "code": c, "name": left_codes[c].get("security_name"),
+                    "from": round(float(lw), 2),
+                    "to": round(float(rw), 2),
+                })
+        if new_positions or exited_positions or weight_changes:
+            diffs["holdings"] = {
+                "new_positions": new_positions[:10],
+                "exited_positions": exited_positions[:10],
+                "weight_changes": weight_changes[:10],
+            }
+
+    # 风险提示变化
+    lr = lp.get("risk_alerts", []) if isinstance(lp.get("risk_alerts"), list) else []
+    rr = rp.get("risk_alerts", []) if isinstance(rp.get("risk_alerts"), list) else []
+    if lr != rr:
+        diffs["risk_alerts"] = {"left": lr, "right": rr}
+
+    # 汇总
+    changed = len(diffs) > 0
+    response = APIResponse(
+        data={
+            "fund_code": fund_code,
+            "left_info": {"packet_id": left.packet_id, "data_date": str(left.data_date)},
+            "right_info": {"packet_id": right.packet_id, "data_date": str(right.data_date)},
+            "changed": changed,
+            "diffs": diffs,
+        },
+        metadata={
+            "tool": "diff_research_packets",
+            "fund_code": fund_code,
+            "platform_version": __version__,
+            "implemented": True,
+        },
+        evidence=[],
+        warnings=warnings if changed else [*warnings, "两个研究包在各模块上均无显著差异"],
+        conclusion_status=ConclusionStatus.OBSERVATION if changed else ConclusionStatus.COMPUTED,
+    )
+    return _log_tool_api_call(db, "diff_research_packets", body, response, started_at)
 
 
 # ============================================================

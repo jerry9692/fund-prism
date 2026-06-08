@@ -242,7 +242,8 @@ def test_phase1_smoke_update_analyze_and_build_packet(
 
     nav_metrics = test_client.get("/api/v1/funds/000001/nav-metrics").json()
     assert nav_metrics["conclusion_status"] == ConclusionStatus.COMPUTED.value
-    assert nav_metrics["data"]["observations"] == 40
+    assert "periods" in nav_metrics["data"]
+    assert "YTD" in nav_metrics["data"]["periods"]
 
     holdings = test_client.get("/api/v1/funds/000001/holdings").json()
     assert holdings["conclusion_status"] == ConclusionStatus.COMPUTED.value

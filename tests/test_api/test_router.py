@@ -160,8 +160,12 @@ def test_get_nav_metrics_returns_computed_metrics(
     assert response.status_code == 200
     payload = response.json()
     assert payload["conclusion_status"] == ConclusionStatus.COMPUTED.value
-    assert payload["data"]["observations"] == 30
-    assert payload["data"]["metrics"]["total_return"] > 0
+    # Multi-period format: data.periods exists
+    assert "periods" in payload["data"], f"Expected 'periods' in data, got keys: {list(payload['data'].keys())}"
+    assert "YTD" in payload["data"]["periods"]
+    period = payload["data"]["periods"]["1M"]
+    assert period["status"] == "computed", f"1M status: {period}"
+    assert period["metrics"]["total_return"] is not None
     assert payload["metadata"]["dividend_count"] == 1
     nav_snapshot = payload["metadata"]["data_snapshots"]["fund_nav"]
     assert nav_snapshot["record_count"] == 30
