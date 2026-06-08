@@ -2,16 +2,18 @@
 数据库会话管理。
 
 支持 DuckDB（默认）和 SQLite 两种本地后端。
-通过环境变量 FUND_DB_PATH 配置路径。
+通过 pydantic-settings / 环境变量 FUND_DB_PATH 配置路径。
 """
 
-import os
 from collections.abc import Generator
 from pathlib import Path
 
+from alembic import command
+from alembic.config import Config
 from sqlalchemy import Engine, create_engine
 from sqlalchemy.orm import Session, sessionmaker
 
+from fund_research.config.settings import get_settings
 from fund_research.db.models import Base
 
 
@@ -22,7 +24,7 @@ def get_db_url(db_path: str | None = None) -> str:
     - .db / .sqlite / .sqlite3 后缀 → SQLite
     - 其他 → 默认 DuckDB
     """
-    db_path = db_path or os.getenv("FUND_DB_PATH", "./data/fund_research.duckdb")
+    db_path = db_path or get_settings().db_path
 
     path = Path(db_path)
     suffix = path.suffix.lower()
@@ -51,6 +53,23 @@ def create_engine_from_path(db_path: str | None = None) -> Engine:
             echo=False,
             connect_args={"check_same_thread": False},
         )
+
+
+def _migration_script_location() -> Path:
+    return Path(__file__).resolve().parent / "migrations"
+
+
+def get_alembic_config(db_path: str | None = None) -> Config:
+    """Build an Alembic config for the selected local database."""
+    config = Config()
+    config.set_main_option("script_location", str(_migration_script_location()))
+    config.set_main_option("sqlalchemy.url", get_db_url(db_path))
+    return config
+
+
+def run_migrations(db_path: str | None = None) -> None:
+    """Run Alembic migrations to the latest revision."""
+    command.upgrade(get_alembic_config(db_path), "head")
 
 
 # 默认引擎和会话工厂
@@ -89,9 +108,8 @@ def get_db() -> Generator[Session, None, None]:
 
 
 def init_db(db_path: str | None = None) -> None:
-    """初始化数据库：创建所有表。"""
-    engine = create_engine_from_path(db_path) if db_path else get_engine()
-    Base.metadata.create_all(bind=engine)
+    """初始化数据库：执行 Alembic 迁移。"""
+    run_migrations(db_path)
 
 
 def drop_db(db_path: str | None = None) -> None:

@@ -120,9 +120,17 @@ class BaseDataAdapter(ABC):
         supported = [
             "fund_list",
             "fund_nav",
+            "fund_dividends",
             "fund_holdings",
+            "fund_industry_allocation",
+            "fund_portfolio_change",
             "fund_info",
             "fund_managers",
+            "fund_scale",
+            "fund_fee_detail",
+            "holder_structure",
             "stock_daily",
+            "index_daily",
+            "fund_announcements",
         ]
         return entity_type in supported

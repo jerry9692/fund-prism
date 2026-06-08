@@ -74,7 +74,7 @@ def check_nav_continuity(nav_df: pd.DataFrame) -> QualityReport:
 
     # 检查日收益异常跳变（单日超过 20% 视为可疑）
     if "daily_return" in nav_df.columns:
-        returns = nav_df["daily_return"].dropna()
+        returns = pd.to_numeric(nav_df["daily_return"], errors="coerce").dropna()
         threshold = 0.20
         big_jumps = returns[returns.abs() > threshold]
         if len(big_jumps) > 0:

@@ -7,6 +7,7 @@ Alembic 迁移环境配置。
 from logging.config import fileConfig
 
 from alembic import context
+from alembic.ddl import impl
 from sqlalchemy import engine_from_config, pool
 
 from fund_research.db.models import Base
@@ -20,6 +21,11 @@ if config.config_file_name is not None:
 
 # 目标元数据（所有 ORM 模型的表）
 target_metadata = Base.metadata
+
+# Alembic does not ship a DuckDB DDL implementation. The Phase 1 migration uses
+# SQLAlchemy metadata for table creation, so the default implementation is enough
+# to manage Alembic's version table for DuckDB-backed local databases.
+impl._impls.setdefault("duckdb", impl.DefaultImpl)
 
 
 def run_migrations_offline() -> None:
