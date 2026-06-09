@@ -19,7 +19,11 @@ depends_on: str | Sequence[str] | None = None
 
 
 def upgrade() -> None:
-    # --- Phase 2 tables ---
+    # Drop and recreate Phase 2 tables so local MVP schemas stay aligned.
+    for table in ["experiment_result", "scoring_result", "scoring_backtest",
+                  "reviewer_annotation", "simulated_holding_result",
+                  "dynamic_attribution_result", "algorithm_experiment"]:
+        op.execute(f"DROP TABLE IF EXISTS {table}")
 
     op.create_table(
         "algorithm_experiment",

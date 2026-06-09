@@ -3,6 +3,7 @@ import { Link, useLocation } from "react-router-dom";
 const links = [
   { to: "/", label: "首页" },
   { to: "/funds", label: "基金筛选" },
+  { to: "/experiments", label: "实验管理" },
   { to: "/data-quality", label: "数据质量" },
 ];
 
