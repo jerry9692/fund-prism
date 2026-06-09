@@ -45,7 +45,7 @@ def upgrade() -> None:
 
     op.create_table(
         "dynamic_attribution_result",
-        sa.Column("id", sa.Integer(), nullable=False),
+        sa.Column("id", sa.Integer(), autoincrement=False, nullable=False),
         sa.Column("fund_code", sa.String(length=20), nullable=False),
         sa.Column("period_start", sa.Date(), nullable=False),
         sa.Column("period_end", sa.Date(), nullable=False),
@@ -72,7 +72,7 @@ def upgrade() -> None:
 
     op.create_table(
         "experiment_result",
-        sa.Column("id", sa.Integer(), nullable=False),
+        sa.Column("id", sa.Integer(), autoincrement=False, nullable=False),
         sa.Column("experiment_id", sa.Integer(), nullable=False),
         sa.Column("fund_code", sa.String(length=20), nullable=False),
         sa.Column("calc_date", sa.Date(), nullable=False),
@@ -88,7 +88,7 @@ def upgrade() -> None:
 
     op.create_table(
         "reviewer_annotation",
-        sa.Column("id", sa.Integer(), nullable=False),
+        sa.Column("id", sa.Integer(), autoincrement=False, nullable=False),
         sa.Column("fund_code", sa.String(length=20), nullable=False),
         sa.Column("annotation_type", sa.String(length=30), nullable=False),
         sa.Column("target_module", sa.String(length=50), nullable=True),
@@ -102,7 +102,7 @@ def upgrade() -> None:
 
     op.create_table(
         "scoring_backtest",
-        sa.Column("id", sa.Integer(), nullable=False),
+        sa.Column("id", sa.Integer(), autoincrement=False, nullable=False),
         sa.Column("score_version", sa.String(length=20), nullable=False),
         sa.Column("backtest_date", sa.Date(), nullable=False),
         sa.Column("group_count", sa.Integer(), nullable=False),
@@ -118,7 +118,7 @@ def upgrade() -> None:
 
     op.create_table(
         "scoring_result",
-        sa.Column("id", sa.Integer(), nullable=False),
+        sa.Column("id", sa.Integer(), autoincrement=False, nullable=False),
         sa.Column("fund_code", sa.String(length=20), nullable=False),
         sa.Column("calc_date", sa.Date(), nullable=False),
         sa.Column("score_version", sa.String(length=20), nullable=False),
@@ -139,7 +139,7 @@ def upgrade() -> None:
 
     op.create_table(
         "simulated_holding_result",
-        sa.Column("id", sa.Integer(), nullable=False),
+        sa.Column("id", sa.Integer(), autoincrement=False, nullable=False),
         sa.Column("fund_code", sa.String(length=20), nullable=False),
         sa.Column("calc_date", sa.Date(), nullable=False),
         sa.Column("algorithm_name", sa.String(length=50), nullable=False),
