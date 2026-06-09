@@ -54,7 +54,17 @@ export default function ExperimentsPage() {
 
   async function remove(id: number) {
     if (!confirm("确认删除该实验？")) return;
-    await fetch(`/api/v2/experiments/${id}`, { method: "DELETE" });
+    try {
+      const res = await fetch(`/api/v2/experiments/${id}`, { method: "DELETE" });
+      const body = await res.json();
+      if (!res.ok || !body.data?.deleted) {
+        alert(`删除失败: ${body.warnings?.join?.("; ") || res.status}`);
+        return;
+      }
+    } catch (e) {
+      alert(`删除异常: ${e instanceof Error ? e.message : String(e)}`);
+      return;
+    }
     load();
   }
 
