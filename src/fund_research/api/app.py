@@ -13,6 +13,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from fund_research import __version__
 from fund_research.api.router import router
+from fund_research.api.v2_router import v2_router
 from fund_research.db.session import init_db
 from fund_research.utils.logging import logger, setup_logging
 
@@ -75,5 +76,6 @@ AI-oriented 开源个人基金研究平台 — Tool API。
 
     # 注册路由
     app.include_router(router)
+    app.include_router(v2_router)
 
     return app

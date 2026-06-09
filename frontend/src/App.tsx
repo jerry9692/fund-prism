@@ -9,6 +9,7 @@ import ExposurePage from "./pages/ExposurePage";
 import ResearchPacketPage from "./pages/ResearchPacketPage";
 import PacketDiffPage from "./pages/PacketDiffPage";
 import DataQualityPage from "./pages/DataQualityPage";
+import ExperimentsPage from "./pages/ExperimentsPage";
 
 export default function App() {
   return (
@@ -24,6 +25,7 @@ export default function App() {
           <Route path="/funds/:code/packet" element={<ResearchPacketPage />} />
           <Route path="/funds/:code/diff" element={<PacketDiffPage />} />
           <Route path="/data-quality" element={<DataQualityPage />} />
+          <Route path="/experiments" element={<ExperimentsPage />} />
         </Routes>
       </main>
       <DisclaimerFooter />
