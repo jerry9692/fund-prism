@@ -132,16 +132,23 @@ def record_result(
 
 
 def delete_experiment(db: Session, experiment_id: int) -> None:
-    """Delete an experiment and its results (ORM-style, reliable across backends)."""
-    exp = db.scalar(select(AlgorithmExperiment).where(AlgorithmExperiment.id == experiment_id))
+    """Delete an experiment and its results."""
+    exp = db.get(AlgorithmExperiment, experiment_id)
     if exp is None:
-        return
-    for result in db.scalars(
+        raise ValueError(f"Experiment {experiment_id} not found")
+    results = db.scalars(
         select(ExperimentResult).where(ExperimentResult.experiment_id == experiment_id)
-    ).all():
-        db.delete(result)
+    ).all()
+    for r in results:
+        db.delete(r)
     db.delete(exp)
+    db.flush()
     db.commit()
+
+    # Verify
+    remaining = db.scalar(select(AlgorithmExperiment).where(AlgorithmExperiment.id == experiment_id))
+    if remaining is not None:
+        raise RuntimeError(f"Delete failed: experiment {experiment_id} still exists after commit")
 
 
 def rerun_experiment(db: Session, experiment_id: int) -> AlgorithmExperiment:

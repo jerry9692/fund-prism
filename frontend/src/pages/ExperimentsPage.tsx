@@ -54,17 +54,22 @@ export default function ExperimentsPage() {
 
   async function remove(id: number) {
     if (!confirm("确认删除该实验？")) return;
+    console.log("[delete] sending DELETE for", id);
     try {
       const res = await fetch(`/api/v2/experiments/${id}`, { method: "DELETE" });
+      console.log("[delete] response status", res.status);
       const body = await res.json();
+      console.log("[delete] response body", body);
       if (!res.ok || !body.data?.deleted) {
         alert(`删除失败: ${body.warnings?.join?.("; ") || res.status}`);
         return;
       }
     } catch (e) {
+      console.error("[delete] error", e);
       alert(`删除异常: ${e instanceof Error ? e.message : String(e)}`);
       return;
     }
+    console.log("[delete] calling load()");
     load();
   }
 
