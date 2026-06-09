@@ -8,15 +8,19 @@ registry, so Alembic, application code, and tests all see the same schema.
 from datetime import date, datetime
 from typing import Any
 
+from secrets import randbits
 from sqlalchemy import JSON, Boolean, Date, DateTime, Float, ForeignKey, Integer, String, Text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from fund_research.db.models import Base
 
+# Phase 2 uses randbits(31) for IDs: max ~2.1B, well within JS Number.MAX_SAFE_INTEGER (~9e15)
+def _p2_id():
+    return randbits(31)
 
-# Phase 2 uses standard auto-increment IDs (avoids JavaScript BigInt precision loss)
+
 def _p2_pk():
-    return mapped_column(Integer, primary_key=True, autoincrement=True)
+    return mapped_column(Integer, primary_key=True, autoincrement=False, default=_p2_id)
 
 
 class SimulatedHoldingResult(Base):

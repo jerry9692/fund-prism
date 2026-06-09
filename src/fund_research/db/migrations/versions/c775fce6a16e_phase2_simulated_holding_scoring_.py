@@ -27,7 +27,7 @@ def upgrade() -> None:
 
     op.create_table(
         "algorithm_experiment",
-        sa.Column("id", sa.Integer(), autoincrement=True, nullable=False),
+        sa.Column("id", sa.Integer(), autoincrement=False, nullable=False),
         sa.Column("experiment_name", sa.String(length=100), nullable=False),
         sa.Column("algorithm_name", sa.String(length=50), nullable=False),
         sa.Column("algorithm_version", sa.String(length=10), nullable=False),
