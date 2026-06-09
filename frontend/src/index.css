@@ -129,6 +129,126 @@ button:disabled {
   cursor: not-allowed;
 }
 
+.button-primary,
+.button-ghost,
+.button-danger {
+  min-height: 34px;
+  padding: 6px 14px;
+  border-radius: var(--radius-sm);
+  border: 1px solid transparent;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.button-primary {
+  background: var(--color-primary);
+  color: #fff;
+}
+
+.button-ghost {
+  background: var(--color-surface);
+  border-color: var(--color-border);
+  color: var(--color-text);
+}
+
+.button-danger {
+  background: var(--color-danger-light);
+  color: var(--color-danger);
+  border-color: var(--color-danger-light);
+}
+
+.text-danger {
+  color: var(--color-danger);
+}
+
+.page-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-md);
+  margin-bottom: var(--space-md);
+}
+
+.summary-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-md);
+  margin-top: var(--space-xs);
+  color: var(--color-text-secondary);
+  font-size: 13px;
+}
+
+.experiment-form {
+  margin-bottom: var(--space-md);
+}
+
+.form-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: end;
+  gap: var(--space-md);
+}
+
+.form-row label {
+  display: grid;
+  gap: var(--space-xs);
+  min-width: 180px;
+  color: var(--color-text-secondary);
+  font-size: 13px;
+}
+
+.table-card {
+  padding: 0;
+  overflow-x: auto;
+}
+
+.experiments-table th,
+.experiments-table td {
+  white-space: nowrap;
+}
+
+.mono-cell {
+  max-width: 160px;
+  overflow: hidden;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  text-overflow: ellipsis;
+}
+
+.name-cell {
+  min-width: 160px;
+  white-space: normal;
+}
+
+.date-cell {
+  color: var(--color-text-secondary);
+  font-size: 12px;
+}
+
+.action-row {
+  display: flex;
+  gap: var(--space-sm);
+}
+
+.empty-state {
+  color: var(--color-text-secondary);
+  text-align: center;
+}
+
+@media (max-width: 720px) {
+  .page-header,
+  .form-row {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .form-row label {
+    min-width: 0;
+  }
+}
+
 .disclaimer-footer {
   text-align: center;
   color: var(--color-text-secondary);

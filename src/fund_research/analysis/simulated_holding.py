@@ -151,6 +151,15 @@ def _lookup_name(code: str, stocks_df: pd.DataFrame) -> str:
     return names.loc[code] if code in names.index else code
 
 
+def _lookup_industry(code: str, stocks_df: pd.DataFrame) -> str | None:
+    """Look up stock industry from pool DataFrame."""
+    if "industry" not in stocks_df.columns:
+        return None
+    industries = stocks_df.set_index("stock_code")["industry"]
+    value = industries.loc[code] if code in industries.index else None
+    return value if isinstance(value, str) else None
+
+
 # ============================================================
 # Single-period optimization
 # ============================================================
@@ -343,6 +352,8 @@ def backtest_disclosure(
     simulated: list[SinglePeriodResult],
     disclosed_holdings: dict[str, dict[str, float]],
     # {report_date_str: {stock_code: weight}}
+    industry_by_code: dict[str, dict[str, str]] | None = None,
+    # {report_date_str: {stock_code: industry}}
 ) -> dict:
     """
     Compare simulated weights with actually disclosed weights.
@@ -373,6 +384,7 @@ def backtest_disclosure(
         actual_sorted = sorted(actual.items(), key=lambda x: x[1], reverse=True)
         actual_codes = {code for code, _weight in actual_sorted}
         simulated_codes = {h["stock_code"] for h in rp.holdings}
+        industry_map = (industry_by_code or {}).get(date_str, {})
 
         # Top10 recall
         actual_top10 = {code for code, _weight in actual_sorted[:10]}
@@ -384,9 +396,19 @@ def backtest_disclosure(
         recall = len(actual_top10 & simulated_top30) / max(len(actual_top10), 1)
         recalls.append(recall)
 
+        actual_industry = _industry_weights(
+            [{"stock_code": code, "estimated_weight": weight / 100.0, "industry": industry_map.get(code)}
+             for code, weight in actual.items()]
+        )
+        simulated_industry = _industry_weights(rp.holdings)
+        corr = _industry_weight_correlation(actual_industry, simulated_industry)
+        if corr is not None:
+            correlations.append(corr)
+
         details.append({
             "calc_date": date_str,
             "top10_recall": round(recall, 4),
+            "industry_correlation": round(corr, 4) if corr is not None else None,
             "common_stocks": len(actual_codes & simulated_codes),
             "simulated_count": len(simulated_codes),
             "actual_count": len(actual_codes),
@@ -398,6 +420,34 @@ def backtest_disclosure(
         "detail": details,
         "warnings": [] if recalls and np.mean(recalls) > 0.5 else ["回测重仓股召回率偏低 (<50%)"],
     }
+
+
+def _industry_weights(holdings: list[dict]) -> dict[str, float]:
+    weights: dict[str, float] = {}
+    for item in holdings:
+        industry = item.get("industry")
+        if not isinstance(industry, str) or not industry:
+            continue
+        weight = float(item.get("estimated_weight", item.get("weight", 0.0)) or 0.0)
+        weights[industry] = weights.get(industry, 0.0) + weight
+    total = sum(weights.values())
+    if total > 0:
+        weights = {k: v / total for k, v in weights.items()}
+    return weights
+
+
+def _industry_weight_correlation(
+    actual: dict[str, float],
+    simulated: dict[str, float],
+) -> float | None:
+    industries = sorted(set(actual) | set(simulated))
+    if len(industries) < 2:
+        return None
+    actual_values = np.array([actual.get(ind, 0.0) for ind in industries])
+    simulated_values = np.array([simulated.get(ind, 0.0) for ind in industries])
+    if np.std(actual_values) == 0 or np.std(simulated_values) == 0:
+        return None
+    return float(np.corrcoef(actual_values, simulated_values)[0, 1])
 
 
 # ============================================================
@@ -597,6 +647,7 @@ def run_simulation(
                 holdings_list.append({
                     "stock_code": s,
                     "stock_name": _lookup_name(s, all_stocks_for_pool),
+                    "industry": _lookup_industry(s, all_stocks_for_pool),
                     "estimated_weight": round(w, 4),
                     "confidence": "medium" if w > 0.01 else "low",
                 })
@@ -630,13 +681,20 @@ def run_simulation(
     backtest: dict | None = None
     if run_backtest:
         disclosed_dict: dict[str, dict[str, float]] = {}
+        industry_dict: dict[str, dict[str, str]] = {}
         for rp_date in holdings["report_date"].unique():
             rp_holdings = holdings[holdings["report_date"] == rp_date]
             disclosed_dict[str(rp_date)] = dict(zip(
                 rp_holdings["stock_code"],
                 rp_holdings.get("weight_pct", [0] * len(rp_holdings)), strict=False,
             ))
-        backtest = backtest_disclosure(periods, disclosed_dict)
+            if "industry" in rp_holdings.columns:
+                industry_dict[str(rp_date)] = {
+                    str(row["stock_code"]): row["industry"]
+                    for _idx, row in rp_holdings.iterrows()
+                    if isinstance(row.get("industry"), str)
+                }
+        backtest = backtest_disclosure(periods, disclosed_dict, industry_dict)
 
     return SimulatedHoldingResult(
         fund_code=fund_code,

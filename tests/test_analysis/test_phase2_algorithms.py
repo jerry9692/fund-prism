@@ -81,6 +81,31 @@ class TestSimulatedHolding:
         assert "estimated_holdings" in data["periods"][0]
         assert data["conclusion_status"] == "estimated"
 
+    def test_backtest_disclosure_computes_industry_correlation(self):
+        from fund_research.analysis.simulated_holding import SinglePeriodResult, backtest_disclosure
+
+        simulated = [
+            SinglePeriodResult(
+                calc_date=date(2024, 6, 30),
+                holdings=[
+                    {"stock_code": "000001", "industry": "tech", "estimated_weight": 0.6},
+                    {"stock_code": "000002", "industry": "bank", "estimated_weight": 0.4},
+                ],
+                stock_weight_pct=100.0,
+                bond_weight_pct=0.0,
+                cash_weight_pct=0.0,
+                tracking_error=0.01,
+                objective_value=0.0,
+            )
+        ]
+        disclosed = {"2024-06-30": {"000001": 55.0, "000002": 45.0}}
+        industries = {"2024-06-30": {"000001": "tech", "000002": "bank"}}
+
+        report = backtest_disclosure(simulated, disclosed, industries)
+
+        assert report["industry_correlation"] is not None
+        assert report["detail"][0]["industry_correlation"] is not None
+
     def test_build_candidate_pool(self):
         from fund_research.analysis.simulated_holding import build_candidate_pool
 
