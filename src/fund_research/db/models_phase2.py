@@ -11,7 +11,12 @@ from typing import Any
 from sqlalchemy import JSON, Boolean, Date, DateTime, Float, ForeignKey, Integer, String, Text
 from sqlalchemy.orm import Mapped, mapped_column
 
-from fund_research.db.models import Base, id_column
+from fund_research.db.models import Base
+
+
+# Phase 2 uses standard auto-increment IDs (avoids JavaScript BigInt precision loss)
+def _p2_pk():
+    return mapped_column(Integer, primary_key=True, autoincrement=True)
 
 
 class SimulatedHoldingResult(Base):
@@ -19,7 +24,7 @@ class SimulatedHoldingResult(Base):
 
     __tablename__ = "simulated_holding_result"
 
-    id: Mapped[int] = id_column()
+    id: Mapped[int] = _p2_pk()
     fund_code: Mapped[str] = mapped_column(String(20), index=True)
     calc_date: Mapped[date] = mapped_column(Date, index=True)
     algorithm_name: Mapped[str] = mapped_column(String(50))
@@ -47,7 +52,7 @@ class DynamicAttributionResult(Base):
 
     __tablename__ = "dynamic_attribution_result"
 
-    id: Mapped[int] = id_column()
+    id: Mapped[int] = _p2_pk()
     fund_code: Mapped[str] = mapped_column(String(20), index=True)
     period_start: Mapped[date] = mapped_column(Date)
     period_end: Mapped[date] = mapped_column(Date)
@@ -75,7 +80,7 @@ class ScoringResult(Base):
 
     __tablename__ = "scoring_result"
 
-    id: Mapped[int] = id_column()
+    id: Mapped[int] = _p2_pk()
     fund_code: Mapped[str] = mapped_column(String(20), index=True)
     calc_date: Mapped[date] = mapped_column(Date)
     score_version: Mapped[str] = mapped_column(String(20))
@@ -97,7 +102,7 @@ class ScoringBacktest(Base):
 
     __tablename__ = "scoring_backtest"
 
-    id: Mapped[int] = id_column()
+    id: Mapped[int] = _p2_pk()
     score_version: Mapped[str] = mapped_column(String(20), index=True)
     backtest_date: Mapped[date] = mapped_column(Date)
     group_count: Mapped[int] = mapped_column(Integer)
@@ -114,7 +119,7 @@ class AlgorithmExperiment(Base):
 
     __tablename__ = "algorithm_experiment"
 
-    id: Mapped[int] = id_column()
+    id: Mapped[int] = _p2_pk()
     experiment_name: Mapped[str] = mapped_column(String(100))
     algorithm_name: Mapped[str] = mapped_column(String(50))
     algorithm_version: Mapped[str] = mapped_column(String(10))
@@ -134,7 +139,7 @@ class ExperimentResult(Base):
 
     __tablename__ = "experiment_result"
 
-    id: Mapped[int] = id_column()
+    id: Mapped[int] = _p2_pk()
     experiment_id: Mapped[int] = mapped_column(ForeignKey("algorithm_experiment.id"), index=True)
     fund_code: Mapped[str] = mapped_column(String(20))
     calc_date: Mapped[date] = mapped_column(Date)
@@ -150,7 +155,7 @@ class ReviewerAnnotation(Base):
 
     __tablename__ = "reviewer_annotation"
 
-    id: Mapped[int] = id_column()
+    id: Mapped[int] = _p2_pk()
     fund_code: Mapped[str] = mapped_column(String(20), index=True)
     annotation_type: Mapped[str] = mapped_column(String(30))
     target_module: Mapped[str | None] = mapped_column(String(50))

@@ -19,11 +19,15 @@ depends_on: str | Sequence[str] | None = None
 
 
 def upgrade() -> None:
-    # --- Phase 2 tables ---
+    # Drop and recreate Phase 2 tables (changed PK from BigInteger to Integer)
+    for table in ["experiment_result", "scoring_result", "scoring_backtest",
+                  "reviewer_annotation", "simulated_holding_result",
+                  "dynamic_attribution_result", "algorithm_experiment"]:
+        op.execute(f"DROP TABLE IF EXISTS {table}")
 
     op.create_table(
         "algorithm_experiment",
-        sa.Column("id", sa.BigInteger(), autoincrement=False, nullable=False),
+        sa.Column("id", sa.Integer(), autoincrement=True, nullable=False),
         sa.Column("experiment_name", sa.String(length=100), nullable=False),
         sa.Column("algorithm_name", sa.String(length=50), nullable=False),
         sa.Column("algorithm_version", sa.String(length=10), nullable=False),
@@ -41,7 +45,7 @@ def upgrade() -> None:
 
     op.create_table(
         "dynamic_attribution_result",
-        sa.Column("id", sa.BigInteger(), autoincrement=False, nullable=False),
+        sa.Column("id", sa.Integer(), nullable=False),
         sa.Column("fund_code", sa.String(length=20), nullable=False),
         sa.Column("period_start", sa.Date(), nullable=False),
         sa.Column("period_end", sa.Date(), nullable=False),
@@ -68,8 +72,8 @@ def upgrade() -> None:
 
     op.create_table(
         "experiment_result",
-        sa.Column("id", sa.BigInteger(), autoincrement=False, nullable=False),
-        sa.Column("experiment_id", sa.BigInteger(), nullable=False),
+        sa.Column("id", sa.Integer(), nullable=False),
+        sa.Column("experiment_id", sa.Integer(), nullable=False),
         sa.Column("fund_code", sa.String(length=20), nullable=False),
         sa.Column("calc_date", sa.Date(), nullable=False),
         sa.Column("is_success", sa.Boolean(), nullable=False, server_default=sa.text("1")),
@@ -84,7 +88,7 @@ def upgrade() -> None:
 
     op.create_table(
         "reviewer_annotation",
-        sa.Column("id", sa.BigInteger(), autoincrement=False, nullable=False),
+        sa.Column("id", sa.Integer(), nullable=False),
         sa.Column("fund_code", sa.String(length=20), nullable=False),
         sa.Column("annotation_type", sa.String(length=30), nullable=False),
         sa.Column("target_module", sa.String(length=50), nullable=True),
@@ -98,7 +102,7 @@ def upgrade() -> None:
 
     op.create_table(
         "scoring_backtest",
-        sa.Column("id", sa.BigInteger(), autoincrement=False, nullable=False),
+        sa.Column("id", sa.Integer(), nullable=False),
         sa.Column("score_version", sa.String(length=20), nullable=False),
         sa.Column("backtest_date", sa.Date(), nullable=False),
         sa.Column("group_count", sa.Integer(), nullable=False),
@@ -114,7 +118,7 @@ def upgrade() -> None:
 
     op.create_table(
         "scoring_result",
-        sa.Column("id", sa.BigInteger(), autoincrement=False, nullable=False),
+        sa.Column("id", sa.Integer(), nullable=False),
         sa.Column("fund_code", sa.String(length=20), nullable=False),
         sa.Column("calc_date", sa.Date(), nullable=False),
         sa.Column("score_version", sa.String(length=20), nullable=False),
@@ -135,7 +139,7 @@ def upgrade() -> None:
 
     op.create_table(
         "simulated_holding_result",
-        sa.Column("id", sa.BigInteger(), autoincrement=False, nullable=False),
+        sa.Column("id", sa.Integer(), nullable=False),
         sa.Column("fund_code", sa.String(length=20), nullable=False),
         sa.Column("calc_date", sa.Date(), nullable=False),
         sa.Column("algorithm_name", sa.String(length=50), nullable=False),
