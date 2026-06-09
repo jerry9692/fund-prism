@@ -132,18 +132,20 @@ def record_result(
 
 
 def delete_experiment(db: Session, experiment_id: int) -> None:
-    """Delete an experiment and its results."""
-    from sqlalchemy import delete as sa_delete
-
-    db.execute(sa_delete(ExperimentResult).where(ExperimentResult.experiment_id == experiment_id))
-    db.execute(sa_delete(AlgorithmExperiment).where(AlgorithmExperiment.id == experiment_id))
+    """Delete an experiment and its results (ORM-style, reliable across backends)."""
+    exp = db.scalar(select(AlgorithmExperiment).where(AlgorithmExperiment.id == experiment_id))
+    if exp is None:
+        return
+    for result in db.scalars(
+        select(ExperimentResult).where(ExperimentResult.experiment_id == experiment_id)
+    ).all():
+        db.delete(result)
+    db.delete(exp)
     db.commit()
 
 
 def rerun_experiment(db: Session, experiment_id: int) -> AlgorithmExperiment:
     """Mark experiment for re-run (status back to pending)."""
-    from sqlalchemy import delete as sa_delete
-
     exp = db.scalar(select(AlgorithmExperiment).where(AlgorithmExperiment.id == experiment_id))
     if exp is None:
         raise ValueError(f"Experiment {experiment_id} not found")
@@ -151,7 +153,10 @@ def rerun_experiment(db: Session, experiment_id: int) -> AlgorithmExperiment:
     exp.started_at = None
     exp.completed_at = None
     exp.summary = None
-    db.execute(sa_delete(ExperimentResult).where(ExperimentResult.experiment_id == experiment_id))
+    for result in db.scalars(
+        select(ExperimentResult).where(ExperimentResult.experiment_id == experiment_id)
+    ).all():
+        db.delete(result)
     db.commit()
     db.refresh(exp)
     return exp
