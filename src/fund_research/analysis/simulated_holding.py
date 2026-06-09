@@ -12,6 +12,7 @@ References:
 
 from dataclasses import dataclass, field
 from datetime import date
+from math import ceil
 
 import numpy as np
 import pandas as pd
@@ -38,7 +39,7 @@ class SinglePeriodResult:
     """A single rebalancing window's simulated holdings."""
 
     calc_date: date
-    holdings: list[dict]  # [{stock_code, stock_name, weight, confidence}]
+    holdings: list[dict]  # [{stock_code, stock_name, estimated_weight, confidence}]
     stock_weight_pct: float
     bond_weight_pct: float
     cash_weight_pct: float
@@ -62,32 +63,41 @@ class SimulatedHoldingResult:
 
     @property
     def is_reliable(self) -> bool:
-        return self.overall_tracking_error < 0.05 and bool(self.periods)
+        if not self.periods or self.overall_tracking_error >= 0.05:
+            return False
+        if not self.backtest_report:
+            return False
+        if self.overall_top10_recall is None or self.overall_top10_recall < 0.5:
+            return False
+        return self.overall_industry_correlation is None or self.overall_industry_correlation >= 0.5
 
     def to_api_data(self) -> dict:
         return {
             "fund_code": self.fund_code,
             "period_count": len(self.periods),
-            "overall_tracking_error": round(self.overall_tracking_error, 6),
-            "overall_industry_correlation": (
+            "estimated_overall_tracking_error": round(self.overall_tracking_error, 6),
+            "estimated_overall_industry_correlation": (
                 round(self.overall_industry_correlation, 4)
                 if self.overall_industry_correlation is not None
                 else None
             ),
-            "overall_top10_recall": (
+            "estimated_overall_top10_recall": (
                 round(self.overall_top10_recall, 4)
                 if self.overall_top10_recall is not None
                 else None
             ),
             "confidence": self.confidence,
             "is_reliable": self.is_reliable,
+            "conclusion_status": "estimated" if self.is_reliable else "needs_review",
             "warnings": self.warnings,
             "periods": [
                 {
                     "calc_date": str(p.calc_date),
-                    "holdings": p.holdings,
-                    "stock_weight_pct": p.stock_weight_pct,
-                    "tracking_error": round(p.tracking_error, 6),
+                    "estimated_holdings": p.holdings,
+                    "estimated_stock_weight_pct": p.stock_weight_pct,
+                    "estimated_bond_weight_pct": p.bond_weight_pct,
+                    "estimated_cash_weight_pct": p.cash_weight_pct,
+                    "estimated_tracking_error": round(p.tracking_error, 6),
                 }
                 for p in self.periods
             ],
@@ -168,6 +178,9 @@ def optimize_weights(
     n_stocks, n_days = stock_returns.shape
     if n_stocks == 0 or n_days == 0:
         return np.zeros(n_stocks), 0.0
+    max_positions = max(1, min(max_positions, n_stocks))
+    if max_positions * max_single_weight < 1.0:
+        max_positions = min(n_stocks, ceil(1.0 / max_single_weight))
 
     # Covariance matrix and excess returns
     sigma = np.cov(stock_returns)  # covariance matrix (n_stocks, n_stocks)  # noqa: N806
@@ -183,7 +196,7 @@ def optimize_weights(
     elif SCIPY_AVAILABLE:
         return _optimize_scipy(
             sigma, cov_with_fund, n_stocks,
-            max_single_weight, turnover_penalty, prev_weights,
+            max_positions, max_single_weight, turnover_penalty, prev_weights,
         )
     else:
         # Fallback: equal weight
@@ -235,20 +248,62 @@ def _optimize_cvxpy(
         prob.solve(solver=cp.OSQP, verbose=False)
         if prob.status in ("optimal", "optimal_inaccurate"):
             weights = np.array(w.value).flatten()
-            weights = np.maximum(weights, 0)
-            weights /= weights.sum() if weights.sum() > 0 else 1.0
+            weights = _enforce_position_limit(weights, max_positions, max_single_weight)
             return weights, prob.value if prob.value is not None else 0.0
     except cp.error.SolverError:
         pass
 
     # Fallback to equal weight
-    return np.ones(n_stocks) / n_stocks, 0.0
+    return _equal_weight(n_stocks, max_positions), 0.0
+
+
+def _equal_weight(n_stocks: int, max_positions: int) -> np.ndarray:
+    """Equal-weight fallback that still respects the position limit."""
+    weights = np.zeros(n_stocks)
+    keep_count = max(1, min(max_positions, n_stocks))
+    weights[:keep_count] = 1.0 / keep_count
+    return weights
+
+
+def _enforce_position_limit(
+    weights: np.ndarray,
+    max_positions: int,
+    max_single_weight: float,
+) -> np.ndarray:
+    """Keep the largest weights and redistribute under the single-name cap."""
+    cleaned = np.nan_to_num(np.maximum(weights, 0.0), nan=0.0)
+    if cleaned.sum() <= 0:
+        return _equal_weight(len(cleaned), max_positions)
+
+    keep_count = max(1, min(max_positions, len(cleaned)))
+    keep_idx = np.argsort(cleaned)[::-1][:keep_count]
+    limited = np.zeros_like(cleaned)
+    limited[keep_idx] = cleaned[keep_idx]
+    limited /= limited.sum() if limited.sum() > 0 else 1.0
+
+    for _ in range(keep_count + 1):
+        over = limited > max_single_weight
+        if not over.any():
+            break
+        excess = float((limited[over] - max_single_weight).sum())
+        limited[over] = max_single_weight
+        room_mask = (limited > 0) & (limited < max_single_weight)
+        room = max_single_weight - limited[room_mask]
+        room_sum = float(room.sum())
+        if room_sum <= 0 or excess <= 0:
+            break
+        limited[room_mask] += excess * room / room_sum
+
+    if limited.sum() > 0:
+        limited /= limited.sum()
+    return limited
 
 
 def _optimize_scipy(
     sigma: np.ndarray,
     cov_with_fund: np.ndarray,
     n_stocks: int,
+    max_positions: int,
     max_single_weight: float,
     turnover_penalty: float,
     prev_weights: np.ndarray | None,
@@ -273,11 +328,10 @@ def _optimize_scipy(
     )
     if result.success:
         w = result.x
-        w = np.maximum(w, 0)
-        w /= w.sum() if w.sum() > 0 else 1.0
+        w = _enforce_position_limit(w, max_positions, max_single_weight)
         return w, float(result.fun) if result.fun is not None else 0.0
 
-    return np.ones(n_stocks) / n_stocks, 0.0
+    return _equal_weight(n_stocks, max_positions), 0.0
 
 
 # ============================================================
@@ -316,12 +370,17 @@ def backtest_disclosure(
             continue
 
         actual = disclosed_holdings[date_str]
-        actual_codes = set(actual.keys())
+        actual_sorted = sorted(actual.items(), key=lambda x: x[1], reverse=True)
+        actual_codes = {code for code, _weight in actual_sorted}
         simulated_codes = {h["stock_code"] for h in rp.holdings}
 
         # Top10 recall
-        actual_top10 = set(list(actual.keys())[:10])
-        simulated_top30 = set(list({h["stock_code"] for h in rp.holdings})[:30])
+        actual_top10 = {code for code, _weight in actual_sorted[:10]}
+        simulated_top30 = {h["stock_code"] for h in sorted(
+            rp.holdings,
+            key=lambda x: x["estimated_weight"],
+            reverse=True,
+        )[:30]}
         recall = len(actual_top10 & simulated_top30) / max(len(actual_top10), 1)
         recalls.append(recall)
 
@@ -424,8 +483,9 @@ def run_simulation(
 
     periods: list[SinglePeriodResult] = []
     prev_weights: np.ndarray | None = None
+    prev_pool_in_data: list[str] | None = None
 
-    for i, rb_date in enumerate(rebal_dates):
+    for rb_date in rebal_dates:
         # Window: rb_date to rb_date + window_days
         window_end = None
         for d in all_dates:
@@ -478,7 +538,6 @@ def run_simulation(
         industry_groups: list[int] | None = None
         ind_weights: dict[int, float] | None = None
         if industry_penalty > 0:
-            {s: i for i, s in enumerate(pool_in_data)}
             disclosed_ind = latest_holdings.set_index("stock_code")
             if "industry" in disclosed_ind.columns:
                 unique_inds: dict[str, int] = {}
@@ -506,10 +565,10 @@ def run_simulation(
 
         # Map prev_weights to current pool
         prev_mapped: np.ndarray | None = None
-        if prev_weights is not None and i > 0:
+        if prev_weights is not None and prev_pool_in_data is not None:
             prev_code_to_idx = {
-                c: j for j, c in enumerate(pool_in_data_prev)  # noqa: F821
-            } if i > 0 else {}
+                c: j for j, c in enumerate(prev_pool_in_data)
+            }
             prev_mapped = np.zeros(len(pool_in_data))
             for j, s in enumerate(pool_in_data):
                 if s in prev_code_to_idx:
@@ -538,13 +597,13 @@ def run_simulation(
                 holdings_list.append({
                     "stock_code": s,
                     "stock_name": _lookup_name(s, all_stocks_for_pool),
-                    "weight": round(w, 4),
+                    "estimated_weight": round(w, 4),
                     "confidence": "medium" if w > 0.01 else "low",
                 })
 
         periods.append(SinglePeriodResult(
             calc_date=rb_date,
-            holdings=sorted(holdings_list, key=lambda x: x["weight"], reverse=True),
+            holdings=sorted(holdings_list, key=lambda x: x["estimated_weight"], reverse=True),
             stock_weight_pct=round(float(weights.sum()) * 100, 2),
             bond_weight_pct=0.0,
             cash_weight_pct=round(float(1 - weights.sum()) * 100, 2),
@@ -554,15 +613,13 @@ def run_simulation(
         ))
 
         prev_weights = weights
-        pool_in_data_prev = pool_in_data  # noqa: F841
+        prev_pool_in_data = pool_in_data
 
     # Overall stats
     if periods:
         avg_te = np.mean([p.tracking_error for p in periods])
         confidence = "medium"
-        if avg_te < 0.02:
-            confidence = "high"
-        elif avg_te > 0.08:
+        if avg_te > 0.08:
             confidence = "low"
             warnings.append("整体跟踪误差偏高，模拟持仓仅作方向性参考")
     else:

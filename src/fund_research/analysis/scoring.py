@@ -55,7 +55,7 @@ class FundScore:
     percentile_rank: float  # within category
     deduction_reasons: list[str] = field(default_factory=list)
     contains_estimated: bool = False
-    sample_years: float = 0.0
+    sample_years: float | None = None
 
     def to_dict(self) -> dict:
         return {
@@ -65,7 +65,7 @@ class FundScore:
             "percentile_rank": round(self.percentile_rank, 4),
             "deduction_reasons": self.deduction_reasons,
             "contains_estimated": self.contains_estimated,
-            "sample_years": round(self.sample_years, 1),
+            "sample_years": round(self.sample_years, 1) if self.sample_years is not None else None,
         }
 
 
@@ -107,13 +107,20 @@ def winsorize(series: pd.Series, lower: float = 0.01, upper: float = 0.99) -> pd
 def standardize_zscore(series: pd.Series) -> pd.Series:
     """Z-score standardization."""
     std = series.std()
-    if std == 0:
-        return pd.Series(0.0, index=series.index)
+    if pd.isna(std) or std == 0:
+        result = pd.Series(pd.NA, index=series.index, dtype="Float64")
+        result.loc[series.dropna().index] = 0.0
+        return result
     return (series - series.mean()) / std
 
 
 def to_percentile(series: pd.Series) -> pd.Series:
     """Convert to percentile rank (0-1)."""
+    valid = series.dropna()
+    if valid.nunique() <= 1:
+        result = pd.Series(pd.NA, index=series.index, dtype="Float64")
+        result.loc[valid.index] = 0.5
+        return result
     return series.rank(pct=True)
 
 
@@ -132,6 +139,7 @@ def score_funds(
     category: str = "",
     contains_estimated: set[str] | None = None,
     sample_years_map: dict[str, float] | None = None,
+    allow_estimated: bool = False,
 ) -> ScoringResult:
     """
     Compute composite scores for a set of funds.
@@ -141,7 +149,7 @@ def score_funds(
     2. Z-score standardize within the fund set
     3. Convert to percentile
     4. Weighted sum → total score
-    5. Down-weight estimated dimensions
+    5. Exclude estimated dimensions by default; optionally down-weight them
     6. Penalize missing data and short history
 
     fund_metrics columns should include 'fund_code' plus dimension columns
@@ -176,6 +184,10 @@ def score_funds(
             warnings=["没有可用的评分维度"],
         )
 
+    missing_dims = [d for d in weights if d not in data.columns]
+    if missing_dims:
+        warnings.append(f"缺少评分维度: {', '.join(missing_dims)}")
+
     # Step 1-3: Winsorize → Z-score → Percentile
     scores_df = pd.DataFrame(index=data.index)
     for dim in dims:
@@ -196,13 +208,18 @@ def score_funds(
         for dim in dims:
             w = weights.get(dim, 0.0)
             if dim in contains_estimated:
-                w *= 0.5  # estimated indicator → half weight
                 has_est = True
-                deductions.append(f"{dim} 含估计成分，权重减半")
+                if allow_estimated:
+                    w *= 0.5  # estimated indicator → half weight
+                    deductions.append(f"{dim} 含估计成分，权重减半")
+                else:
+                    sub[dim] = 0.0
+                    deductions.append(f"{dim} 含未验证估计成分，默认评分剔除")
+                    continue
 
             raw = scores_df.loc[fund_code, dim]
             if pd.isna(raw):
-                total -= w * 0.05  # missing data penalty
+                total -= w * 100 * 0.05  # 5% of this dimension's score budget
                 sub[dim] = 0.0
                 deductions.append(f"{dim} 数据缺失")
             else:
@@ -211,8 +228,8 @@ def score_funds(
                 sub[dim] = round(score, 2)
 
         # Sample period penalty
-        years = sample_years_map.get(fund_code, 0.0)
-        if years < 3.0:
+        years = sample_years_map.get(fund_code) if sample_years_map else None
+        if years is not None and years < 3.0:
             total *= max(0.5, years / 3.0)
             deductions.append(f"样本期仅 {years:.1f} 年，<3 年降权")
 
@@ -275,11 +292,22 @@ def compute_ic(
     ic_mean = float(ics.mean()) if len(ics) > 0 else None
     ic_ir = float(ics.mean() / ics.std()) if len(ics) > 0 and ics.std() > 0 else None
 
-    # Stratified monotonicity
-    merged["group"] = pd.qcut(merged["score"], 5, labels=False, duplicates="drop")
-    group_returns = merged.groupby("group")["future_return"].mean()
+    # Stratified monotonicity by calc_date, then aggregate each score bucket.
+    def _bucket(date_group: pd.DataFrame) -> pd.Series:
+        if date_group["score"].nunique() < 2:
+            return pd.Series([pd.NA] * len(date_group), index=date_group.index)
+        return pd.qcut(
+            date_group["score"].rank(method="first"),
+            5,
+            labels=False,
+            duplicates="drop",
+        )
+
+    merged["group"] = merged.groupby("calc_date", group_keys=False).apply(_bucket)
+    grouped = merged.dropna(subset=["group"]).copy()
+    group_returns = grouped.groupby("group")["future_return"].mean()
     monotonic = (
-        group_returns.iloc[-1] > group_returns.iloc[0]
+        group_returns.is_monotonic_increasing and group_returns.iloc[-1] > group_returns.iloc[0]
         if len(group_returns) >= 2
         else False
     )

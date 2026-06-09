@@ -9,7 +9,7 @@ References:
 Supports both BHB and BF decomposition methods via the `method` parameter.
 """
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import date
 from math import log
 
@@ -56,25 +56,26 @@ class AttributionResult:
         return {
             "fund_code": self.fund_code,
             "method": self.method,
-            "total_portfolio_return": round(self.total_portfolio_return, 6),
-            "total_benchmark_return": round(self.total_benchmark_return, 6),
-            "total_allocation_effect": round(self.total_allocation_effect, 6),
-            "total_selection_effect": round(self.total_selection_effect, 6),
-            "total_interaction_effect": round(self.total_interaction_effect, 6),
-            "total_residual": round(self.total_residual, 6),
+            "estimated_total_portfolio_return": round(self.total_portfolio_return, 6),
+            "estimated_total_benchmark_return": round(self.total_benchmark_return, 6),
+            "estimated_total_allocation_effect": round(self.total_allocation_effect, 6),
+            "estimated_total_selection_effect": round(self.total_selection_effect, 6),
+            "estimated_total_interaction_effect": round(self.total_interaction_effect, 6),
+            "estimated_total_residual": round(self.total_residual, 6),
             "period_count": len(self.periods),
             "confidence": self.confidence,
+            "conclusion_status": "estimated" if self.confidence != "needs_review" else "needs_review",
             "warnings": self.warnings,
             "periods": [
                 {
                     "period_start": str(p.period_start),
                     "period_end": str(p.period_end),
-                    "portfolio_return": round(p.portfolio_return, 6),
-                    "benchmark_return": round(p.benchmark_return, 6),
-                    "allocation_effect": round(p.allocation_effect, 6),
-                    "selection_effect": round(p.selection_effect, 6),
-                    "interaction_effect": round(p.interaction_effect, 6),
-                    "residual": round(p.residual, 6),
+                    "estimated_portfolio_return": round(p.portfolio_return, 6),
+                    "estimated_benchmark_return": round(p.benchmark_return, 6),
+                    "estimated_allocation_effect": round(p.allocation_effect, 6),
+                    "estimated_selection_effect": round(p.selection_effect, 6),
+                    "estimated_interaction_effect": round(p.interaction_effect, 6),
+                    "estimated_residual": round(p.residual, 6),
                 }
                 for p in self.periods
             ],
@@ -175,7 +176,11 @@ def single_period_attribution(
 # ============================================================
 
 
-def carino_linking(periods: list[AttributionPeriod]) -> list[AttributionPeriod]:
+def carino_linking(
+    periods: list[AttributionPeriod],
+    total_portfolio_return: float | None = None,
+    total_benchmark_return: float | None = None,
+) -> list[AttributionPeriod]:
     """
     Apply Carino (1999) logarithmic smoothing to multi-period attribution.
 
@@ -183,10 +188,16 @@ def carino_linking(periods: list[AttributionPeriod]) -> list[AttributionPeriod]:
         k_t = log(1 + R_port_t) - log(1 + R_bench_t)
              / (R_port_t - R_bench_t)
 
-    Smoothed effect = sum(period_effect * k_t) / sum(k_t)
+    Linked effect for period t = period_effect * k_t / K, where K is
+    computed from the compounded total portfolio and benchmark returns.
     """
     if len(periods) <= 1:
         return periods
+
+    if total_portfolio_return is None:
+        total_portfolio_return = _compound_returns(p.portfolio_return for p in periods)
+    if total_benchmark_return is None:
+        total_benchmark_return = _compound_returns(p.benchmark_return for p in periods)
 
     ks = []
     for p in periods:
@@ -197,18 +208,36 @@ def carino_linking(periods: list[AttributionPeriod]) -> list[AttributionPeriod]:
             k = (log(1.0 + rp) - log(1.0 + rb)) / (rp - rb)
         ks.append(k)
 
-    total_k = sum(ks)
+    total_active = total_portfolio_return - total_benchmark_return
+    if abs(total_active) < 1e-12:
+        total_k = 1.0 / (1.0 + total_portfolio_return) if total_portfolio_return > -1 else 1.0
+    else:
+        total_k = (
+            log(1.0 + total_portfolio_return) - log(1.0 + total_benchmark_return)
+        ) / total_active
+
     if total_k == 0:
         return periods
 
-    # Store smoothed effects in a copy (not modifying original period objects)
+    linked = []
     for i, p in enumerate(periods):
-        k = ks[i]
-        p.allocation_effect *= k / total_k
-        p.selection_effect *= k / total_k
-        p.interaction_effect *= k / total_k
+        factor = ks[i] / total_k
+        linked.append(replace(
+            p,
+            allocation_effect=p.allocation_effect * factor,
+            selection_effect=p.selection_effect * factor,
+            interaction_effect=p.interaction_effect * factor,
+            residual=p.residual * factor,
+        ))
 
-    return periods
+    return linked
+
+
+def _compound_returns(returns) -> float:
+    total = 1.0
+    for value in returns:
+        total *= 1.0 + value
+    return total - 1.0
 
 
 # ============================================================
@@ -272,18 +301,19 @@ def run_attribution(
         sp.period_end = rp_date
         periods.append(sp)
 
-    # Carino smoothing
-    periods = carino_linking(periods)
+    total_port = _compound_returns(p.portfolio_return for p in periods)
+    total_bench = _compound_returns(p.benchmark_return for p in periods)
 
-    total_port = sum(p.portfolio_return for p in periods)
-    total_bench = sum(p.benchmark_return for p in periods)
+    # Carino smoothing
+    periods = carino_linking(periods, total_port, total_bench)
+
     total_alloc = sum(p.allocation_effect for p in periods)
     total_sel = sum(p.selection_effect for p in periods)
     total_int = sum(p.interaction_effect for p in periods)
-    total_res = abs(total_port - total_bench - (total_alloc + total_sel + total_int))
+    total_res = total_port - total_bench - (total_alloc + total_sel + total_int)
 
     if abs(total_res) > 0.01:
-        warnings.append(f"归因残差较大 ({total_res:.4f})，可能因缺失持仓或行业收益数据")
+        warnings.append(f"归因残差较大 ({total_res:+.4f})，可能因缺失持仓或行业收益数据")
 
     return AttributionResult(
         fund_code=fund_code,

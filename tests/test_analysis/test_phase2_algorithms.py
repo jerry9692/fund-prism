@@ -1,8 +1,10 @@
 """Smoke tests for Phase 2 analysis algorithms."""
 
+from datetime import date
 
 import numpy as np
 import pandas as pd
+import pytest
 
 
 def _make_random_returns(n_stocks: int = 20, n_days: int = 60) -> np.ndarray:
@@ -30,11 +32,54 @@ class TestSimulatedHolding:
 
         ret = _make_random_returns(20, 60)
         f_ret = _make_random_fund_returns(60)
-        w, obj = optimize_weights(ret, f_ret, use_cvxpy=False)
+        w, obj = optimize_weights(ret, f_ret, max_positions=5, max_single_weight=0.25, use_cvxpy=False)
 
         assert len(w) == 20
         assert abs(w.sum() - 1.0) < 0.01
         assert (w >= 0).all()
+        assert (w > 0.0001).sum() <= 5
+
+    def test_optimize_weights_cvxpy_respects_max_positions(self):
+        """CVXPY path should enforce the requested position limit."""
+        from fund_research.analysis import simulated_holding
+        from fund_research.analysis.simulated_holding import optimize_weights
+
+        if not simulated_holding._HAS_CVXPY:
+            pytest.skip("cvxpy is not installed")
+
+        ret = _make_random_returns(20, 60)
+        f_ret = _make_random_fund_returns(60)
+        w, _obj = optimize_weights(ret, f_ret, max_positions=5, max_single_weight=0.25, use_cvxpy=True)
+
+        assert abs(w.sum() - 1.0) < 0.01
+        assert (w > 0.0001).sum() <= 5
+
+    def test_simulated_holding_api_uses_estimated_fields(self):
+        from fund_research.analysis.simulated_holding import SimulatedHoldingResult, SinglePeriodResult
+
+        result = SimulatedHoldingResult(
+            fund_code="000001",
+            periods=[
+                SinglePeriodResult(
+                    calc_date=date(2024, 6, 30),
+                    holdings=[{"stock_code": "000001", "estimated_weight": 1.0, "confidence": "medium"}],
+                    stock_weight_pct=100.0,
+                    bond_weight_pct=0.0,
+                    cash_weight_pct=0.0,
+                    tracking_error=0.01,
+                    objective_value=0.0,
+                )
+            ],
+            backtest_report={"top10_recall": 0.8, "industry_correlation": None, "warnings": []},
+            overall_tracking_error=0.01,
+            overall_top10_recall=0.8,
+        )
+
+        data = result.to_api_data()
+        assert "estimated_overall_tracking_error" in data
+        assert "overall_tracking_error" not in data
+        assert "estimated_holdings" in data["periods"][0]
+        assert data["conclusion_status"] == "estimated"
 
     def test_build_candidate_pool(self):
         from fund_research.analysis.simulated_holding import build_candidate_pool
@@ -105,6 +150,24 @@ class TestDynamicAttribution:
         assert len(result.periods) == 0
         assert result.confidence == "needs_review"
 
+    def test_run_attribution_compounds_multi_period_returns(self):
+        from fund_research.analysis.dynamic_attribution import run_attribution
+
+        holdings = pd.DataFrame([
+            {"report_date": "2026-01-01", "sector": "A", "port_weight": 1.0, "bench_weight": 1.0},
+            {"report_date": "2026-02-01", "sector": "A", "port_weight": 1.0, "bench_weight": 1.0},
+        ])
+        returns = pd.DataFrame([
+            {"report_date": "2026-01-01", "sector": "A", "port_return": 0.10, "bench_return": 0.00},
+            {"report_date": "2026-02-01", "sector": "A", "port_return": 0.10, "bench_return": 0.00},
+        ])
+
+        result = run_attribution("000001", holdings, returns)
+
+        assert result.total_portfolio_return == pytest.approx(0.21)
+        assert abs(result.total_residual) < 1e-3
+        assert "estimated_total_portfolio_return" in result.to_api_data()
+
 
 class TestScoring:
     """Smoke tests for composite scoring."""
@@ -154,3 +217,32 @@ class TestScoring:
         result = score_funds(data, contains_estimated={"trading"})
         assert result.fund_scores[0].contains_estimated
         assert any("trading" in r and "估计" in r for r in result.fund_scores[0].deduction_reasons)
+
+    def test_score_funds_does_not_penalize_unknown_sample_years(self):
+        from fund_research.analysis.scoring import score_funds
+
+        data = pd.DataFrame({
+            "fund_code": ["000001", "000002"],
+            "return": [0.12, 0.08],
+            "risk": [0.10, 0.12],
+        })
+
+        result = score_funds(data, weights={"return": 0.5, "risk": 0.5})
+
+        assert all("样本期仅" not in " ".join(fs.deduction_reasons) for fs in result.fund_scores)
+        assert all(fs.sample_years is None for fs in result.fund_scores)
+
+    def test_score_funds_applies_material_missing_data_penalty(self):
+        from fund_research.analysis.scoring import score_funds
+
+        data = pd.DataFrame({
+            "fund_code": ["A", "B"],
+            "return": [0.2, None],
+            "risk": [0.2, 0.1],
+        })
+
+        result = score_funds(data, weights={"return": 0.5, "risk": 0.5}, sample_years_map={"A": 5, "B": 5})
+        by_code = {fs.fund_code: fs for fs in result.fund_scores}
+
+        assert "return 数据缺失" in by_code["B"].deduction_reasons
+        assert by_code["B"].total_score <= 50 - 2.5
