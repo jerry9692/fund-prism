@@ -1,5 +1,4 @@
 import { useEffect, useState } from "react";
-import { api } from "../api/client";
 
 interface Experiment {
   id: number;
@@ -12,6 +11,16 @@ interface Experiment {
   failure_count: number;
   created_at: string;
 }
+
+const STATUS_LABELS: Record<string, string> = {
+  pending: "待运行", running: "运行中", completed: "已完成", failed: "失败",
+};
+
+const ALGO_LABELS: Record<string, string> = {
+  simulated_holding: "模拟持仓",
+  dynamic_attribution: "动态归因",
+  scoring: "综合评分",
+};
 
 export default function ExperimentsPage() {
   const [experiments, setExperiments] = useState<Experiment[]>([]);
@@ -44,7 +53,7 @@ export default function ExperimentsPage() {
   }
 
   async function remove(id: number) {
-    if (!confirm("Delete experiment?")) return;
+    if (!confirm("确认删除该实验？")) return;
     await fetch(`/api/v2/experiments/${id}`, { method: "DELETE" });
     load();
   }
@@ -57,49 +66,49 @@ export default function ExperimentsPage() {
   return (
     <div>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
-        <h1>Algorithm Experiments</h1>
+        <h1>算法实验管理</h1>
         <button onClick={() => setShowCreate(!showCreate)} style={{ padding: "6px 16px", cursor: "pointer" }}>
-          + New Experiment
+          + 新建实验
         </button>
       </div>
 
       {showCreate && (
         <div className="card" style={{ marginBottom: 16 }}>
-          <h3 style={{ marginBottom: 8 }}>New Experiment</h3>
+          <h3 style={{ marginBottom: 8 }}>新建实验</h3>
           <div style={{ display: "flex", gap: 8, alignItems: "end" }}>
             <label style={{ fontSize: 13 }}>
-              Name: <input value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. sh-backtest-v1" />
+              名称 <input value={name} onChange={(e) => setName(e.target.value)} placeholder="如 sh-backtest-v1" />
             </label>
             <label style={{ fontSize: 13 }}>
-              Algorithm:
+              算法
               <select value={algo} onChange={(e) => setAlgo(e.target.value)}>
-                <option value="simulated_holding">Simulated Holding</option>
-                <option value="dynamic_attribution">Dynamic Attribution</option>
-                <option value="scoring">Scoring</option>
+                <option value="simulated_holding">模拟持仓</option>
+                <option value="dynamic_attribution">动态归因</option>
+                <option value="scoring">综合评分</option>
               </select>
             </label>
             <button onClick={create} style={{ padding: "6px 16px", background: "var(--color-primary)", color: "#fff", border: "none", borderRadius: "var(--radius-sm)", cursor: "pointer" }}>
-              Create
+              创建
             </button>
           </div>
         </div>
       )}
 
-      {loading ? <p>Loading...</p> : experiments.length === 0 ? (
-        <p style={{ color: "var(--color-text-secondary)" }}>No experiments yet. Create one to get started.</p>
+      {loading ? <p>加载中...</p> : experiments.length === 0 ? (
+        <p style={{ color: "var(--color-text-secondary)" }}>暂无实验，点击"新建实验"开始。</p>
       ) : (
         <table className="data-table">
           <thead>
             <tr>
               <th>ID</th>
-              <th>Name</th>
-              <th>Algorithm</th>
-              <th>Status</th>
-              <th>Funds</th>
-              <th>Success</th>
-              <th>Failed</th>
-              <th>Created</th>
-              <th>Actions</th>
+              <th>名称</th>
+              <th>算法</th>
+              <th>状态</th>
+              <th>基金数</th>
+              <th>成功</th>
+              <th>失败</th>
+              <th>创建时间</th>
+              <th>操作</th>
             </tr>
           </thead>
           <tbody>
@@ -107,15 +116,15 @@ export default function ExperimentsPage() {
               <tr key={e.id}>
                 <td style={{ fontFamily: "var(--font-mono)" }}>{e.id}</td>
                 <td>{e.name}</td>
-                <td>{e.algorithm} v{e.version}</td>
-                <td><span className={`badge badge-${e.status === "completed" ? "computed" : e.status === "failed" ? "needs_review" : "observation"}`}>{e.status}</span></td>
+                <td>{ALGO_LABELS[e.algorithm] ?? e.algorithm} v{e.version}</td>
+                <td><span className={`badge badge-${e.status === "completed" ? "computed" : e.status === "failed" ? "needs_review" : "observation"}`}>{STATUS_LABELS[e.status] ?? e.status}</span></td>
                 <td>{e.fund_count}</td>
                 <td>{e.success_count}</td>
                 <td style={{ color: e.failure_count > 0 ? "var(--color-danger)" : undefined }}>{e.failure_count}</td>
                 <td style={{ fontSize: 12 }}>{e.created_at?.slice(0, 10)}</td>
                 <td>
-                  <button onClick={() => rerun(e.id)} style={{ marginRight: 4, cursor: "pointer" }} disabled={e.status === "running"}>Rerun</button>
-                  <button onClick={() => remove(e.id)} style={{ cursor: "pointer", color: "var(--color-danger)" }}>Delete</button>
+                  <button onClick={() => rerun(e.id)} style={{ marginRight: 4, cursor: "pointer" }} disabled={e.status === "running"}>重跑</button>
+                  <button onClick={() => remove(e.id)} style={{ cursor: "pointer", color: "var(--color-danger)" }}>删除</button>
                 </td>
               </tr>
             ))}
