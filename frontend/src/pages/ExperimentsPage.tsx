@@ -232,20 +232,28 @@ export default function ExperimentsPage() {
               {detail.results && detail.results.length > 0 ? (
                 <table className="data-table">
                   <thead>
-                    <tr>
-                      <th>基金代码</th><th>成功</th><th>跟踪误差</th><th>Top10 召回</th><th>错误信息</th>
-                    </tr>
+                    <tr><th>基金</th><th>结果</th><th>指标</th><th>错误</th></tr>
                   </thead>
                   <tbody>
                     {detail.results.map((r, i) => {
                       const m = r.metrics || {};
+                      const keys = Object.keys(m).filter((k) => m[k] != null);
                       return (
                         <tr key={i}>
                           <td className="mono-cell">{r.fund_code}</td>
                           <td><span className={`badge badge-${r.is_success ? "computed" : "needs_review"}`}>{r.is_success ? "是" : "否"}</span></td>
-                          <td>{m.estimated_overall_tracking_error != null ? Number(m.estimated_overall_tracking_error).toFixed(4) : "—"}</td>
-                          <td>{m.estimated_overall_top10_recall != null ? (Number(m.estimated_overall_top10_recall) * 100).toFixed(1) + "%" : "—"}</td>
-                          <td style={{ color: r.error_message ? "var(--color-danger)" : undefined, maxWidth: 300, overflow: "hidden", textOverflow: "ellipsis" }}>
+                          <td style={{ fontSize: 12 }}>
+                            {keys.length > 0
+                              ? keys.slice(0, 6).map((k) => (
+                                  <div key={k} style={{ marginBottom: 2 }}>
+                                    <span style={{ color: "var(--color-text-secondary)" }}>{k}: </span>
+                                    {typeof m[k] === "number" ? Number(m[k]).toFixed(4) : String(m[k]).slice(0, 60)}
+                                  </div>
+                                ))
+                              : "—"}
+                            {keys.length > 6 && <div style={{ color: "var(--color-text-secondary)" }}>... 共 {keys.length} 项</div>}
+                          </td>
+                          <td style={{ color: r.error_message ? "var(--color-danger)" : undefined, fontSize: 12, maxWidth: 250 }}>
                             {r.error_message ?? "—"}
                           </td>
                         </tr>
