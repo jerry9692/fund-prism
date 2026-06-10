@@ -365,7 +365,7 @@ class TestRunExperimentPipeline:
         test_client: TestClient,
         test_session: Session,
     ):
-        """动态归因结果必须使用 estimated_* 字段。"""
+        """动态归因结果必须使用真实股票/基准收益和 estimated_* 字段。"""
         # Seed minimal data
         for i in range(10):
             test_session.add(FundNAV(
@@ -380,16 +380,34 @@ class TestRunExperimentPipeline:
                 weight_pct=10.0, industry="tech" if i < 3 else "finance",
                 rank_in_holdings=i + 1, data_source_level="LOCAL",
             ))
+            for day in range(10):
+                test_session.add(StockDaily(
+                    stock_code=f"{i:06d}",
+                    trade_date=date(2024, 1, 1) + timedelta(days=day),
+                    close_price=100.0 + day,
+                    daily_return=0.01,
+                    data_source_level="LOCAL",
+                ))
+        for day in range(10):
+            test_session.add(StockDaily(
+                stock_code="sh000300",
+                trade_date=date(2024, 1, 1) + timedelta(days=day),
+                close_price=4000.0 + day,
+                daily_return=0.005,
+                data_source_level="LOCAL",
+            ))
         test_session.commit()
 
         create_resp = test_client.post("/api/v2/experiments", json={
             "experiment_name": "attr-test", "algorithm_name": "dynamic_attribution",
+            "parameters": {"benchmark_symbol": "sh000300"},
             "sample_fund_codes": ["000001"],
         })
         exp_id = create_resp.json()["data"]["id"]
 
         run_resp = test_client.post(f"/api/v2/experiments/{exp_id}/run")
         assert run_resp.status_code == 200
+        assert run_resp.json()["data"]["status"] == "completed"
 
         from sqlalchemy import select as sa_select
         results = test_session.scalars(
@@ -397,14 +415,62 @@ class TestRunExperimentPipeline:
         ).all()
         assert len(results) >= 1
         m = results[0].metrics or {}
-        assert m.get("uses_proxy_benchmark") is True
-        assert m.get("uses_proxy_sector_returns") is True
+        assert m.get("uses_proxy_benchmark") is False
+        assert m.get("uses_proxy_sector_returns") is False
+        assert m.get("uses_real_benchmark_returns") is True
+        assert m.get("uses_real_sector_returns") is True
+        assert m.get("uses_proxy_benchmark_weights") is True
+        assert m.get("benchmark_symbol") == "sh000300"
         assert m.get("normalized_weight_sum_by_report") == {"2024-01-01": 1.0}
         assert m["estimated_total_portfolio_return"] < 0.2
-        assert any("P2B 近似" in warning for warning in (results[0].warnings or []))
+        assert not any("P2B 近似" in warning for warning in (results[0].warnings or []))
         if results[0].is_success:
             assert "estimated_total_allocation_effect" in m
             assert "estimated_total_selection_effect" in m
+
+    def test_run_dynamic_attribution_without_benchmark_data_fails(
+        self,
+        test_client: TestClient,
+        test_session: Session,
+    ):
+        """缺少真实基准指数行情时，动态归因不能回退到代理收益。"""
+        for i in range(2):
+            test_session.add(FundDisclosedHoldings(
+                fund_code="000001", report_date=date(2024, 1, 1),
+                security_code=f"{i:06d}", asset_type="股票",
+                weight_pct=50.0, industry="tech",
+                rank_in_holdings=i + 1, data_source_level="LOCAL",
+            ))
+            for day in range(5):
+                test_session.add(StockDaily(
+                    stock_code=f"{i:06d}",
+                    trade_date=date(2024, 1, 1) + timedelta(days=day),
+                    close_price=100.0 + day,
+                    daily_return=0.01,
+                    data_source_level="LOCAL",
+                ))
+        test_session.commit()
+
+        create_resp = test_client.post("/api/v2/experiments", json={
+            "experiment_name": "attr-no-benchmark",
+            "algorithm_name": "dynamic_attribution",
+            "parameters": {"benchmark_symbol": "sh000300"},
+            "sample_fund_codes": ["000001"],
+        })
+        exp_id = create_resp.json()["data"]["id"]
+
+        run_resp = test_client.post(f"/api/v2/experiments/{exp_id}/run")
+        assert run_resp.status_code == 200
+        payload = run_resp.json()
+        assert payload["conclusion_status"] == "needs_review"
+        assert payload["data"]["status"] == "failed"
+
+        from sqlalchemy import select as sa_select
+        result = test_session.scalars(
+            sa_select(ExperimentResult).where(ExperimentResult.experiment_id == int(exp_id))
+        ).one()
+        assert not result.is_success
+        assert result.error_message == "缺少基准指数行情: sh000300"
 
     def test_run_scoring_excludes_unverified_estimated_dims(
         self,
