@@ -81,7 +81,6 @@ def upgrade() -> None:
         sa.Column("error_message", sa.Text(), nullable=True),
         sa.Column("warnings", sa.JSON(), nullable=True),
         sa.Column("created_at", sa.DateTime(), nullable=False, server_default=sa.func.now()),
-        sa.ForeignKeyConstraint(["experiment_id"], ["algorithm_experiment.id"]),
         sa.PrimaryKeyConstraint("id"),
     )
     op.create_index("ix_experiment_result_experiment_id", "experiment_result", ["experiment_id"])

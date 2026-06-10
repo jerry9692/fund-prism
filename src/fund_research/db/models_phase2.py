@@ -6,12 +6,11 @@ registry, so Alembic, application code, and tests all see the same schema.
 """
 
 from datetime import date, datetime
+from secrets import randbits
 from typing import Any
 
 from sqlalchemy import JSON, Boolean, Date, DateTime, Float, ForeignKey, Integer, String, Text
 from sqlalchemy.orm import Mapped, mapped_column
-
-from secrets import randbits
 
 from fund_research.db.models import Base
 
@@ -142,7 +141,7 @@ class ExperimentResult(Base):
     __tablename__ = "experiment_result"
 
     id: Mapped[int] = _p2_pk()
-    experiment_id: Mapped[int] = mapped_column(ForeignKey("algorithm_experiment.id"), index=True)
+    experiment_id: Mapped[int] = mapped_column(Integer, index=True)
     fund_code: Mapped[str] = mapped_column(String(20))
     calc_date: Mapped[date] = mapped_column(Date)
     is_success: Mapped[bool] = mapped_column(Boolean, default=True)
