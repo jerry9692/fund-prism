@@ -540,8 +540,14 @@ def run_simulation(
     periods: list[SinglePeriodResult] = []
     prev_weights: np.ndarray | None = None
     prev_pool_in_data: list[str] | None = None
+    skipped_no_nav = 0
+    skipped_no_stocks = 0
+    skipped_no_pool = 0
+    skipped_no_holdings = 0
+    total_attempted = 0
 
     for rb_date in rebal_dates:
+        total_attempted += 1
         # Window: rb_date to rb_date + window_days
         window_end = None
         for d in all_dates:
@@ -554,6 +560,7 @@ def run_simulation(
         window_end_date = rb_date + pd.Timedelta(days=window_days)
         window_nav = nav[(nav["trade_date"] >= rb_date) & (nav["trade_date"] < window_end_date)]
         if len(window_nav) < 20:
+            skipped_no_nav += 1
             continue
 
         # Nearest disclosed holdings: use latest available if none before rb_date
@@ -561,6 +568,7 @@ def run_simulation(
         if prev_holdings.empty:
             prev_holdings = holdings  # fallback: use all available holdings
         if prev_holdings.empty:
+            skipped_no_holdings += 1
             continue
         latest_report = prev_holdings["report_date"].max()
         latest_holdings = prev_holdings[prev_holdings["report_date"] == latest_report]
@@ -574,6 +582,7 @@ def run_simulation(
         # Get stock returns for the window
         window_stocks = stocks[(stocks["trade_date"] >= rb_date) & (stocks["trade_date"] < window_end_date)]
         if window_stocks.empty:
+            skipped_no_stocks += 1
             continue
 
         # Build return matrices
@@ -583,6 +592,7 @@ def run_simulation(
         # Filter to pool stocks
         pool_in_data = [s for s in pool if s in stock_pivot.columns]
         if len(pool_in_data) < 2:
+            skipped_no_pool += 1
             continue
 
         ret_matrix = stock_pivot[pool_in_data].values.T  # (n_stocks, n_days)
@@ -684,6 +694,11 @@ def run_simulation(
     else:
         avg_te = 0.0
         confidence = "needs_review"
+        warnings.append(
+            f"全部 {total_attempted} 个调仓窗口跳过: "
+            f"NAV不足={skipped_no_nav}, 无股票={skipped_no_stocks}, "
+            f"候选池不足={skipped_no_pool}, 无持仓={skipped_no_holdings}"
+        )
 
     # Backtest
     backtest: dict | None = None
