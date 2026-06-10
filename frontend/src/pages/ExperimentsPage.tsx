@@ -109,6 +109,8 @@ export default function ExperimentsPage() {
   }
 
   async function run(id: string) {
+    // Instant feedback: mark as running locally
+    setExperiments((prev) => prev.map((e) => (e.id === id ? { ...e, status: "running" } : e)));
     await fetch(`/api/v2/experiments/${id}/run`, { method: "POST" });
     load();
     if (selectedId === id) loadDetail(id);
