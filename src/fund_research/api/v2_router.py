@@ -26,7 +26,9 @@ from fund_research.experiments.manager import (
     list_experiments,
     record_result,
     rerun_experiment,
+    update_experiment_status,
 )
+from fund_research.experiments.runner import dispatch_run
 
 v2_router = APIRouter(prefix="/api/v2", tags=["Tool API v2"])
 
@@ -66,15 +68,10 @@ def _log(db: Session, tool: str, params: dict, resp: APIResponse[dict], started:
             )
         )
         db.commit()
-    except Exception as e:
+    except Exception as exc:
         db.rollback()
-        resp.warnings.append(f"API 调用日志写入失败: {e}")
+        resp.warnings.append(f"API 调用日志写入失败: {exc}")
     return resp
-
-
-# ============================================================
-# Experiments
-# ============================================================
 
 
 @v2_router.get("/experiments")
@@ -86,20 +83,45 @@ def list_experiments_endpoint(
     started = perf_counter()
     try:
         experiments = list_experiments(db, algorithm_name=algorithm_name)
-        data = [{"id": str(e.id), "name": e.experiment_name, "algorithm": e.algorithm_name,
-                  "version": e.algorithm_version, "status": e.status,
-                  "fund_count": e.fund_count, "success_count": e.success_count,
-                  "failure_count": e.failure_count, "created_at": e.created_at}
-                 for e in experiments]
-        return _log(db, "list_experiments", {"algorithm_name": algorithm_name},
-                    APIResponse(data={"experiments": data, "total": len(data)},
-                                metadata={"tool": "list_experiments", "platform_version": __version__},
-                                conclusion_status=ConclusionStatus.COMPUTED), started)
-    except Exception as e:
+        data = [
+            {
+                "id": str(exp.id),
+                "name": exp.experiment_name,
+                "algorithm": exp.algorithm_name,
+                "version": exp.algorithm_version,
+                "status": exp.status,
+                "fund_count": exp.fund_count,
+                "success_count": exp.success_count,
+                "failure_count": exp.failure_count,
+                "created_at": exp.created_at,
+            }
+            for exp in experiments
+        ]
+        return _log(
+            db,
+            "list_experiments",
+            {"algorithm_name": algorithm_name},
+            APIResponse(
+                data={"experiments": data, "total": len(data)},
+                metadata={"tool": "list_experiments", "platform_version": __version__},
+                conclusion_status=ConclusionStatus.COMPUTED,
+            ),
+            started,
+        )
+    except Exception as exc:
         db.rollback()
-        return _log(db, "list_experiments", {},
-                    APIResponse(data=None, metadata={"tool": "list_experiments"},
-                                warnings=[str(e)], conclusion_status=ConclusionStatus.NEEDS_REVIEW), started)
+        return _log(
+            db,
+            "list_experiments",
+            {},
+            APIResponse(
+                data=None,
+                metadata={"tool": "list_experiments"},
+                warnings=[str(exc)],
+                conclusion_status=ConclusionStatus.NEEDS_REVIEW,
+            ),
+            started,
+        )
 
 
 @v2_router.post("/experiments")
@@ -122,15 +144,35 @@ def create_experiment_endpoint(
             backtest_start=body.backtest_start,
             backtest_end=body.backtest_end,
         )
-        return _log(db, "create_experiment", params,
-                    APIResponse(data={"id": str(exp.id), "status": exp.status, "experiment_name": exp.experiment_name},
-                                metadata={"tool": "create_experiment", "platform_version": __version__},
-                                conclusion_status=ConclusionStatus.COMPUTED), started)
-    except Exception as e:
+        return _log(
+            db,
+            "create_experiment",
+            params,
+            APIResponse(
+                data={
+                    "id": str(exp.id),
+                    "status": exp.status,
+                    "experiment_name": exp.experiment_name,
+                },
+                metadata={"tool": "create_experiment", "platform_version": __version__},
+                conclusion_status=ConclusionStatus.COMPUTED,
+            ),
+            started,
+        )
+    except Exception as exc:
         db.rollback()
-        return _log(db, "create_experiment", params,
-                    APIResponse(data=None, metadata={"tool": "create_experiment"},
-                                warnings=[str(e)], conclusion_status=ConclusionStatus.NEEDS_REVIEW), started)
+        return _log(
+            db,
+            "create_experiment",
+            params,
+            APIResponse(
+                data=None,
+                metadata={"tool": "create_experiment"},
+                warnings=[str(exc)],
+                conclusion_status=ConclusionStatus.NEEDS_REVIEW,
+            ),
+            started,
+        )
 
 
 @v2_router.get("/experiments/{experiment_id}")
@@ -142,32 +184,55 @@ def get_experiment_endpoint(
     started = perf_counter()
     exp = db.scalar(select(AlgorithmExperiment).where(AlgorithmExperiment.id == experiment_id))
     if not exp:
-        return _log(db, "get_experiment", {"experiment_id": experiment_id},
-                    APIResponse(data=None, metadata={"tool": "get_experiment"},
-                                warnings=[f"实验 {experiment_id} 不存在"],
-                                conclusion_status=ConclusionStatus.NEEDS_REVIEW), started)
+        return _log(
+            db,
+            "get_experiment",
+            {"experiment_id": experiment_id},
+            APIResponse(
+                data=None,
+                metadata={"tool": "get_experiment"},
+                warnings=[f"实验 {experiment_id} 不存在"],
+                conclusion_status=ConclusionStatus.NEEDS_REVIEW,
+            ),
+            started,
+        )
 
     results = get_experiment_results(db, experiment_id)
-    return _log(db, "get_experiment", {"experiment_id": experiment_id},
-                APIResponse(
-                    data={
-                        "id": str(exp.id), "experiment_name": exp.experiment_name,
-                        "algorithm_name": exp.algorithm_name, "algorithm_version": exp.algorithm_version,
-                        "parameters": exp.parameters, "status": exp.status,
-                        "backtest_start": str(exp.backtest_start) if exp.backtest_start else None,
-                        "backtest_end": str(exp.backtest_end) if exp.backtest_end else None,
-                        "summary": exp.summary,
-                        "results": [{"fund_code": r.fund_code, "calc_date": str(r.calc_date) if r.calc_date else None,
-                                      "is_success": r.is_success, "metrics": r.metrics,
-                                      "error_message": r.error_message} for r in results],
-                    },
-                    metadata={
-                        "tool": "get_experiment",
-                        "experiment_id": experiment_id,
-                        "platform_version": __version__,
-                    },
-                    conclusion_status=ConclusionStatus.COMPUTED,
-                ), started)
+    return _log(
+        db,
+        "get_experiment",
+        {"experiment_id": experiment_id},
+        APIResponse(
+            data={
+                "id": str(exp.id),
+                "experiment_name": exp.experiment_name,
+                "algorithm_name": exp.algorithm_name,
+                "algorithm_version": exp.algorithm_version,
+                "parameters": exp.parameters,
+                "status": exp.status,
+                "backtest_start": str(exp.backtest_start) if exp.backtest_start else None,
+                "backtest_end": str(exp.backtest_end) if exp.backtest_end else None,
+                "summary": exp.summary,
+                "results": [
+                    {
+                        "fund_code": result.fund_code,
+                        "calc_date": str(result.calc_date) if result.calc_date else None,
+                        "is_success": result.is_success,
+                        "metrics": result.metrics,
+                        "error_message": result.error_message,
+                    }
+                    for result in results
+                ],
+            },
+            metadata={
+                "tool": "get_experiment",
+                "experiment_id": experiment_id,
+                "platform_version": __version__,
+            },
+            conclusion_status=ConclusionStatus.COMPUTED,
+        ),
+        started,
+    )
 
 
 @v2_router.post("/experiments/{experiment_id}/rerun")
@@ -179,15 +244,31 @@ def rerun_experiment_endpoint(
     started = perf_counter()
     try:
         exp = rerun_experiment(db, experiment_id)
-        return _log(db, "rerun_experiment", {"experiment_id": str(experiment_id)},
-                    APIResponse(data={"id": str(exp.id), "status": exp.status},
-                                metadata={"tool": "rerun_experiment", "platform_version": __version__},
-                                conclusion_status=ConclusionStatus.COMPUTED), started)
-    except ValueError as e:
+        return _log(
+            db,
+            "rerun_experiment",
+            {"experiment_id": str(experiment_id)},
+            APIResponse(
+                data={"id": str(exp.id), "status": exp.status},
+                metadata={"tool": "rerun_experiment", "platform_version": __version__},
+                conclusion_status=ConclusionStatus.COMPUTED,
+            ),
+            started,
+        )
+    except ValueError as exc:
         db.rollback()
-        return _log(db, "rerun_experiment", {"experiment_id": experiment_id},
-                    APIResponse(data=None, metadata={"tool": "rerun_experiment"},
-                                warnings=[str(e)], conclusion_status=ConclusionStatus.NEEDS_REVIEW), started)
+        return _log(
+            db,
+            "rerun_experiment",
+            {"experiment_id": experiment_id},
+            APIResponse(
+                data=None,
+                metadata={"tool": "rerun_experiment"},
+                warnings=[str(exc)],
+                conclusion_status=ConclusionStatus.NEEDS_REVIEW,
+            ),
+            started,
+        )
 
 
 @v2_router.delete("/experiments/{experiment_id}")
@@ -199,15 +280,31 @@ def delete_experiment_endpoint(
     started = perf_counter()
     try:
         delete_experiment(db, experiment_id)
-        return _log(db, "delete_experiment", {"experiment_id": str(experiment_id)},
-                    APIResponse(data={"id": str(experiment_id), "deleted": True},
-                                metadata={"tool": "delete_experiment", "platform_version": __version__},
-                                conclusion_status=ConclusionStatus.COMPUTED), started)
-    except Exception as e:
+        return _log(
+            db,
+            "delete_experiment",
+            {"experiment_id": str(experiment_id)},
+            APIResponse(
+                data={"id": str(experiment_id), "deleted": True},
+                metadata={"tool": "delete_experiment", "platform_version": __version__},
+                conclusion_status=ConclusionStatus.COMPUTED,
+            ),
+            started,
+        )
+    except Exception as exc:
         db.rollback()
-        return _log(db, "delete_experiment", {"experiment_id": experiment_id},
-                    APIResponse(data=None, metadata={"tool": "delete_experiment"},
-                                warnings=[str(e)], conclusion_status=ConclusionStatus.NEEDS_REVIEW), started)
+        return _log(
+            db,
+            "delete_experiment",
+            {"experiment_id": experiment_id},
+            APIResponse(
+                data=None,
+                metadata={"tool": "delete_experiment"},
+                warnings=[str(exc)],
+                conclusion_status=ConclusionStatus.NEEDS_REVIEW,
+            ),
+            started,
+        )
 
 
 @v2_router.post("/experiments/{experiment_id}/results")
@@ -222,10 +319,18 @@ def record_experiment_result_endpoint(
     try:
         exp = db.get(AlgorithmExperiment, experiment_id)
         if exp is None:
-            return _log(db, "record_experiment_result", params,
-                        APIResponse(data=None, metadata={"tool": "record_experiment_result"},
-                                    warnings=[f"实验 {experiment_id} 不存在"],
-                                    conclusion_status=ConclusionStatus.NEEDS_REVIEW), started)
+            return _log(
+                db,
+                "record_experiment_result",
+                params,
+                APIResponse(
+                    data=None,
+                    metadata={"tool": "record_experiment_result"},
+                    warnings=[f"实验 {experiment_id} 不存在"],
+                    conclusion_status=ConclusionStatus.NEEDS_REVIEW,
+                ),
+                started,
+            )
         result = record_result(
             db,
             experiment_id=experiment_id,
@@ -236,24 +341,35 @@ def record_experiment_result_endpoint(
             error_message=body.error_message,
             warnings=body.warnings,
         )
-        return _log(db, "record_experiment_result", params,
-                    APIResponse(data={
-                        "id": str(result.id),
-                        "fund_code": result.fund_code,
-                        "is_success": result.is_success,
-                    },
-                                metadata={"tool": "record_experiment_result", "platform_version": __version__},
-                                conclusion_status=ConclusionStatus.COMPUTED), started)
-    except Exception as e:
+        return _log(
+            db,
+            "record_experiment_result",
+            params,
+            APIResponse(
+                data={
+                    "id": str(result.id),
+                    "fund_code": result.fund_code,
+                    "is_success": result.is_success,
+                },
+                metadata={"tool": "record_experiment_result", "platform_version": __version__},
+                conclusion_status=ConclusionStatus.COMPUTED,
+            ),
+            started,
+        )
+    except Exception as exc:
         db.rollback()
-        return _log(db, "record_experiment_result", params,
-                    APIResponse(data=None, metadata={"tool": "record_experiment_result"},
-                                warnings=[str(e)], conclusion_status=ConclusionStatus.NEEDS_REVIEW), started)
-
-
-# ============================================================
-# Run experiment (P2B)
-# ============================================================
+        return _log(
+            db,
+            "record_experiment_result",
+            params,
+            APIResponse(
+                data=None,
+                metadata={"tool": "record_experiment_result"},
+                warnings=[str(exc)],
+                conclusion_status=ConclusionStatus.NEEDS_REVIEW,
+            ),
+            started,
+        )
 
 
 @v2_router.post("/experiments/{experiment_id}/run")
@@ -267,26 +383,39 @@ def run_experiment_endpoint(
 
     exp = db.get(AlgorithmExperiment, experiment_id)
     if exp is None:
-        return _log(db, "run_experiment", params,
-                    APIResponse(data=None, metadata={"tool": "run_experiment"},
-                                warnings=[f"实验 {experiment_id} 不存在"],
-                                conclusion_status=ConclusionStatus.NEEDS_REVIEW), started)
+        return _log(
+            db,
+            "run_experiment",
+            params,
+            APIResponse(
+                data=None,
+                metadata={"tool": "run_experiment"},
+                warnings=[f"实验 {experiment_id} 不存在"],
+                conclusion_status=ConclusionStatus.NEEDS_REVIEW,
+            ),
+            started,
+        )
 
     if exp.status == "running":
-        return _log(db, "run_experiment", params,
-                    APIResponse(data={"experiment_id": experiment_id, "status": "running"},
-                                metadata={"tool": "run_experiment"},
-                                warnings=["实验正在运行中"],
-                                conclusion_status=ConclusionStatus.OBSERVATION), started)
-
-    from fund_research.experiments.manager import update_experiment_status
+        return _log(
+            db,
+            "run_experiment",
+            params,
+            APIResponse(
+                data={"experiment_id": experiment_id, "status": "running"},
+                metadata={"tool": "run_experiment"},
+                warnings=["实验正在运行中"],
+                conclusion_status=ConclusionStatus.OBSERVATION,
+            ),
+            started,
+        )
 
     update_experiment_status(db, experiment_id, "running")
 
     try:
-        results = _dispatch_run(db, exp)
+        results = dispatch_run(db, exp)
         fund_count = len(results)
-        success_count = sum(1 for r in results if r["is_success"])
+        success_count = sum(1 for result in results if result["is_success"])
         failure_count = fund_count - success_count
         if fund_count == 0 or success_count == 0:
             final_status = "failed"
@@ -301,431 +430,35 @@ def run_experiment_endpoint(
             conclusion_status = ConclusionStatus.COMPUTED
             summary = f"完成 {fund_count} 只基金"
         update_experiment_status(db, experiment_id, final_status, summary)
-        return _log(db, "run_experiment", params,
-                    APIResponse(
-                        data={"experiment_id": str(experiment_id), "status": final_status,
-                              "fund_count": fund_count, "success_count": success_count,
-                              "failure_count": failure_count},
-                        metadata={"tool": "run_experiment", "platform_version": __version__},
-                        conclusion_status=conclusion_status), started)
-    except Exception as e:
+        return _log(
+            db,
+            "run_experiment",
+            params,
+            APIResponse(
+                data={
+                    "experiment_id": str(experiment_id),
+                    "status": final_status,
+                    "fund_count": fund_count,
+                    "success_count": success_count,
+                    "failure_count": failure_count,
+                },
+                metadata={"tool": "run_experiment", "platform_version": __version__},
+                conclusion_status=conclusion_status,
+            ),
+            started,
+        )
+    except Exception as exc:
         db.rollback()
-        update_experiment_status(db, experiment_id, "failed", str(e)[:200])
-        return _log(db, "run_experiment", params,
-                    APIResponse(data=None, metadata={"tool": "run_experiment"},
-                                warnings=[str(e)], conclusion_status=ConclusionStatus.NEEDS_REVIEW), started)
-
-
-def _dispatch_run(db: Session, exp: AlgorithmExperiment) -> list[dict]:
-    """根据实验的 algorithm_name 分发到对应的执行函数。"""
-    algo = exp.algorithm_name
-    sample_codes = exp.sample_fund_codes or []
-
-    if algo == "simulated_holding":
-        return _run_simulated_holding_batch(db, exp, sample_codes)
-    elif algo == "dynamic_attribution":
-        return _run_dynamic_attribution_batch(db, exp, sample_codes)
-    elif algo == "scoring":
-        return _run_scoring_batch(db, exp, sample_codes)
-    else:
-        from datetime import date as date_type
-
-        results = []
-        for c in sample_codes:
-            error = f"未知算法: {algo}"
-            record_result(db, experiment_id=exp.id, fund_code=c,
-                          calc_date=date_type.today(), is_success=False,
-                          error_message=error, warnings=[])
-            results.append({"fund_code": c, "is_success": False,
-                            "error_message": error, "warnings": []})
-        return results
-
-
-def _run_simulated_holding_batch(db: Session, exp: AlgorithmExperiment, fund_codes: list[str]) -> list[dict]:
-    """批量运行模拟持仓，记录结果和验收报告。"""
-    from datetime import date as date_type
-
-    import numpy as np
-    import pandas as pd
-    from sqlalchemy import select as sa_select
-
-    from fund_research.analysis.simulated_holding import backtest_disclosure
-    from fund_research.db.models import FundDisclosedHoldings, FundNAV, StockDaily
-    from fund_research.experiments.manager import record_result
-    results: list[dict] = []
-
-    for fc in fund_codes:
-        try:
-            nav_rows = db.scalars(
-                sa_select(FundNAV).where(FundNAV.fund_code == fc).order_by(FundNAV.trade_date)
-            ).all()
-            if not nav_rows:
-                record_result(db, experiment_id=exp.id, fund_code=fc,
-                              calc_date=date_type.today(), is_success=False,
-                              error_message="无净值数据", warnings=[])
-                results.append({"fund_code": fc, "is_success": False,
-                                "error_message": "无净值数据", "warnings": []})
-                continue
-
-            holdings_rows = db.scalars(
-                sa_select(FundDisclosedHoldings)
-                .where(FundDisclosedHoldings.fund_code == fc)
-                .order_by(FundDisclosedHoldings.report_date)
-            ).all()
-            stock_rows = db.scalars(
-                sa_select(StockDaily).order_by(StockDaily.stock_code, StockDaily.trade_date)
-            ).all()
-
-            nav_df = pd.DataFrame([{
-                "trade_date": r.trade_date, "unit_nav": r.unit_nav,
-                "accumulated_nav": r.accumulated_nav, "daily_return": r.daily_return,
-            } for r in nav_rows])
-            holdings_df = pd.DataFrame([{
-                "report_date": r.report_date, "stock_code": r.security_code,
-                "weight_pct": r.weight_pct, "industry": r.industry,
-            } for r in holdings_rows]) if holdings_rows else pd.DataFrame()
-            stock_df = pd.DataFrame([{
-                "trade_date": r.trade_date, "stock_code": r.stock_code,
-                "close_price": r.close_price, "daily_return": r.daily_return,
-                "industry": None, "market_cap": None,
-            } for r in stock_rows]) if stock_rows else pd.DataFrame()
-
-            if holdings_df.empty:
-                error = "无持仓数据"
-                record_result(db, experiment_id=exp.id, fund_code=fc,
-                              calc_date=date_type.today(), is_success=False,
-                              error_message=error, warnings=[])
-                results.append({"fund_code": fc, "is_success": False,
-                                "error_message": error, "warnings": []})
-                continue
-            if stock_df.empty:
-                error = "无股票行情数据"
-                record_result(db, experiment_id=exp.id, fund_code=fc,
-                              calc_date=date_type.today(), is_success=False,
-                              error_message=error, warnings=[])
-                results.append({"fund_code": fc, "is_success": False,
-                                "error_message": error, "warnings": []})
-                continue
-
-            if "daily_return" not in nav_df.columns or nav_df["daily_return"].isna().all():
-                nav_df = nav_df.sort_values("trade_date")
-                nav_df["daily_return"] = pd.to_numeric(nav_df["unit_nav"], errors="coerce").pct_change()
-            if "daily_return" not in stock_df.columns or stock_df["daily_return"].isna().all():
-                stock_df = stock_df.sort_values(["stock_code", "trade_date"])
-                stock_df["daily_return"] = (
-                    pd.to_numeric(stock_df["close_price"], errors="coerce")
-                    .groupby(stock_df["stock_code"])
-                    .pct_change()
-                )
-
-            # Limit to overlapping date range
-            if not nav_df.empty and not stock_df.empty:
-                nav_min, nav_max = nav_df["trade_date"].min(), nav_df["trade_date"].max()
-                stk_min, stk_max = stock_df["trade_date"].min(), stock_df["trade_date"].max()
-                lo, hi = max(nav_min, stk_min), min(nav_max, stk_max)
-                stock_df = stock_df[(stock_df["trade_date"] >= lo) & (stock_df["trade_date"] <= hi)]
-
-            # P2B naive replication baseline: use the latest disclosed report as a
-            # static portfolio, then normalize matched stock weights.
-            latest_report = holdings_df["report_date"].max()
-            latest_holdings = holdings_df[holdings_df["report_date"] == latest_report]
-            hw = latest_holdings.groupby("stock_code")["weight_pct"].sum() / 100.0
-            industry_map = {
-                str(row["stock_code"]): row["industry"]
-                for _idx, row in latest_holdings.iterrows()
-                if isinstance(row.get("industry"), str)
-            }
-            sp = stock_df.pivot_table(
-                index="trade_date", columns="stock_code", values="daily_return", aggfunc="last"
-            )
-            common_codes = [c for c in hw.index if c in sp.columns]
-            sample_count = 0
-            if common_codes:
-                raw_weights = pd.Series({c: hw[c] for c in common_codes}, dtype=float)
-                weight_sum = float(raw_weights.sum())
-                wvec = raw_weights / weight_sum if weight_sum > 0 else raw_weights
-                port_ret = (sp[common_codes] * wvec).sum(axis=1)
-                nav_dr = nav_df.set_index("trade_date")["daily_return"]
-                merged = pd.DataFrame({"port": port_ret, "fund": nav_dr}).dropna()
-                sample_count = len(merged)
-                te = float(np.sqrt(np.mean((merged["port"] - merged["fund"]) ** 2))) if sample_count > 20 else 0.0
-            else:
-                common_codes = []
-                te = 0.0
-
-            # Duck-typed result for downstream processing
-            hlist = [{"stock_code": c, "stock_name": c,
-                       "estimated_weight": float(wvec.get(c, 0.0)) if common_codes else 0.0,
-                       "industry": industry_map.get(c),
-                       "confidence": "low"}
-                      for c in common_codes]
-            sim_result = type("_R", (), {
-                "periods": [type("_P", (), {
-                    "calc_date": latest_report,
-                    "holdings": hlist,
-                    "stock_weight_pct": 100.0, "bond_weight_pct": 0.0, "cash_weight_pct": 0.0,
-                    "tracking_error": te, "objective_value": 0.0, "warnings": [],
-                })] if common_codes else [],
-                "overall_tracking_error": te,
-                "backtest_report": {},
-                "warnings": (
-                    [f"Naive replication: {len(common_codes)}/{len(hw)} codes, samples={sample_count}, TE={te:.4f}"]
-                    if common_codes else ["No matching stock codes"]
-                ),
-                "overall_industry_correlation": None,
-                "overall_top10_recall": None,
-                "confidence": "low" if te < 0.05 else "needs_review",
-            })()
-
-            disclosed_dict: dict[str, dict[str, float]] = {}
-            industry_dict: dict[str, dict[str, str]] = {}
-            for rp_date in holdings_df["report_date"].dropna().unique():
-                rp = holdings_df[holdings_df["report_date"] == rp_date]
-                disclosed_dict[str(rp_date)] = dict(
-                    zip(rp["stock_code"], rp["weight_pct"], strict=False)
-                )
-                industry_dict[str(rp_date)] = {
-                    str(row["stock_code"]): row["industry"]
-                    for _idx, row in rp.iterrows()
-                    if isinstance(row.get("industry"), str)
-                }
-
-            backtest = backtest_disclosure(sim_result.periods, disclosed_dict, industry_dict) if disclosed_dict else {}
-
-            metrics = {
-                "estimated_overall_tracking_error": sim_result.overall_tracking_error,
-                "estimated_overall_top10_recall": backtest.get("top10_recall"),
-                "estimated_overall_industry_correlation": backtest.get("industry_correlation"),
-                "period_count": len(sim_result.periods),
-                "matched_stock_count": len(common_codes),
-                "return_sample_count": sample_count,
-                "backtest_detail": backtest.get("detail", []),
-            }
-            n_periods = len(sim_result.periods)
-            te = sim_result.overall_tracking_error
-            has_periods = n_periods > 0
-
-            fail_reason = None
-            if not has_periods:
-                fail_reason = "无可用周期：股票行情与净值日期无重叠，或候选池不足（需拉取更完整股票数据）"
-            elif sample_count <= 20:
-                fail_reason = f"收益样本不足: {sample_count}"
-            elif te >= 0.10:
-                fail_reason = f"跟踪误差偏高 TE={te:.4f}"
-            is_success = fail_reason is None
-
-            record_result(db, experiment_id=exp.id, fund_code=fc,
-                          calc_date=date_type.today(), is_success=is_success,
-                          metrics=metrics,
-                          error_message=fail_reason,
-                          warnings=sim_result.warnings if not is_success else [])
-
-            results.append({"fund_code": fc, "is_success": is_success,
-                            "error_message": fail_reason,
-                            "warnings": sim_result.warnings if not is_success else []})
-
-        except Exception as e:
-            try:
-                record_result(db, experiment_id=exp.id, fund_code=fc,
-                              calc_date=date_type.today(), is_success=False,
-                              error_message=str(e)[:500], warnings=[])
-            except Exception:
-                db.rollback()
-            results.append({"fund_code": fc, "is_success": False,
-                            "error_message": str(e)[:500], "warnings": []})
-
-    return results
-
-
-def _run_dynamic_attribution_batch(
-    db: Session, exp: AlgorithmExperiment, fund_codes: list[str],
-) -> list[dict]:
-    """批量运行动态归因 (Brinson BHB)，记录结果。"""
-    from datetime import date as date_type
-
-    import pandas as pd
-    from sqlalchemy import select as sa_select
-
-    from fund_research.analysis.dynamic_attribution import run_attribution
-    from fund_research.db.models import FundDisclosedHoldings, FundNAV
-    from fund_research.experiments.manager import record_result
-
-    results: list[dict] = []
-    for fc in fund_codes:
-        try:
-            holdings_rows = db.scalars(
-                sa_select(FundDisclosedHoldings)
-                .where(FundDisclosedHoldings.fund_code == fc)
-                .order_by(FundDisclosedHoldings.report_date)
-            ).all()
-
-            if not holdings_rows:
-                record_result(db, experiment_id=exp.id, fund_code=fc,
-                              calc_date=date_type.today(), is_success=False,
-                              error_message="无持仓数据", warnings=[])
-                results.append({"fund_code": fc, "is_success": False,
-                                "error_message": "无持仓数据", "warnings": []})
-                continue
-
-            # Build sector weights from disclosed holdings' industry field
-            hw_rows = []
-            for h in holdings_rows:
-                sector = h.industry or "未分类"
-                hw_rows.append({
-                    "report_date": h.report_date,
-                    "sector": sector,
-                    "port_weight": h.weight_pct or 0.0,
-                    "bench_weight": h.weight_pct or 0.0,  # 无基准数据，暂用等权
-                })
-
-            hw_df = pd.DataFrame(hw_rows)
-            # Group by report_date + sector
-            hw_df = hw_df.groupby(["report_date", "sector"], as_index=False).sum()
-            hw_df["bench_weight"] = hw_df["port_weight"]  # fallback
-
-            # Sector returns: approximate from NAV + disclosed weights
-            nav_rows = db.scalars(
-                sa_select(FundNAV).where(FundNAV.fund_code == fc).order_by(FundNAV.trade_date)
-            ).all()
-            if nav_rows:
-                nav_df = pd.DataFrame([{"trade_date": n.trade_date, "daily_return": n.daily_return} for n in nav_rows])
-                nav_df["trade_date"] = pd.to_datetime(nav_df["trade_date"])
-                nav_df = nav_df.dropna(subset=["daily_return"])
-                # Use fund return as proxy for all sector returns (P2B approximation)
-                sr_rows = []
-                for rp_date in hw_df["report_date"].unique():
-                    rp_dt = pd.Timestamp(rp_date)
-                    next_dt = rp_dt + pd.DateOffset(months=3)
-                    window = nav_df[(nav_df["trade_date"] >= rp_dt) & (nav_df["trade_date"] < next_dt)]
-                    if window.empty:
-                        continue
-                    period_ret = (1 + window["daily_return"]).prod() - 1
-                    for _, hw_row in hw_df[hw_df["report_date"] == rp_date].iterrows():
-                        sr_rows.append({
-                            "report_date": rp_date,
-                            "sector": hw_row["sector"],
-                            "port_return": period_ret,
-                            "bench_return": period_ret * 0.9,  # benchmark proxy
-                        })
-                sr_df = pd.DataFrame(sr_rows) if sr_rows else pd.DataFrame()
-            else:
-                sr_df = pd.DataFrame()
-
-            attr_result = run_attribution(fc, hw_df, sr_df, method="BHB")
-
-            metrics = {
-                "estimated_total_allocation_effect": attr_result.total_allocation_effect,
-                "estimated_total_selection_effect": attr_result.total_selection_effect,
-                "estimated_total_interaction_effect": attr_result.total_interaction_effect,
-                "estimated_total_residual": attr_result.total_residual,
-                "period_count": len(attr_result.periods),
-                "method": "BHB",
-            }
-            is_success = len(attr_result.periods) > 0 and abs(attr_result.total_residual) < 0.05
-
-            record_result(db, experiment_id=exp.id, fund_code=fc,
-                          calc_date=date_type.today(), is_success=is_success,
-                          metrics=metrics,
-                          error_message=None if is_success else "归因残差偏高",
-                          warnings=attr_result.warnings if not is_success else [])
-
-            results.append({"fund_code": fc, "is_success": is_success,
-                            "error_message": None if is_success else "归因残差偏高",
-                            "warnings": attr_result.warnings})
-
-        except Exception as e:
-            try:
-                record_result(db, experiment_id=exp.id, fund_code=fc,
-                              calc_date=date_type.today(), is_success=False,
-                              error_message=str(e)[:500], warnings=[])
-            except Exception:
-                db.rollback()
-            results.append({"fund_code": fc, "is_success": False,
-                            "error_message": str(e)[:500], "warnings": []})
-
-    return results
-
-
-def _run_scoring_batch(
-    db: Session, exp: AlgorithmExperiment, fund_codes: list[str],
-) -> list[dict]:
-    """批量运行综合评分，记录结果。"""
-    from datetime import date as date_type
-
-    import pandas as pd
-    from sqlalchemy import select as sa_select
-
-    from fund_research.analysis.nav_metrics import calculate_nav_metrics
-    from fund_research.analysis.scoring import score_funds
-    from fund_research.db.models import FundNAV
-    from fund_research.experiments.manager import record_result
-
-    results: list[dict] = []
-    metrics_rows = []
-    fund_nav_map: dict[str, pd.DataFrame] = {}
-
-    for fc in fund_codes:
-        try:
-            nav_rows = db.scalars(
-                sa_select(FundNAV).where(FundNAV.fund_code == fc).order_by(FundNAV.trade_date)
-            ).all()
-            if not nav_rows:
-                record_result(db, experiment_id=exp.id, fund_code=fc,
-                              calc_date=date_type.today(), is_success=False,
-                              error_message="无净值数据", warnings=[])
-                results.append({"fund_code": fc, "is_success": False,
-                                "error_message": "无净值数据", "warnings": []})
-                continue
-            nav_df = pd.DataFrame([{
-                "trade_date": n.trade_date, "unit_nav": n.unit_nav,
-                "daily_return": n.daily_return,
-            } for n in nav_rows])
-            fund_nav_map[fc] = nav_df
-            m = calculate_nav_metrics(nav_df)
-            if not m.metrics:
-                continue
-            metrics_rows.append({
-                "fund_code": fc,
-                "return": m.metrics.get("annualized_return") or 0.0,
-                "risk": -(abs(m.metrics.get("max_drawdown") or 0.0)),  # negate: higher=better
-                "alpha": (m.metrics.get("annualized_return") or 0.0) * 0.3,
-                "trading": 0.0,
-                "style_stability": 0.7,
-                "scale": 0.5,
-                "team": 0.5,
-                "holder": 0.5,
-            })
-        except Exception as e:
-            results.append({"fund_code": fc, "is_success": False,
-                            "error_message": str(e)[:500], "warnings": []})
-
-    if metrics_rows:
-        try:
-            df = pd.DataFrame(metrics_rows)
-            scoring = score_funds(
-                df, preset="均衡型", category="混合型-偏股",
-                contains_estimated={"trading", "alpha", "style_stability", "scale", "team", "holder"},
-                allow_estimated=False,
-            )
-            for fs in scoring.fund_scores:
-                is_success = fs.total_score > 0
-                record_result(db, experiment_id=exp.id, fund_code=fs.fund_code,
-                              calc_date=date_type.today(), is_success=is_success,
-                              metrics={
-                                  "estimated_total_score": fs.total_score,
-                                  "estimated_sub_scores": fs.sub_scores,
-                                  "estimated_percentile_rank": fs.percentile_rank,
-                                  "estimated_deduction_reasons": fs.deduction_reasons,
-                              },
-                              warnings=scoring.warnings if not is_success else [])
-                if not any(r["fund_code"] == fs.fund_code for r in results):
-                    results.append({"fund_code": fs.fund_code, "is_success": is_success,
-                                    "error_message": None,
-                                    "warnings": scoring.warnings})
-        except Exception as e:
-            for r in results:
-                if r.get("is_success", True):
-                    r["is_success"] = False
-                    r["error_message"] = str(e)[:500]
-
-    return results
+        update_experiment_status(db, experiment_id, "failed", str(exc)[:200])
+        return _log(
+            db,
+            "run_experiment",
+            params,
+            APIResponse(
+                data=None,
+                metadata={"tool": "run_experiment"},
+                warnings=[str(exc)],
+                conclusion_status=ConclusionStatus.NEEDS_REVIEW,
+            ),
+            started,
+        )

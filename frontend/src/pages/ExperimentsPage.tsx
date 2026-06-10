@@ -40,6 +40,13 @@ const ALGO_LABELS: Record<string, string> = {
   scoring: "综合评分",
 };
 
+function getApiError(body: any, fallback: string) {
+  if (Array.isArray(body?.warnings) && body.warnings.length > 0) {
+    return body.warnings.join("; ");
+  }
+  return body?.detail ?? fallback;
+}
+
 export default function ExperimentsPage() {
   const [experiments, setExperiments] = useState<Experiment[]>([]);
   const [loading, setLoading] = useState(true);
@@ -50,16 +57,27 @@ export default function ExperimentsPage() {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [detail, setDetail] = useState<ExperimentDetail | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
 
-  const completedCount = experiments.filter((e) => e.status === "completed").length;
+  const completedCount = experiments.filter(
+    (e) => e.status === "completed" || e.status === "completed_with_failures",
+  ).length;
   const failedCount = experiments.filter((e) => e.status === "failed").length;
 
   async function load() {
     setLoading(true);
     try {
-      const res = await fetch("/api/v2/experiments").then((r) => r.json());
-      console.log("[load] experiments:", res.data?.experiments?.length, "items, total:", res.data?.total);
-      setExperiments(res.data?.experiments ?? []);
+      const response = await fetch("/api/v2/experiments");
+      const body = await response.json();
+      if (!response.ok || body.data === null) {
+        setErrorMessage(getApiError(body, `加载失败: ${response.status}`));
+        setExperiments([]);
+        return;
+      }
+      setExperiments(body.data?.experiments ?? []);
+    } catch (e) {
+      setErrorMessage(`加载异常: ${e instanceof Error ? e.message : String(e)}`);
     } finally {
       setLoading(false);
     }
@@ -71,8 +89,17 @@ export default function ExperimentsPage() {
     setSelectedId(id);
     setDetailLoading(true);
     try {
-      const res = await fetch(`/api/v2/experiments/${id}`).then((r) => r.json());
-      setDetail(res.data as ExperimentDetail | null);
+      const response = await fetch(`/api/v2/experiments/${id}`);
+      const body = await response.json();
+      if (!response.ok || body.data === null) {
+        setErrorMessage(getApiError(body, `加载详情失败: ${response.status}`));
+        setDetail(null);
+        return;
+      }
+      setDetail(body.data as ExperimentDetail | null);
+    } catch (e) {
+      setErrorMessage(`加载详情异常: ${e instanceof Error ? e.message : String(e)}`);
+      setDetail(null);
     } finally {
       setDetailLoading(false);
     }
@@ -92,49 +119,71 @@ export default function ExperimentsPage() {
           sample_fund_codes: fundCodes.split(",").map((s) => s.trim()).filter(Boolean),
         }),
       });
-      console.log("[create] status:", res.status);
       const body = await res.json();
-      console.log("[create] body:", body);
       if (!res.ok || body.data === null) {
-        alert(`创建失败: ${body.warnings?.join?.("; ") || body.detail || res.status}`);
+        setErrorMessage(`创建失败: ${getApiError(body, String(res.status))}`);
         return;
       }
-      console.log("[create] success, calling load()");
+      setErrorMessage(null);
       setShowCreate(false);
       setName("");
       load();
     } catch (e) {
-      console.error("[create] error:", e);
-      alert(`创建异常: ${e instanceof Error ? e.message : String(e)}`);
+      setErrorMessage(`创建异常: ${e instanceof Error ? e.message : String(e)}`);
     }
   }
 
   async function run(id: string) {
-    // Instant feedback: mark as running locally
     setExperiments((prev) => prev.map((e) => (e.id === id ? { ...e, status: "running" } : e)));
-    await fetch(`/api/v2/experiments/${id}/run`, { method: "POST" });
-    load();
-    if (selectedId === id) loadDetail(id);
+    try {
+      const response = await fetch(`/api/v2/experiments/${id}/run`, { method: "POST" });
+      const body = await response.json();
+      if (!response.ok || body.data === null) {
+        setErrorMessage(`运行失败: ${getApiError(body, String(response.status))}`);
+      } else {
+        setErrorMessage(null);
+      }
+    } catch (e) {
+      setErrorMessage(`运行异常: ${e instanceof Error ? e.message : String(e)}`);
+    } finally {
+      load();
+      if (selectedId === id) loadDetail(id);
+    }
   }
 
   async function rerun(id: string) {
-    await fetch(`/api/v2/experiments/${id}/rerun`, { method: "POST" });
-    load();
-    setSelectedId(null);
-    setDetail(null);
+    try {
+      const response = await fetch(`/api/v2/experiments/${id}/rerun`, { method: "POST" });
+      const body = await response.json();
+      if (!response.ok || body.data === null) {
+        setErrorMessage(`重跑失败: ${getApiError(body, String(response.status))}`);
+        return;
+      }
+      setErrorMessage(null);
+      load();
+      setSelectedId(null);
+      setDetail(null);
+    } catch (e) {
+      setErrorMessage(`重跑异常: ${e instanceof Error ? e.message : String(e)}`);
+    }
   }
 
   async function remove(id: string) {
-    if (!confirm("确认删除该实验？")) return;
+    if (confirmDeleteId !== id) {
+      setConfirmDeleteId(id);
+      return;
+    }
     try {
       const res = await fetch(`/api/v2/experiments/${id}`, { method: "DELETE" });
       const body = await res.json();
       if (!res.ok || !body.data?.deleted) {
-        alert(`删除失败: ${body.warnings?.join?.("; ") || res.status}`);
+        setErrorMessage(`删除失败: ${getApiError(body, String(res.status))}`);
         return;
       }
+      setErrorMessage(null);
+      setConfirmDeleteId(null);
     } catch (e) {
-      alert(`删除异常: ${e instanceof Error ? e.message : String(e)}`);
+      setErrorMessage(`删除异常: ${e instanceof Error ? e.message : String(e)}`);
       return;
     }
     if (selectedId === id) { setSelectedId(null); setDetail(null); }
@@ -156,6 +205,13 @@ export default function ExperimentsPage() {
           {showCreate ? "收起" : "+ 新建实验"}
         </button>
       </div>
+
+      {errorMessage && (
+        <div className="card error-banner">
+          <span>{errorMessage}</span>
+          <button className="button-ghost" onClick={() => setErrorMessage(null)}>关闭</button>
+        </div>
+      )}
 
       {showCreate && (
         <div className="card experiment-form">
@@ -208,7 +264,12 @@ export default function ExperimentsPage() {
                         <button className="button-primary" onClick={() => run(e.id)}>运行</button>
                       )}
                       <button className="button-ghost" onClick={() => rerun(e.id)} disabled={e.status === "running"}>重跑</button>
-                      <button className="button-danger" onClick={() => remove(e.id)}>删除</button>
+                      <button className="button-danger" onClick={() => remove(e.id)}>
+                        {confirmDeleteId === e.id ? "确认删除" : "删除"}
+                      </button>
+                      {confirmDeleteId === e.id && (
+                        <button className="button-ghost" onClick={() => setConfirmDeleteId(null)}>取消</button>
+                      )}
                     </div>
                   </td>
                 </tr>

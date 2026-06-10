@@ -212,17 +212,6 @@ def serve(
     reload: bool = typer.Option(True, "--reload/--no-reload", help="开发模式热重载"),
 ) -> None:
     """启动 API 服务。"""
-    import importlib
-    import sys
-
-    # Clear cached fund_research modules so uvicorn re-imports fresh copies.
-    # Without this, code changes are silently ignored because the CLI's
-    # import at startup caches everything in sys.modules.
-    to_clear = [m for m in sys.modules if m.startswith("fund_research")]
-    for m in to_clear:
-        del sys.modules[m]
-    importlib.invalidate_caches()
-
     import uvicorn
 
     console.print(

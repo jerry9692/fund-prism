@@ -396,8 +396,11 @@ class TestRunExperimentPipeline:
             sa_select(ExperimentResult).where(ExperimentResult.experiment_id == int(exp_id))
         ).all()
         assert len(results) >= 1
+        m = results[0].metrics or {}
+        assert m.get("uses_proxy_benchmark") is True
+        assert m.get("uses_proxy_sector_returns") is True
+        assert any("P2B 近似" in warning for warning in (results[0].warnings or []))
         if results[0].is_success:
-            m = results[0].metrics or {}
             assert "estimated_total_allocation_effect" in m
             assert "estimated_total_selection_effect" in m
 

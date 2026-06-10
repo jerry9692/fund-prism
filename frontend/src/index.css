@@ -237,6 +237,15 @@ button:disabled {
   text-align: center;
 }
 
+.error-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-md);
+  color: var(--color-danger);
+  background: var(--color-danger-light);
+}
+
 @media (max-width: 720px) {
   .page-header,
   .form-row {
