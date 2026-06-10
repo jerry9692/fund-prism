@@ -412,8 +412,10 @@ def _run_simulated_holding_batch(db: Session, exp: AlgorithmExperiment, fund_cod
                 nav_dates = f"{nav_df['trade_date'].min()}~{nav_df['trade_date'].max()}" if "trade_date" in nav_df.columns and len(nav_df) > 0 else "?"
                 stk_dates = f"{stock_df['trade_date'].min()}~{stock_df['trade_date'].max()}" if "trade_date" in stock_df.columns and len(stock_df) > 0 else "?"
                 stk_after = len(stock_df)
+                warn_summary = sim_result.warnings[0] if sim_result.warnings else "无详情"
                 fail_reason = (
-                    f"无可用周期: nav={len(nav_df)} [{nav_dates}],"
+                    f"无可用周期: {warn_summary} | "
+                    f"nav={len(nav_df)} [{nav_dates}],"
                     f" stocks={stk_after} [{stk_dates}],"
                     f" holdings={len(holdings_df)}, match={len(match)}/{len(h_codes)}"
                 )
