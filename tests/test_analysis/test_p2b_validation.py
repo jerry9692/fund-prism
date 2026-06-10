@@ -184,15 +184,16 @@ class TestRunExperimentPipeline:
                 )
             )
         for i in range(50):
-            test_session.add(
-                StockDaily(
-                    stock_code=f"{i:06d}",
-                    trade_date=date(2024, 1, 1),
-                    close_price=100.0,
-                    daily_return=0.001,
-                    data_source_level="LOCAL",
+            for day in range(30):
+                test_session.add(
+                    StockDaily(
+                        stock_code=f"{i:06d}",
+                        trade_date=date(2024, 1, 1) + timedelta(days=day),
+                        close_price=100.0 + day,
+                        daily_return=0.001,
+                        data_source_level="LOCAL",
+                    )
                 )
-            )
         test_session.commit()
 
         # Create experiment
@@ -229,15 +230,105 @@ class TestRunExperimentPipeline:
             else:
                 assert r.error_message, f"Failed result should have error_message: {r}"
 
+    def test_run_experiment_all_failures_is_needs_review(
+        self,
+        test_client: TestClient,
+        test_session: Session,
+    ):
+        """全失败实验不能返回 completed/computed。"""
+        create_resp = test_client.post("/api/v2/experiments", json={
+            "experiment_name": "no-data",
+            "algorithm_name": "simulated_holding",
+            "sample_fund_codes": ["999999"],
+        })
+        exp_id = create_resp.json()["data"]["id"]
+
+        run_resp = test_client.post(f"/api/v2/experiments/{exp_id}/run")
+        assert run_resp.status_code == 200
+        payload = run_resp.json()
+        assert payload["conclusion_status"] == "needs_review"
+        assert payload["data"]["status"] == "failed"
+        assert payload["data"]["success_count"] == 0
+
+        from sqlalchemy import select as sa_select
+
+        results = test_session.scalars(
+            sa_select(ExperimentResult).where(ExperimentResult.experiment_id == int(exp_id))
+        ).all()
+        assert len(results) == 1
+        assert results[0].error_message == "无净值数据"
+
+    def test_simulated_holding_run_recomputes_stock_returns_and_normalizes_latest_report(
+        self,
+        test_client: TestClient,
+        test_session: Session,
+    ):
+        """NULL 股票收益率应从价格回算，且多报告期不能累加权重。"""
+        for day in range(35):
+            test_session.add(FundNAV(
+                fund_code="000001",
+                trade_date=date(2024, 1, 1) + timedelta(days=day),
+                unit_nav=1.0 + day * 0.01,
+                daily_return=0.01 if day > 0 else None,
+                data_source_level="LOCAL",
+            ))
+        for report_date in (date(2024, 1, 10), date(2024, 1, 20)):
+            for i in range(2):
+                test_session.add(FundDisclosedHoldings(
+                    fund_code="000001",
+                    report_date=report_date,
+                    security_code=f"00000{i}",
+                    asset_type="股票",
+                    weight_pct=50.0,
+                    industry="tech" if i == 0 else "finance",
+                    rank_in_holdings=i + 1,
+                    data_source_level="LOCAL",
+                ))
+        for i in range(2):
+            price = 100.0
+            for day in range(35):
+                if day > 0:
+                    price *= 1.01
+                test_session.add(StockDaily(
+                    stock_code=f"00000{i}",
+                    trade_date=date(2024, 1, 1) + timedelta(days=day),
+                    close_price=price,
+                    daily_return=None,
+                    data_source_level="LOCAL",
+                ))
+        test_session.commit()
+
+        create_resp = test_client.post("/api/v2/experiments", json={
+            "experiment_name": "normalized-naive",
+            "algorithm_name": "simulated_holding",
+            "sample_fund_codes": ["000001"],
+        })
+        exp_id = create_resp.json()["data"]["id"]
+
+        run_resp = test_client.post(f"/api/v2/experiments/{exp_id}/run")
+        assert run_resp.status_code == 200
+        payload = run_resp.json()
+        assert payload["data"]["status"] == "completed"
+
+        from sqlalchemy import select as sa_select
+
+        result = test_session.scalars(
+            sa_select(ExperimentResult).where(ExperimentResult.experiment_id == int(exp_id))
+        ).one()
+        metrics = result.metrics or {}
+        assert metrics["matched_stock_count"] == 2
+        assert metrics["return_sample_count"] > 20
+        assert metrics["estimated_overall_tracking_error"] < 0.001
+
     def test_run_experiment_unknown_algorithm_returns_failure(
         self,
         test_client: TestClient,
         test_session: Session,
     ):
-        """非 simulated_holding 算法应返回 not-yet-implemented 错误。"""
+        """未知算法应写入失败结果并返回 needs_review。"""
         create_resp = test_client.post("/api/v2/experiments", json={
             "experiment_name": "not-ready",
-            "algorithm_name": "scoring",
+            "algorithm_name": "unknown_algo",
             "sample_fund_codes": ["000001"],
         })
         exp_id = create_resp.json()["data"]["id"]
@@ -245,6 +336,8 @@ class TestRunExperimentPipeline:
         run_resp = test_client.post(f"/api/v2/experiments/{exp_id}/run")
         assert run_resp.status_code == 200
         run_data = run_resp.json()
+        assert run_data["conclusion_status"] == "needs_review"
+        assert run_data["data"]["status"] == "failed"
         assert run_data["data"]["failure_count"] >= 1
 
         from sqlalchemy import select as sa_select
@@ -255,6 +348,17 @@ class TestRunExperimentPipeline:
             )
         ).all()
         assert all(not r.is_success for r in results)
+
+    def test_delete_missing_experiment_returns_needs_review(
+        self,
+        test_client: TestClient,
+    ):
+        """删除不存在实验不能假装成功。"""
+        response = test_client.delete("/api/v2/experiments/123456789")
+        assert response.status_code == 200
+        payload = response.json()
+        assert payload["conclusion_status"] == "needs_review"
+        assert payload["data"] is None
 
     def test_run_dynamic_attribution_records_estimated_fields(
         self,

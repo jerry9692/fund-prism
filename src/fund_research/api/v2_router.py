@@ -285,14 +285,29 @@ def run_experiment_endpoint(
 
     try:
         results = _dispatch_run(db, exp)
-        update_experiment_status(db, experiment_id, "completed", f"完成 {len(results)} 只基金")
+        fund_count = len(results)
+        success_count = sum(1 for r in results if r["is_success"])
+        failure_count = fund_count - success_count
+        if fund_count == 0 or success_count == 0:
+            final_status = "failed"
+            conclusion_status = ConclusionStatus.NEEDS_REVIEW
+            summary = f"失败 {failure_count}/{fund_count} 只基金"
+        elif failure_count > 0:
+            final_status = "completed_with_failures"
+            conclusion_status = ConclusionStatus.OBSERVATION
+            summary = f"部分完成: 成功 {success_count}/{fund_count} 只基金"
+        else:
+            final_status = "completed"
+            conclusion_status = ConclusionStatus.COMPUTED
+            summary = f"完成 {fund_count} 只基金"
+        update_experiment_status(db, experiment_id, final_status, summary)
         return _log(db, "run_experiment", params,
                     APIResponse(
-                        data={"experiment_id": experiment_id, "status": "completed",
-                              "fund_count": len(results), "success_count": sum(1 for r in results if r["is_success"]),
-                              "failure_count": sum(1 for r in results if not r["is_success"])},
+                        data={"experiment_id": str(experiment_id), "status": final_status,
+                              "fund_count": fund_count, "success_count": success_count,
+                              "failure_count": failure_count},
                         metadata={"tool": "run_experiment", "platform_version": __version__},
-                        conclusion_status=ConclusionStatus.COMPUTED), started)
+                        conclusion_status=conclusion_status), started)
     except Exception as e:
         db.rollback()
         update_experiment_status(db, experiment_id, "failed", str(e)[:200])
@@ -313,9 +328,17 @@ def _dispatch_run(db: Session, exp: AlgorithmExperiment) -> list[dict]:
     elif algo == "scoring":
         return _run_scoring_batch(db, exp, sample_codes)
     else:
-        return [{"fund_code": c, "is_success": False,
-                 "error_message": f"未知算法: {algo}",
-                 "warnings": []} for c in sample_codes]
+        from datetime import date as date_type
+
+        results = []
+        for c in sample_codes:
+            error = f"未知算法: {algo}"
+            record_result(db, experiment_id=exp.id, fund_code=c,
+                          calc_date=date_type.today(), is_success=False,
+                          error_message=error, warnings=[])
+            results.append({"fund_code": c, "is_success": False,
+                            "error_message": error, "warnings": []})
+        return results
 
 
 def _run_simulated_holding_batch(db: Session, exp: AlgorithmExperiment, fund_codes: list[str]) -> list[dict]:
@@ -337,6 +360,9 @@ def _run_simulated_holding_batch(db: Session, exp: AlgorithmExperiment, fund_cod
                 sa_select(FundNAV).where(FundNAV.fund_code == fc).order_by(FundNAV.trade_date)
             ).all()
             if not nav_rows:
+                record_result(db, experiment_id=exp.id, fund_code=fc,
+                              calc_date=date_type.today(), is_success=False,
+                              error_message="无净值数据", warnings=[])
                 results.append({"fund_code": fc, "is_success": False,
                                 "error_message": "无净值数据", "warnings": []})
                 continue
@@ -364,6 +390,34 @@ def _run_simulated_holding_batch(db: Session, exp: AlgorithmExperiment, fund_cod
                 "industry": None, "market_cap": None,
             } for r in stock_rows]) if stock_rows else pd.DataFrame()
 
+            if holdings_df.empty:
+                error = "无持仓数据"
+                record_result(db, experiment_id=exp.id, fund_code=fc,
+                              calc_date=date_type.today(), is_success=False,
+                              error_message=error, warnings=[])
+                results.append({"fund_code": fc, "is_success": False,
+                                "error_message": error, "warnings": []})
+                continue
+            if stock_df.empty:
+                error = "无股票行情数据"
+                record_result(db, experiment_id=exp.id, fund_code=fc,
+                              calc_date=date_type.today(), is_success=False,
+                              error_message=error, warnings=[])
+                results.append({"fund_code": fc, "is_success": False,
+                                "error_message": error, "warnings": []})
+                continue
+
+            if "daily_return" not in nav_df.columns or nav_df["daily_return"].isna().all():
+                nav_df = nav_df.sort_values("trade_date")
+                nav_df["daily_return"] = pd.to_numeric(nav_df["unit_nav"], errors="coerce").pct_change()
+            if "daily_return" not in stock_df.columns or stock_df["daily_return"].isna().all():
+                stock_df = stock_df.sort_values(["stock_code", "trade_date"])
+                stock_df["daily_return"] = (
+                    pd.to_numeric(stock_df["close_price"], errors="coerce")
+                    .groupby(stock_df["stock_code"])
+                    .pct_change()
+                )
+
             # Limit to overlapping date range
             if not nav_df.empty and not stock_df.empty:
                 nav_min, nav_max = nav_df["trade_date"].min(), nav_df["trade_date"].max()
@@ -371,32 +425,43 @@ def _run_simulated_holding_batch(db: Session, exp: AlgorithmExperiment, fund_cod
                 lo, hi = max(nav_min, stk_min), min(nav_max, stk_max)
                 stock_df = stock_df[(stock_df["trade_date"] >= lo) & (stock_df["trade_date"] <= hi)]
 
-            # P2B naive replication: use disclosed holding weights directly.
-            # This is a standard baseline in finance literature.
-            # Compute tracking error = RMSE(portfolio_return - fund_return)
-            # for the disclosed-weights portfolio over the full NAV period.
-            hw = holdings_df.groupby("stock_code")["weight_pct"].sum() / 100.0
+            # P2B naive replication baseline: use the latest disclosed report as a
+            # static portfolio, then normalize matched stock weights.
+            latest_report = holdings_df["report_date"].max()
+            latest_holdings = holdings_df[holdings_df["report_date"] == latest_report]
+            hw = latest_holdings.groupby("stock_code")["weight_pct"].sum() / 100.0
+            industry_map = {
+                str(row["stock_code"]): row["industry"]
+                for _idx, row in latest_holdings.iterrows()
+                if isinstance(row.get("industry"), str)
+            }
             sp = stock_df.pivot_table(
                 index="trade_date", columns="stock_code", values="daily_return", aggfunc="last"
             )
             common_codes = [c for c in hw.index if c in sp.columns]
+            sample_count = 0
             if common_codes:
-                wvec = pd.Series({c: hw[c] for c in common_codes})
+                raw_weights = pd.Series({c: hw[c] for c in common_codes}, dtype=float)
+                weight_sum = float(raw_weights.sum())
+                wvec = raw_weights / weight_sum if weight_sum > 0 else raw_weights
                 port_ret = (sp[common_codes] * wvec).sum(axis=1)
                 nav_dr = nav_df.set_index("trade_date")["daily_return"]
                 merged = pd.DataFrame({"port": port_ret, "fund": nav_dr}).dropna()
-                te = float(np.sqrt(np.mean((merged["port"] - merged["fund"]) ** 2))) if len(merged) > 20 else 0.0
+                sample_count = len(merged)
+                te = float(np.sqrt(np.mean((merged["port"] - merged["fund"]) ** 2))) if sample_count > 20 else 0.0
             else:
                 common_codes = []
                 te = 0.0
 
             # Duck-typed result for downstream processing
             hlist = [{"stock_code": c, "stock_name": c,
-                       "weight": float(hw.get(c, 0)), "confidence": "low"}
+                       "estimated_weight": float(wvec.get(c, 0.0)) if common_codes else 0.0,
+                       "industry": industry_map.get(c),
+                       "confidence": "low"}
                       for c in common_codes]
             sim_result = type("_R", (), {
                 "periods": [type("_P", (), {
-                    "calc_date": nav_df["trade_date"].min() if len(nav_df) > 0 else date_type.today(),
+                    "calc_date": latest_report,
                     "holdings": hlist,
                     "stock_weight_pct": 100.0, "bond_weight_pct": 0.0, "cash_weight_pct": 0.0,
                     "tracking_error": te, "objective_value": 0.0, "warnings": [],
@@ -404,7 +469,7 @@ def _run_simulated_holding_batch(db: Session, exp: AlgorithmExperiment, fund_cod
                 "overall_tracking_error": te,
                 "backtest_report": {},
                 "warnings": (
-                    [f"Naive replication: {len(common_codes)}/{len(hw)} codes, TE={te:.4f}"]
+                    [f"Naive replication: {len(common_codes)}/{len(hw)} codes, samples={sample_count}, TE={te:.4f}"]
                     if common_codes else ["No matching stock codes"]
                 ),
                 "overall_industry_correlation": None,
@@ -413,19 +478,27 @@ def _run_simulated_holding_batch(db: Session, exp: AlgorithmExperiment, fund_cod
             })()
 
             disclosed_dict: dict[str, dict[str, float]] = {}
+            industry_dict: dict[str, dict[str, str]] = {}
             for rp_date in holdings_df["report_date"].dropna().unique():
                 rp = holdings_df[holdings_df["report_date"] == rp_date]
                 disclosed_dict[str(rp_date)] = dict(
                     zip(rp["stock_code"], rp["weight_pct"], strict=False)
                 )
+                industry_dict[str(rp_date)] = {
+                    str(row["stock_code"]): row["industry"]
+                    for _idx, row in rp.iterrows()
+                    if isinstance(row.get("industry"), str)
+                }
 
-            backtest = backtest_disclosure(sim_result.periods, disclosed_dict) if disclosed_dict else {}
+            backtest = backtest_disclosure(sim_result.periods, disclosed_dict, industry_dict) if disclosed_dict else {}
 
             metrics = {
                 "estimated_overall_tracking_error": sim_result.overall_tracking_error,
                 "estimated_overall_top10_recall": backtest.get("top10_recall"),
                 "estimated_overall_industry_correlation": backtest.get("industry_correlation"),
                 "period_count": len(sim_result.periods),
+                "matched_stock_count": len(common_codes),
+                "return_sample_count": sample_count,
                 "backtest_detail": backtest.get("detail", []),
             }
             n_periods = len(sim_result.periods)
@@ -435,6 +508,8 @@ def _run_simulated_holding_batch(db: Session, exp: AlgorithmExperiment, fund_cod
             fail_reason = None
             if not has_periods:
                 fail_reason = "无可用周期：股票行情与净值日期无重叠，或候选池不足（需拉取更完整股票数据）"
+            elif sample_count <= 20:
+                fail_reason = f"收益样本不足: {sample_count}"
             elif te >= 0.10:
                 fail_reason = f"跟踪误差偏高 TE={te:.4f}"
             is_success = fail_reason is None
@@ -485,6 +560,9 @@ def _run_dynamic_attribution_batch(
             ).all()
 
             if not holdings_rows:
+                record_result(db, experiment_id=exp.id, fund_code=fc,
+                              calc_date=date_type.today(), is_success=False,
+                              error_message="无持仓数据", warnings=[])
                 results.append({"fund_code": fc, "is_success": False,
                                 "error_message": "无持仓数据", "warnings": []})
                 continue
@@ -592,6 +670,9 @@ def _run_scoring_batch(
                 sa_select(FundNAV).where(FundNAV.fund_code == fc).order_by(FundNAV.trade_date)
             ).all()
             if not nav_rows:
+                record_result(db, experiment_id=exp.id, fund_code=fc,
+                              calc_date=date_type.today(), is_success=False,
+                              error_message="无净值数据", warnings=[])
                 results.append({"fund_code": fc, "is_success": False,
                                 "error_message": "无净值数据", "warnings": []})
                 continue

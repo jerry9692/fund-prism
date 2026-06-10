@@ -98,7 +98,7 @@ def update_experiment_status(db: Session, experiment_id: int, status: str, summa
     exp.status = status
     if status == "running":
         exp.started_at = datetime.now()
-    elif status in ("completed", "failed"):
+    elif status in ("completed", "completed_with_failures", "failed"):
         exp.completed_at = datetime.now()
     if summary:
         exp.summary = summary
@@ -135,13 +135,19 @@ def delete_experiment(db: Session, experiment_id: int) -> None:
     """Delete an experiment and its results."""
     exp = db.get(AlgorithmExperiment, experiment_id)
     if exp is None:
-        return
+        raise ValueError(f"Experiment {experiment_id} not found")
     for r in db.scalars(
         select(ExperimentResult).where(ExperimentResult.experiment_id == experiment_id)
     ).all():
         db.delete(r)
+    db.flush()
     db.delete(exp)
+    db.flush()
     db.commit()
+
+    remaining = db.get(AlgorithmExperiment, experiment_id)
+    if remaining is not None:
+        raise RuntimeError(f"Delete failed: experiment {experiment_id} still exists after commit")
 
 
 def rerun_experiment(db: Session, experiment_id: int) -> AlgorithmExperiment:

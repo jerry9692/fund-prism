@@ -35,15 +35,15 @@
 5. **持仓只有单个报告期** → 早期调仓日期找不到持仓数据 → 加了回退到全量持仓的 fallback
 6. **服务热重载不生效** → CLI 启动时 `sys.modules` 缓存旧代码 → **新增启动前清除缓存逻辑**
 
-### 1.4 Phase 2 主键修复
+### 1.4 Phase 2 主键/FK 修复
 
-- JS 精度丢失问题：Phase 1 的 `id_column()` 用 64 位随机数，超 `Number.MAX_SAFE_INTEGER`
-- 修复：Phase 2 7 张表改用 `_p2_pk()` — `randbits(31)`（~2.1B），DuckDB `INTEGER` 兼容
-- DuckDB 不支持 `SERIAL` → `autoincrement=False` + Python `default` 生成
+- Phase 2 表恢复使用项目统一的 `id_column()`（BigInteger + Python 端生成），避免 ORM 和 Alembic schema 不一致
+- API/前端边界继续把 ID 当作字符串处理，避免 JS 大整数精度问题
+- `experiment_result.experiment_id` 恢复 FK；删除实验时先删除子结果并 `flush()`，再删除父实验
 
 ### 1.5 DuckDB 兼容修复
 
-- FK 约束在 DuckDB DELETE 时报错 → **移除 `experiment_result.experiment_id` 的 `ForeignKey`**
+- FK 约束下 DELETE 需先删子表 → manager 使用子结果先删 + flush 的顺序
 - 日期比较 `Timestamp vs date` 报错 → `nav_df["trade_date"]` 统一转 `pd.Timestamp`
 - WAL 文件锁 → `git add -A` 时排除
 
@@ -82,8 +82,8 @@
 | `api/app.py` | 注册 v2_router |
 | `experiments/manager.py` | build_validation_report + 删除修复 + 两阶段 flush |
 | `experiments/__init__.py` | 导出新函数 |
-| `db/models_phase2.py` | 31-bit PK + FK 移除 |
-| `db/migrations/...c775fce6a16e...` | Integer + autoincrement=False + FK 移除 |
+| `db/models_phase2.py` | 恢复统一 BigInteger PK + experiment_result FK |
+| `db/migrations/...c775fce6a16e...` | BigInteger PK + experiment_result FK |
 | `db/models.py` | 底部 re-export Phase 2 模型 |
 | `analysis/simulated_holding.py` | 日期范围过滤 + 持仓回退 + pool=2 + try/except + 窗口统计 |
 | `analysis/dynamic_attribution.py` | Carino 修复 + estimated_* 前缀 |
@@ -100,7 +100,7 @@
 
 ```
 ruff:      All checks passed
-pytest:    134 passed
+pytest:    137 passed
 npm build: ✓ built
 ```
 

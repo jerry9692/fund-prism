@@ -6,18 +6,12 @@ registry, so Alembic, application code, and tests all see the same schema.
 """
 
 from datetime import date, datetime
-from secrets import randbits
 from typing import Any
 
-from sqlalchemy import JSON, Boolean, Date, DateTime, Float, Integer, String, Text
+from sqlalchemy import JSON, Boolean, Date, DateTime, Float, ForeignKey, Integer, String, Text
 from sqlalchemy.orm import Mapped, mapped_column
 
-from fund_research.db.models import Base
-
-
-# Phase 2 PK: randbits(31) — max ~2.1B, within INT32 and JS safe integer range
-def _p2_pk():
-    return mapped_column(Integer, primary_key=True, autoincrement=False, default=lambda: randbits(31))
+from fund_research.db.models import Base, id_column
 
 
 class SimulatedHoldingResult(Base):
@@ -25,7 +19,7 @@ class SimulatedHoldingResult(Base):
 
     __tablename__ = "simulated_holding_result"
 
-    id: Mapped[int] = _p2_pk()
+    id: Mapped[int] = id_column()
     fund_code: Mapped[str] = mapped_column(String(20), index=True)
     calc_date: Mapped[date] = mapped_column(Date, index=True)
     algorithm_name: Mapped[str] = mapped_column(String(50))
@@ -53,7 +47,7 @@ class DynamicAttributionResult(Base):
 
     __tablename__ = "dynamic_attribution_result"
 
-    id: Mapped[int] = _p2_pk()
+    id: Mapped[int] = id_column()
     fund_code: Mapped[str] = mapped_column(String(20), index=True)
     period_start: Mapped[date] = mapped_column(Date)
     period_end: Mapped[date] = mapped_column(Date)
@@ -81,7 +75,7 @@ class ScoringResult(Base):
 
     __tablename__ = "scoring_result"
 
-    id: Mapped[int] = _p2_pk()
+    id: Mapped[int] = id_column()
     fund_code: Mapped[str] = mapped_column(String(20), index=True)
     calc_date: Mapped[date] = mapped_column(Date)
     score_version: Mapped[str] = mapped_column(String(20))
@@ -103,7 +97,7 @@ class ScoringBacktest(Base):
 
     __tablename__ = "scoring_backtest"
 
-    id: Mapped[int] = _p2_pk()
+    id: Mapped[int] = id_column()
     score_version: Mapped[str] = mapped_column(String(20), index=True)
     backtest_date: Mapped[date] = mapped_column(Date)
     group_count: Mapped[int] = mapped_column(Integer)
@@ -120,7 +114,7 @@ class AlgorithmExperiment(Base):
 
     __tablename__ = "algorithm_experiment"
 
-    id: Mapped[int] = _p2_pk()
+    id: Mapped[int] = id_column()
     experiment_name: Mapped[str] = mapped_column(String(100))
     algorithm_name: Mapped[str] = mapped_column(String(50))
     algorithm_version: Mapped[str] = mapped_column(String(10))
@@ -140,8 +134,8 @@ class ExperimentResult(Base):
 
     __tablename__ = "experiment_result"
 
-    id: Mapped[int] = _p2_pk()
-    experiment_id: Mapped[int] = mapped_column(Integer, index=True)
+    id: Mapped[int] = id_column()
+    experiment_id: Mapped[int] = mapped_column(ForeignKey("algorithm_experiment.id"), index=True)
     fund_code: Mapped[str] = mapped_column(String(20))
     calc_date: Mapped[date] = mapped_column(Date)
     is_success: Mapped[bool] = mapped_column(Boolean, default=True)
@@ -156,7 +150,7 @@ class ReviewerAnnotation(Base):
 
     __tablename__ = "reviewer_annotation"
 
-    id: Mapped[int] = _p2_pk()
+    id: Mapped[int] = id_column()
     fund_code: Mapped[str] = mapped_column(String(20), index=True)
     annotation_type: Mapped[str] = mapped_column(String(30))
     target_module: Mapped[str | None] = mapped_column(String(50))

@@ -30,7 +30,8 @@ interface ResultItem {
 }
 
 const STATUS_LABELS: Record<string, string> = {
-  pending: "就绪", running: "运行中", completed: "已完成", failed: "失败",
+  pending: "就绪", running: "运行中", completed: "已完成",
+  completed_with_failures: "部分完成", failed: "失败",
 };
 
 const ALGO_LABELS: Record<string, string> = {
