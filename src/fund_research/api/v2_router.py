@@ -376,6 +376,9 @@ def _run_simulated_holding_batch(db: Session, exp: AlgorithmExperiment, fund_cod
             # Compute tracking error = RMSE(portfolio_return - fund_return)
             # for the disclosed-weights portfolio over the full NAV period.
             hw = holdings_df.groupby("stock_code")["weight_pct"].sum() / 100.0
+            # Compute daily_return from close_price if missing
+            if stock_df["daily_return"].isna().all():
+                stock_df["daily_return"] = stock_df.groupby("stock_code")["close_price"].pct_change()
             sp = stock_df.pivot_table(
                 index="trade_date", columns="stock_code", values="daily_return", aggfunc="last"
             )
