@@ -550,8 +550,10 @@ def run_simulation(
         if len(window_nav) < 20:
             continue
 
-        # Nearest disclosed holdings before this rebalance date
+        # Nearest disclosed holdings: use latest available if none before rb_date
         prev_holdings = holdings[holdings["report_date"] <= rb_date]
+        if prev_holdings.empty:
+            prev_holdings = holdings  # fallback: use all available holdings
         if prev_holdings.empty:
             continue
         latest_report = prev_holdings["report_date"].max()
