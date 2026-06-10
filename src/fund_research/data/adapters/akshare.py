@@ -440,17 +440,24 @@ class AkshareAdapter(BaseDataAdapter):
     def fetch_stock_daily(
         self, stock_code: str, start_date: date | None = None, end_date: date | None = None
     ) -> FetchResult:
-        """拉取股票日行情，优先使用 Phase 0 验证通过的腾讯路径。"""
+        """拉取股票日行情（腾讯源），自动补 daily_return。"""
         symbol = stock_code
         if stock_code.isdigit() and len(stock_code) == 6:
             symbol = f"sh{stock_code}" if stock_code.startswith("6") else f"sz{stock_code}"
-        return self._call(
+        result = self._call(
             "stock_daily",
             self.ak.stock_zh_a_hist_tx,
             symbol=symbol,
             start_date=start_date.strftime("%Y%m%d") if start_date else "19700101",
             end_date=end_date.strftime("%Y%m%d") if end_date else date.today().strftime("%Y%m%d"),
         )
+        # Tencent source lacks daily_return; compute from close_price
+        df = result.data
+        if df is not None and "close_price" in df.columns and "daily_return" not in df.columns:
+            df = df.sort_values("trade_date")
+            df["daily_return"] = df["close_price"].pct_change()
+            result.data = df
+        return result
 
     def fetch_index_daily(
         self, symbol: str, start_date: date | None = None, end_date: date | None = None

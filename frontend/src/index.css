@@ -237,6 +237,15 @@ button:disabled {
   text-align: center;
 }
 
+.error-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-md);
+  color: var(--color-danger);
+  background: var(--color-danger-light);
+}
+
 @media (max-width: 720px) {
   .page-header,
   .form-row {
@@ -248,6 +257,38 @@ button:disabled {
     min-width: 0;
   }
 }
+
+/* Experiments page */
+.experiments-page .page-header {
+  display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px;
+}
+.experiments-page .summary-row {
+  display: flex; gap: 16px; margin-top: 4px; font-size: 13px; color: var(--color-text-secondary);
+}
+.experiments-page .summary-row .text-danger { color: var(--color-danger); }
+.experiments-page .experiment-form .form-row {
+  display: flex; gap: 8px; align-items: end;
+}
+.experiments-page .table-card { overflow-x: auto; }
+.experiments-page .mono-cell { font-family: var(--font-mono); font-size: 13px; }
+.experiments-page .name-cell { font-weight: 500; }
+.experiments-page .date-cell { font-size: 12px; color: var(--color-text-secondary); }
+.experiments-page .action-row { display: flex; gap: 4px; }
+.experiments-page .action-row button {
+  padding: 2px 8px; cursor: pointer; font-size: 12px; border-radius: var(--radius-sm);
+}
+.experiments-page .action-row .button-primary {
+  background: var(--color-primary); color: #fff; border: none;
+}
+.experiments-page .action-row .button-ghost {
+  background: none; border: 1px solid var(--color-border);
+}
+.experiments-page .action-row .button-danger {
+  background: none; border: 1px solid var(--color-danger); color: var(--color-danger);
+}
+.experiments-table tr.selected-row { background: var(--color-primary-light); }
+.experiments-table tr:hover:not(.selected-row) { background: var(--color-bg); }
+.detail-panel { max-height: 500px; overflow-y: auto; }
 
 .disclaimer-footer {
   text-align: center;

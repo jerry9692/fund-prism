@@ -98,7 +98,7 @@ def update_experiment_status(db: Session, experiment_id: int, status: str, summa
     exp.status = status
     if status == "running":
         exp.started_at = datetime.now()
-    elif status in ("completed", "failed"):
+    elif status in ("completed", "completed_with_failures", "failed"):
         exp.completed_at = datetime.now()
     if summary:
         exp.summary = summary
@@ -136,17 +136,16 @@ def delete_experiment(db: Session, experiment_id: int) -> None:
     exp = db.get(AlgorithmExperiment, experiment_id)
     if exp is None:
         raise ValueError(f"Experiment {experiment_id} not found")
-    results = db.scalars(
+    for r in db.scalars(
         select(ExperimentResult).where(ExperimentResult.experiment_id == experiment_id)
-    ).all()
-    for r in results:
+    ).all():
         db.delete(r)
+    db.flush()
     db.delete(exp)
     db.flush()
     db.commit()
 
-    # Verify
-    remaining = db.scalar(select(AlgorithmExperiment).where(AlgorithmExperiment.id == experiment_id))
+    remaining = db.get(AlgorithmExperiment, experiment_id)
     if remaining is not None:
         raise RuntimeError(f"Delete failed: experiment {experiment_id} still exists after commit")
 
@@ -167,3 +166,111 @@ def rerun_experiment(db: Session, experiment_id: int) -> AlgorithmExperiment:
     db.commit()
     db.refresh(exp)
     return exp
+
+
+def build_validation_report(db: Session, experiment_id: int) -> dict:
+    """
+    从实验结果生成标准化的验收报告结构。
+
+    报告含: experiment_summary, aggregate_stats (均值 TE/recall/IC),
+    per_fund 明细, overall_conclusion (pass/partial/fail),
+    conclusion_status (v0.4 分级).
+
+    所有指标使用 estimated_* 命名，conclusion_status 不使用 fact/computed.
+    """
+    import numpy as np
+
+    exp = db.scalar(select(AlgorithmExperiment).where(AlgorithmExperiment.id == experiment_id))
+    if exp is None:
+        return {"error": f"Experiment {experiment_id} not found"}
+
+    results = list(db.scalars(
+        select(ExperimentResult).where(ExperimentResult.experiment_id == experiment_id)
+    ).all())
+
+    if not results:
+        return {
+            "experiment_summary": {
+                "experiment_id": experiment_id,
+                "experiment_name": exp.experiment_name,
+                "algorithm_name": exp.algorithm_name,
+                "algorithm_version": exp.algorithm_version,
+                "status": exp.status,
+                "fund_count": 0,
+            },
+            "aggregate_stats": {},
+            "per_fund": [],
+            "overall_conclusion": "no_data",
+            "warnings": ["无实验结果"],
+            "conclusion_status": "needs_review",
+        }
+
+    tes, recalls, ics = [], [], []
+    per_fund, all_warns = [], []
+    ok = 0
+
+    for r in results:
+        m = r.metrics or {}
+        te = m.get("estimated_overall_tracking_error")
+        rec = m.get("estimated_overall_top10_recall")
+        ic = m.get("estimated_overall_industry_correlation")
+        w = r.warnings if isinstance(r.warnings, list) else []
+
+        if te is not None:
+            tes.append(float(te))
+        if rec is not None:
+            recalls.append(float(rec))
+        if ic is not None:
+            ics.append(float(ic))
+        if r.is_success:
+            ok += 1
+        all_warns.extend(w)
+
+        per_fund.append({
+            "fund_code": r.fund_code,
+            "is_success": r.is_success,
+            "estimated_tracking_error": round(float(te), 6) if te is not None else None,
+            "estimated_top10_recall": round(float(rec), 4) if rec is not None else None,
+            "estimated_industry_correlation": round(float(ic), 4) if ic is not None else None,
+            "error_message": r.error_message,
+            "warnings": w,
+        })
+
+    n = len(results)
+    mean_te = round(float(np.mean(tes)), 6) if tes else None
+    mean_recall = round(float(np.mean(recalls)), 4) if recalls else None
+    mean_ic = round(float(np.mean(ics)), 4) if ics else None
+    success_rate = round(ok / n, 4) if n > 0 else 0.0
+
+    if success_rate >= 0.8 and mean_te is not None and mean_te < 0.05:
+        overall, cs = "pass", "estimated"
+    elif success_rate >= 0.5:
+        overall, cs = "partial", "estimated"
+    else:
+        overall, cs = "fail", "needs_review"
+
+    if success_rate < 1.0:
+        all_warns.append(f"成功率: {success_rate:.1%} ({ok}/{n})")
+
+    return {
+        "experiment_summary": {
+            "experiment_id": experiment_id,
+            "experiment_name": exp.experiment_name,
+            "algorithm_name": exp.algorithm_name,
+            "algorithm_version": exp.algorithm_version,
+            "status": exp.status,
+            "fund_count": n,
+            "success_count": ok,
+            "failure_count": n - ok,
+        },
+        "aggregate_stats": {
+            "mean_estimated_tracking_error": mean_te,
+            "mean_estimated_top10_recall": mean_recall,
+            "mean_estimated_industry_correlation": mean_ic,
+            "success_rate": success_rate,
+        },
+        "per_fund": per_fund,
+        "overall_conclusion": overall,
+        "warnings": all_warns,
+        "conclusion_status": cs,
+    }

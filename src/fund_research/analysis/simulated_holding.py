@@ -266,6 +266,12 @@ def _optimize_cvxpy(
     return _equal_weight(n_stocks, max_positions), 0.0
 
 
+def _equal_weights(n_stocks: int) -> tuple[np.ndarray, float]:
+    """Equal-weight fallback when optimization fails."""
+    w = np.ones(n_stocks) / n_stocks
+    return w, 0.0
+
+
 def _equal_weight(n_stocks: int, max_positions: int) -> np.ndarray:
     """Equal-weight fallback that still respects the position limit."""
     weights = np.zeros(n_stocks)
@@ -524,8 +530,14 @@ def run_simulation(
     holdings["report_date"] = pd.to_datetime(holdings["report_date"]).dt.date
     holdings = holdings.sort_values("report_date")
 
-    # Get rebalancing dates (first day of each month or each quarter)
+    # Get rebalancing dates limited to overlapping NAV + stock range
     all_dates = sorted(nav["trade_date"].unique())
+    stock_dates = sorted(stocks["trade_date"].dropna().unique())
+    if stock_dates:
+        min_common = max(all_dates[0], stock_dates[0])
+        max_common = min(all_dates[-1], stock_dates[-1])
+        all_dates = [d for d in all_dates if min_common <= d <= max_common]
+
     if rebalance_freq == "M":
         rebal_dates = sorted({d.replace(day=1) for d in all_dates})
     else:
@@ -534,8 +546,14 @@ def run_simulation(
     periods: list[SinglePeriodResult] = []
     prev_weights: np.ndarray | None = None
     prev_pool_in_data: list[str] | None = None
+    skipped_no_nav = 0
+    skipped_no_stocks = 0
+    skipped_no_pool = 0
+    skipped_no_holdings = 0
+    total_attempted = 0
 
     for rb_date in rebal_dates:
+        total_attempted += 1
         # Window: rb_date to rb_date + window_days
         window_end = None
         for d in all_dates:
@@ -548,11 +566,15 @@ def run_simulation(
         window_end_date = rb_date + pd.Timedelta(days=window_days)
         window_nav = nav[(nav["trade_date"] >= rb_date) & (nav["trade_date"] < window_end_date)]
         if len(window_nav) < 20:
+            skipped_no_nav += 1
             continue
 
-        # Nearest disclosed holdings before this rebalance date
+        # Nearest disclosed holdings: use latest available if none before rb_date
         prev_holdings = holdings[holdings["report_date"] <= rb_date]
         if prev_holdings.empty:
+            prev_holdings = holdings  # fallback: use all available holdings
+        if prev_holdings.empty:
+            skipped_no_holdings += 1
             continue
         latest_report = prev_holdings["report_date"].max()
         latest_holdings = prev_holdings[prev_holdings["report_date"] == latest_report]
@@ -566,6 +588,7 @@ def run_simulation(
         # Get stock returns for the window
         window_stocks = stocks[(stocks["trade_date"] >= rb_date) & (stocks["trade_date"] < window_end_date)]
         if window_stocks.empty:
+            skipped_no_stocks += 1
             continue
 
         # Build return matrices
@@ -574,7 +597,8 @@ def run_simulation(
         )
         # Filter to pool stocks
         pool_in_data = [s for s in pool if s in stock_pivot.columns]
-        if len(pool_in_data) < 5:
+        if len(pool_in_data) < 2:
+            skipped_no_pool += 1
             continue
 
         ret_matrix = stock_pivot[pool_in_data].values.T  # (n_stocks, n_days)
@@ -624,16 +648,20 @@ def run_simulation(
                 if s in prev_code_to_idx:
                     prev_mapped[j] = prev_weights[prev_code_to_idx[s]]
 
-        weights, obj_val = optimize_weights(
-            ret_matrix, fund_ret,
-            max_positions=max_positions,
-            max_single_weight=max_single_weight,
-            turnover_penalty=turnover_penalty,
-            prev_weights=prev_mapped,
-            industry_groups=industry_groups,
-            disclosed_industry_weights=ind_weights,
-            industry_penalty=industry_penalty,
-        )
+        try:
+            weights, obj_val = optimize_weights(
+                ret_matrix, fund_ret,
+                max_positions=max_positions,
+                max_single_weight=max_single_weight,
+                turnover_penalty=turnover_penalty,
+                prev_weights=prev_mapped,
+                industry_groups=industry_groups,
+                disclosed_industry_weights=ind_weights,
+                industry_penalty=industry_penalty,
+            )
+        except Exception:
+            # Fallback: equal weight if optimization fails
+            weights, obj_val = _equal_weights(len(pool_in_data))
 
         # Compute tracking error
         port_ret = ret_matrix.T @ weights  # (n_days,)
@@ -676,6 +704,11 @@ def run_simulation(
     else:
         avg_te = 0.0
         confidence = "needs_review"
+        warnings.append(
+            f"全部 {total_attempted} 个调仓窗口跳过: "
+            f"NAV不足={skipped_no_nav}, 无股票={skipped_no_stocks}, "
+            f"候选池不足={skipped_no_pool}, 无持仓={skipped_no_holdings}"
+        )
 
     # Backtest
     backtest: dict | None = None
