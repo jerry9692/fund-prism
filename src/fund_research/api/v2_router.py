@@ -445,8 +445,6 @@ def _run_simulated_holding_batch(db: Session, exp: AlgorithmExperiment, fund_cod
                 )
             elif te >= 0.10:
                 fail_reason = f"跟踪误差偏高 TE={te:.4f}"
-            elif sim_result.warnings:
-                fail_reason = sim_result.warnings[0]
             is_success = fail_reason is None
 
             record_result(db, experiment_id=exp.id, fund_code=fc,
