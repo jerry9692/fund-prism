@@ -576,7 +576,7 @@ def run_simulation(
         )
         # Filter to pool stocks
         pool_in_data = [s for s in pool if s in stock_pivot.columns]
-        if len(pool_in_data) < 5:
+        if len(pool_in_data) < 2:
             continue
 
         ret_matrix = stock_pivot[pool_in_data].values.T  # (n_stocks, n_days)
