@@ -591,7 +591,7 @@ def run_simulation(
         )
         # Filter to pool stocks
         pool_in_data = [s for s in pool if s in stock_pivot.columns]
-        if len(pool_in_data) < 2:
+        if len(pool_in_data) < 1:
             skipped_no_pool += 1
             continue
 
