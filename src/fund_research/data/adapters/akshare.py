@@ -451,11 +451,11 @@ class AkshareAdapter(BaseDataAdapter):
             start_date=start_date.strftime("%Y%m%d") if start_date else "19700101",
             end_date=end_date.strftime("%Y%m%d") if end_date else date.today().strftime("%Y%m%d"),
         )
-        # Tencent source does not provide daily_return; compute from close_price
+        # Tencent source lacks daily_return; compute from close_price
         df = result.data
         if df is not None and "close_price" in df.columns and "daily_return" not in df.columns:
-            df = df.sort_values(["stock_code", "trade_date"])
-            df["daily_return"] = df.groupby("stock_code")["close_price"].pct_change()
+            df = df.sort_values("trade_date")
+            df["daily_return"] = df["close_price"].pct_change()
             result.data = df
         return result
 
