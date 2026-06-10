@@ -9,7 +9,7 @@ from datetime import date, datetime
 from secrets import randbits
 from typing import Any
 
-from sqlalchemy import JSON, Boolean, Date, DateTime, Float, ForeignKey, Integer, String, Text
+from sqlalchemy import JSON, Boolean, Date, DateTime, Float, Integer, String, Text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from fund_research.db.models import Base

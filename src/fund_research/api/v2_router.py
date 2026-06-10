@@ -399,9 +399,13 @@ def _run_simulated_holding_batch(db: Session, exp: AlgorithmExperiment, fund_cod
 
             fail_reason = None
             if not has_periods:
+                h_codes = holdings_df["stock_code"].unique().tolist() if "stock_code" in holdings_df.columns else []
+                s_codes = stock_df["stock_code"].unique().tolist() if "stock_code" in stock_df.columns else []
+                match = [c for c in h_codes if c in s_codes]
                 fail_reason = (
-                    f"数据不足: nav={len(nav_df)}, stocks={len(stock_df)},"
-                    f" holdings={len(holdings_df)}"
+                    f"无可用周期: nav={len(nav_df)}, stocks={len(stock_df)},"
+                    f" holdings={len(holdings_df)},"
+                    f" codes_match={len(match)}/{len(h_codes)}"
                 )
             elif te >= 0.10:
                 fail_reason = f"跟踪误差偏高 TE={te:.4f}"
