@@ -393,15 +393,21 @@ def _run_simulated_holding_batch(db: Session, exp: AlgorithmExperiment, fund_cod
                 "period_count": len(sim_result.periods),
                 "backtest_detail": backtest.get("detail", []),
             }
-            # Success: tracking_error within threshold, and at least some overlap
-            te_ok = sim_result.overall_tracking_error < 0.10
-            recall = backtest.get("top10_recall") or 0.0
-            has_periods = len(sim_result.periods) > 0
-            is_success = te_ok and has_periods and recall >= 0.0
+            n_periods = len(sim_result.periods)
+            te = sim_result.overall_tracking_error
+            has_periods = n_periods > 0
 
-            fail_reason = (
-                sim_result.warnings[0] if sim_result.warnings else "未通过回测阈值"
-            ) if not is_success else None
+            fail_reason = None
+            if not has_periods:
+                fail_reason = (
+                    f"数据不足: nav={len(nav_df)}, stocks={len(stock_df)},"
+                    f" holdings={len(holdings_df)}"
+                )
+            elif te >= 0.10:
+                fail_reason = f"跟踪误差偏高 TE={te:.4f}"
+            elif sim_result.warnings:
+                fail_reason = sim_result.warnings[0]
+            is_success = fail_reason is None
 
             record_result(db, experiment_id=exp.id, fund_code=fc,
                           calc_date=date_type.today(), is_success=is_success,
