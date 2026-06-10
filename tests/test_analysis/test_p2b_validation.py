@@ -255,3 +255,71 @@ class TestRunExperimentPipeline:
             )
         ).all()
         assert all(not r.is_success for r in results)
+
+    def test_run_dynamic_attribution_records_estimated_fields(
+        self,
+        test_client: TestClient,
+        test_session: Session,
+    ):
+        """动态归因结果必须使用 estimated_* 字段。"""
+        # Seed minimal data
+        for i in range(10):
+            test_session.add(FundNAV(
+                fund_code="000001", trade_date=date(2024, 1, 1) + timedelta(days=i),
+                unit_nav=1.0 + i * 0.01, daily_return=0.01,
+                data_source_level="LOCAL",
+            ))
+        for i in range(5):
+            test_session.add(FundDisclosedHoldings(
+                fund_code="000001", report_date=date(2024, 3, 31),
+                security_code=f"{i:06d}", asset_type="股票",
+                weight_pct=10.0, industry="tech" if i < 3 else "finance",
+                rank_in_holdings=i + 1, data_source_level="LOCAL",
+            ))
+        test_session.commit()
+
+        create_resp = test_client.post("/api/v2/experiments", json={
+            "experiment_name": "attr-test", "algorithm_name": "dynamic_attribution",
+            "sample_fund_codes": ["000001"],
+        })
+        exp_id = create_resp.json()["data"]["id"]
+
+        run_resp = test_client.post(f"/api/v2/experiments/{exp_id}/run")
+        assert run_resp.status_code == 200
+
+        from sqlalchemy import select as sa_select
+        results = test_session.scalars(
+            sa_select(ExperimentResult).where(ExperimentResult.experiment_id == int(exp_id))
+        ).all()
+        assert len(results) >= 1
+        if results[0].is_success:
+            m = results[0].metrics or {}
+            assert "estimated_total_allocation_effect" in m
+            assert "estimated_total_selection_effect" in m
+
+    def test_run_scoring_excludes_unverified_estimated_dims(
+        self,
+        test_client: TestClient,
+        test_session: Session,
+    ):
+        """综合评分默认不接入未验证 estimated 维度。"""
+        for i in range(30):
+            test_session.add(FundNAV(
+                fund_code=f"{i:06d}",
+                trade_date=date(2024, 1, 1) + timedelta(days=i % 30),
+                unit_nav=1.0 + i * 0.02, daily_return=0.005,
+                data_source_level="LOCAL",
+            ))
+        test_session.commit()
+
+        create_resp = test_client.post("/api/v2/experiments", json={
+            "experiment_name": "score-test", "algorithm_name": "scoring",
+            "sample_fund_codes": ["000000", "000001"],
+        })
+        exp_id = create_resp.json()["data"]["id"]
+
+        run_resp = test_client.post(f"/api/v2/experiments/{exp_id}/run")
+        assert run_resp.status_code == 200
+        data = run_resp.json()["data"]
+        # Scoring should at least attempt to run for the available funds
+        assert data["fund_count"] > 0

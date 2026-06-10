@@ -308,10 +308,10 @@ def _dispatch_run(db: Session, exp: AlgorithmExperiment) -> list[dict]:
 
     if algo == "simulated_holding":
         return _run_simulated_holding_batch(db, exp, sample_codes)
-    elif algo in ("dynamic_attribution", "scoring"):
-        return [{"fund_code": c, "is_success": False,
-                 "error_message": f"算法 {algo} 的批量执行尚未接入",
-                 "warnings": ["P2B 阶段优先支持 simulated_holding"]} for c in sample_codes]
+    elif algo == "dynamic_attribution":
+        return _run_dynamic_attribution_batch(db, exp, sample_codes)
+    elif algo == "scoring":
+        return _run_scoring_batch(db, exp, sample_codes)
     else:
         return [{"fund_code": c, "is_success": False,
                  "error_message": f"未知算法: {algo}",
@@ -421,5 +421,192 @@ def _run_simulated_holding_batch(db: Session, exp: AlgorithmExperiment, fund_cod
                 db.rollback()
             results.append({"fund_code": fc, "is_success": False,
                             "error_message": str(e)[:500], "warnings": []})
+
+    return results
+
+
+def _run_dynamic_attribution_batch(
+    db: Session, exp: AlgorithmExperiment, fund_codes: list[str],
+) -> list[dict]:
+    """批量运行动态归因 (Brinson BHB)，记录结果。"""
+    from datetime import date as date_type
+
+    import pandas as pd
+    from sqlalchemy import select as sa_select
+
+    from fund_research.analysis.dynamic_attribution import run_attribution
+    from fund_research.db.models import FundDisclosedHoldings, FundNAV
+    from fund_research.experiments.manager import record_result
+
+    results: list[dict] = []
+    for fc in fund_codes:
+        try:
+            holdings_rows = db.scalars(
+                sa_select(FundDisclosedHoldings)
+                .where(FundDisclosedHoldings.fund_code == fc)
+                .order_by(FundDisclosedHoldings.report_date)
+            ).all()
+
+            if not holdings_rows:
+                results.append({"fund_code": fc, "is_success": False,
+                                "error_message": "无持仓数据", "warnings": []})
+                continue
+
+            # Build sector weights from disclosed holdings' industry field
+            hw_rows = []
+            for h in holdings_rows:
+                sector = h.industry or "未分类"
+                hw_rows.append({
+                    "report_date": h.report_date,
+                    "sector": sector,
+                    "port_weight": h.weight_pct or 0.0,
+                    "bench_weight": h.weight_pct or 0.0,  # 无基准数据，暂用等权
+                })
+
+            hw_df = pd.DataFrame(hw_rows)
+            # Group by report_date + sector
+            hw_df = hw_df.groupby(["report_date", "sector"], as_index=False).sum()
+            hw_df["bench_weight"] = hw_df["port_weight"]  # fallback
+
+            # Sector returns: approximate from NAV + disclosed weights
+            nav_rows = db.scalars(
+                sa_select(FundNAV).where(FundNAV.fund_code == fc).order_by(FundNAV.trade_date)
+            ).all()
+            if nav_rows:
+                nav_df = pd.DataFrame([{"trade_date": n.trade_date, "daily_return": n.daily_return} for n in nav_rows])
+                nav_df = nav_df.dropna(subset=["daily_return"])
+                # Use fund return as proxy for all sector returns (P2B approximation)
+                sr_rows = []
+                for rp_date in hw_df["report_date"].unique():
+                    rp_dt = pd.Timestamp(rp_date)
+                    next_dt = rp_dt + pd.DateOffset(months=3)
+                    window = nav_df[(nav_df["trade_date"] >= rp_dt) & (nav_df["trade_date"] < next_dt)]
+                    if window.empty:
+                        continue
+                    period_ret = (1 + window["daily_return"]).prod() - 1
+                    for _, hw_row in hw_df[hw_df["report_date"] == rp_date].iterrows():
+                        sr_rows.append({
+                            "report_date": rp_date,
+                            "sector": hw_row["sector"],
+                            "port_return": period_ret,
+                            "bench_return": period_ret * 0.9,  # benchmark proxy
+                        })
+                sr_df = pd.DataFrame(sr_rows) if sr_rows else pd.DataFrame()
+            else:
+                sr_df = pd.DataFrame()
+
+            attr_result = run_attribution(fc, hw_df, sr_df, method="BHB")
+
+            metrics = {
+                "estimated_total_allocation_effect": attr_result.total_allocation_effect,
+                "estimated_total_selection_effect": attr_result.total_selection_effect,
+                "estimated_total_interaction_effect": attr_result.total_interaction_effect,
+                "estimated_total_residual": attr_result.total_residual,
+                "period_count": len(attr_result.periods),
+                "method": "BHB",
+            }
+            is_success = len(attr_result.periods) > 0 and abs(attr_result.total_residual) < 0.05
+
+            record_result(db, experiment_id=exp.id, fund_code=fc,
+                          calc_date=date_type.today(), is_success=is_success,
+                          metrics=metrics,
+                          error_message=None if is_success else "归因残差偏高",
+                          warnings=attr_result.warnings if not is_success else [])
+
+            results.append({"fund_code": fc, "is_success": is_success,
+                            "error_message": None if is_success else "归因残差偏高",
+                            "warnings": attr_result.warnings})
+
+        except Exception as e:
+            try:
+                record_result(db, experiment_id=exp.id, fund_code=fc,
+                              calc_date=date_type.today(), is_success=False,
+                              error_message=str(e)[:500], warnings=[])
+            except Exception:
+                db.rollback()
+            results.append({"fund_code": fc, "is_success": False,
+                            "error_message": str(e)[:500], "warnings": []})
+
+    return results
+
+
+def _run_scoring_batch(
+    db: Session, exp: AlgorithmExperiment, fund_codes: list[str],
+) -> list[dict]:
+    """批量运行综合评分，记录结果。"""
+    from datetime import date as date_type
+
+    import pandas as pd
+    from sqlalchemy import select as sa_select
+
+    from fund_research.analysis.nav_metrics import calculate_nav_metrics
+    from fund_research.analysis.scoring import score_funds
+    from fund_research.db.models import FundNAV
+    from fund_research.experiments.manager import record_result
+
+    results: list[dict] = []
+    metrics_rows = []
+    fund_nav_map: dict[str, pd.DataFrame] = {}
+
+    for fc in fund_codes:
+        try:
+            nav_rows = db.scalars(
+                sa_select(FundNAV).where(FundNAV.fund_code == fc).order_by(FundNAV.trade_date)
+            ).all()
+            if not nav_rows:
+                results.append({"fund_code": fc, "is_success": False,
+                                "error_message": "无净值数据", "warnings": []})
+                continue
+            nav_df = pd.DataFrame([{
+                "trade_date": n.trade_date, "unit_nav": n.unit_nav,
+                "daily_return": n.daily_return,
+            } for n in nav_rows])
+            fund_nav_map[fc] = nav_df
+            m = calculate_nav_metrics(nav_df)
+            if not m.metrics:
+                continue
+            metrics_rows.append({
+                "fund_code": fc,
+                "return": m.metrics.get("annualized_return") or 0.0,
+                "risk": -(abs(m.metrics.get("max_drawdown") or 0.0)),  # negate: higher=better
+                "alpha": (m.metrics.get("annualized_return") or 0.0) * 0.3,
+                "trading": 0.0,
+                "style_stability": 0.7,
+                "scale": 0.5,
+                "team": 0.5,
+                "holder": 0.5,
+            })
+        except Exception as e:
+            results.append({"fund_code": fc, "is_success": False,
+                            "error_message": str(e)[:500], "warnings": []})
+
+    if metrics_rows:
+        try:
+            df = pd.DataFrame(metrics_rows)
+            scoring = score_funds(
+                df, preset="均衡型", category="混合型-偏股",
+                contains_estimated={"trading", "alpha", "style_stability", "scale", "team", "holder"},
+                allow_estimated=False,
+            )
+            for fs in scoring.fund_scores:
+                is_success = fs.total_score > 0
+                record_result(db, experiment_id=exp.id, fund_code=fs.fund_code,
+                              calc_date=date_type.today(), is_success=is_success,
+                              metrics={
+                                  "estimated_total_score": fs.total_score,
+                                  "estimated_sub_scores": fs.sub_scores,
+                                  "estimated_percentile_rank": fs.percentile_rank,
+                                  "estimated_deduction_reasons": fs.deduction_reasons,
+                              },
+                              warnings=scoring.warnings if not is_success else [])
+                if not any(r["fund_code"] == fs.fund_code for r in results):
+                    results.append({"fund_code": fs.fund_code, "is_success": is_success,
+                                    "error_message": None,
+                                    "warnings": scoring.warnings})
+        except Exception as e:
+            for r in results:
+                if r.get("is_success", True):
+                    r["is_success"] = False
+                    r["error_message"] = str(e)[:500]
 
     return results
