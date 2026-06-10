@@ -524,8 +524,14 @@ def run_simulation(
     holdings["report_date"] = pd.to_datetime(holdings["report_date"]).dt.date
     holdings = holdings.sort_values("report_date")
 
-    # Get rebalancing dates (first day of each month or each quarter)
+    # Get rebalancing dates limited to overlapping NAV + stock range
     all_dates = sorted(nav["trade_date"].unique())
+    stock_dates = sorted(stocks["trade_date"].dropna().unique())
+    if stock_dates:
+        min_common = max(all_dates[0], stock_dates[0])
+        max_common = min(all_dates[-1], stock_dates[-1])
+        all_dates = [d for d in all_dates if min_common <= d <= max_common]
+
     if rebalance_freq == "M":
         rebal_dates = sorted({d.replace(day=1) for d in all_dates})
     else:
