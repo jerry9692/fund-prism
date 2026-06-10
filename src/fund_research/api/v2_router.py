@@ -249,3 +249,177 @@ def record_experiment_result_endpoint(
         return _log(db, "record_experiment_result", params,
                     APIResponse(data=None, metadata={"tool": "record_experiment_result"},
                                 warnings=[str(e)], conclusion_status=ConclusionStatus.NEEDS_REVIEW), started)
+
+
+# ============================================================
+# Run experiment (P2B)
+# ============================================================
+
+
+@v2_router.post("/experiments/{experiment_id}/run")
+def run_experiment_endpoint(
+    experiment_id: int,
+    db: SessionDep,
+) -> APIResponse[dict]:
+    """执行实验：读取参数，运行对应算法，写入结果。"""
+    started = perf_counter()
+    params = {"experiment_id": experiment_id}
+
+    exp = db.get(AlgorithmExperiment, experiment_id)
+    if exp is None:
+        return _log(db, "run_experiment", params,
+                    APIResponse(data=None, metadata={"tool": "run_experiment"},
+                                warnings=[f"实验 {experiment_id} 不存在"],
+                                conclusion_status=ConclusionStatus.NEEDS_REVIEW), started)
+
+    if exp.status == "running":
+        return _log(db, "run_experiment", params,
+                    APIResponse(data={"experiment_id": experiment_id, "status": "running"},
+                                metadata={"tool": "run_experiment"},
+                                warnings=["实验正在运行中"],
+                                conclusion_status=ConclusionStatus.OBSERVATION), started)
+
+    from fund_research.experiments.manager import update_experiment_status
+
+    update_experiment_status(db, experiment_id, "running")
+
+    try:
+        results = _dispatch_run(db, exp)
+        update_experiment_status(db, experiment_id, "completed", f"完成 {len(results)} 只基金")
+        return _log(db, "run_experiment", params,
+                    APIResponse(
+                        data={"experiment_id": experiment_id, "status": "completed",
+                              "fund_count": len(results), "success_count": sum(1 for r in results if r["is_success"]),
+                              "failure_count": sum(1 for r in results if not r["is_success"])},
+                        metadata={"tool": "run_experiment", "platform_version": __version__},
+                        conclusion_status=ConclusionStatus.COMPUTED), started)
+    except Exception as e:
+        db.rollback()
+        update_experiment_status(db, experiment_id, "failed", str(e)[:200])
+        return _log(db, "run_experiment", params,
+                    APIResponse(data=None, metadata={"tool": "run_experiment"},
+                                warnings=[str(e)], conclusion_status=ConclusionStatus.NEEDS_REVIEW), started)
+
+
+def _dispatch_run(db: Session, exp: AlgorithmExperiment) -> list[dict]:
+    """根据实验的 algorithm_name 分发到对应的执行函数。"""
+    algo = exp.algorithm_name
+    sample_codes = exp.sample_fund_codes or []
+
+    if algo == "simulated_holding":
+        return _run_simulated_holding_batch(db, exp, sample_codes)
+    elif algo in ("dynamic_attribution", "scoring"):
+        return [{"fund_code": c, "is_success": False,
+                 "error_message": f"算法 {algo} 的批量执行尚未接入",
+                 "warnings": ["P2B 阶段优先支持 simulated_holding"]} for c in sample_codes]
+    else:
+        return [{"fund_code": c, "is_success": False,
+                 "error_message": f"未知算法: {algo}",
+                 "warnings": []} for c in sample_codes]
+
+
+def _run_simulated_holding_batch(db: Session, exp: AlgorithmExperiment, fund_codes: list[str]) -> list[dict]:
+    """批量运行模拟持仓，记录结果和验收报告。"""
+    from datetime import date as date_type
+
+    import pandas as pd
+    from sqlalchemy import select as sa_select
+
+    from fund_research.analysis.simulated_holding import (
+        backtest_disclosure,
+        run_simulation,
+    )
+    from fund_research.db.models import FundDisclosedHoldings, FundNAV, StockDaily
+    from fund_research.experiments.manager import record_result
+
+    params = exp.parameters or {}
+    max_positions = int(params.get("max_positions", 30))
+    window_days = int(params.get("window_days", 60))
+    results: list[dict] = []
+
+    for fc in fund_codes:
+        try:
+            nav_rows = db.scalars(
+                sa_select(FundNAV).where(FundNAV.fund_code == fc).order_by(FundNAV.trade_date)
+            ).all()
+            if not nav_rows:
+                results.append({"fund_code": fc, "is_success": False,
+                                "error_message": "无净值数据", "warnings": []})
+                continue
+
+            holdings_rows = db.scalars(
+                sa_select(FundDisclosedHoldings)
+                .where(FundDisclosedHoldings.fund_code == fc)
+                .order_by(FundDisclosedHoldings.report_date)
+            ).all()
+            stock_rows = db.scalars(
+                sa_select(StockDaily).order_by(StockDaily.stock_code, StockDaily.trade_date)
+            ).all()
+
+            nav_df = pd.DataFrame([{
+                "trade_date": r.trade_date, "unit_nav": r.unit_nav,
+                "accumulated_nav": r.accumulated_nav, "daily_return": r.daily_return,
+            } for r in nav_rows])
+            holdings_df = pd.DataFrame([{
+                "report_date": r.report_date, "stock_code": r.security_code,
+                "weight_pct": r.weight_pct, "industry": r.industry,
+            } for r in holdings_rows]) if holdings_rows else pd.DataFrame()
+            stock_df = pd.DataFrame([{
+                "trade_date": r.trade_date, "stock_code": r.stock_code,
+                "close_price": r.close_price, "daily_return": r.daily_return,
+                "industry": None, "market_cap": None,
+            } for r in stock_rows]) if stock_rows else pd.DataFrame()
+
+            sim_result = run_simulation(
+                fc, nav_df, stock_df, holdings_df,
+                max_positions=max_positions,
+                window_days=window_days,
+                run_backtest=True,
+            )
+
+            disclosed_dict: dict[str, dict[str, float]] = {}
+            for rp_date in holdings_df["report_date"].dropna().unique():
+                rp = holdings_df[holdings_df["report_date"] == rp_date]
+                disclosed_dict[str(rp_date)] = dict(
+                    zip(rp["stock_code"], rp["weight_pct"], strict=False)
+                )
+
+            backtest = backtest_disclosure(sim_result.periods, disclosed_dict) if disclosed_dict else {}
+
+            metrics = {
+                "estimated_overall_tracking_error": sim_result.overall_tracking_error,
+                "estimated_overall_top10_recall": backtest.get("top10_recall"),
+                "estimated_overall_industry_correlation": backtest.get("industry_correlation"),
+                "period_count": len(sim_result.periods),
+                "backtest_detail": backtest.get("detail", []),
+            }
+            is_success = (
+                sim_result.overall_tracking_error < 0.08
+                and (backtest.get("top10_recall") or 0) > 0.3
+            )
+
+            fail_reason = (
+                sim_result.warnings[0] if sim_result.warnings else "未通过回测阈值"
+            ) if not is_success else None
+
+            record_result(db, experiment_id=exp.id, fund_code=fc,
+                          calc_date=date_type.today(), is_success=is_success,
+                          metrics=metrics,
+                          error_message=fail_reason,
+                          warnings=sim_result.warnings if not is_success else [])
+
+            results.append({"fund_code": fc, "is_success": is_success,
+                            "error_message": fail_reason,
+                            "warnings": sim_result.warnings if not is_success else []})
+
+        except Exception as e:
+            try:
+                record_result(db, experiment_id=exp.id, fund_code=fc,
+                              calc_date=date_type.today(), is_success=False,
+                              error_message=str(e)[:500], warnings=[])
+            except Exception:
+                db.rollback()
+            results.append({"fund_code": fc, "is_success": False,
+                            "error_message": str(e)[:500], "warnings": []})
+
+    return results
