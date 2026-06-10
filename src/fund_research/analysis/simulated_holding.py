@@ -266,6 +266,12 @@ def _optimize_cvxpy(
     return _equal_weight(n_stocks, max_positions), 0.0
 
 
+def _equal_weights(n_stocks: int) -> tuple[np.ndarray, float]:
+    """Equal-weight fallback when optimization fails."""
+    w = np.ones(n_stocks) / n_stocks
+    return w, 0.0
+
+
 def _equal_weight(n_stocks: int, max_positions: int) -> np.ndarray:
     """Equal-weight fallback that still respects the position limit."""
     weights = np.zeros(n_stocks)
@@ -591,7 +597,7 @@ def run_simulation(
         )
         # Filter to pool stocks
         pool_in_data = [s for s in pool if s in stock_pivot.columns]
-        if len(pool_in_data) < 1:
+        if len(pool_in_data) < 2:
             skipped_no_pool += 1
             continue
 
@@ -642,16 +648,20 @@ def run_simulation(
                 if s in prev_code_to_idx:
                     prev_mapped[j] = prev_weights[prev_code_to_idx[s]]
 
-        weights, obj_val = optimize_weights(
-            ret_matrix, fund_ret,
-            max_positions=max_positions,
-            max_single_weight=max_single_weight,
-            turnover_penalty=turnover_penalty,
-            prev_weights=prev_mapped,
-            industry_groups=industry_groups,
-            disclosed_industry_weights=ind_weights,
-            industry_penalty=industry_penalty,
-        )
+        try:
+            weights, obj_val = optimize_weights(
+                ret_matrix, fund_ret,
+                max_positions=max_positions,
+                max_single_weight=max_single_weight,
+                turnover_penalty=turnover_penalty,
+                prev_weights=prev_mapped,
+                industry_groups=industry_groups,
+                disclosed_industry_weights=ind_weights,
+                industry_penalty=industry_penalty,
+            )
+        except Exception:
+            # Fallback: equal weight if optimization fails
+            weights, obj_val = _equal_weights(len(pool_in_data))
 
         # Compute tracking error
         port_ret = ret_matrix.T @ weights  # (n_days,)
