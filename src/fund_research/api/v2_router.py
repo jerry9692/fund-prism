@@ -519,6 +519,7 @@ def _run_dynamic_attribution_batch(
             ).all()
             if nav_rows:
                 nav_df = pd.DataFrame([{"trade_date": n.trade_date, "daily_return": n.daily_return} for n in nav_rows])
+                nav_df["trade_date"] = pd.to_datetime(nav_df["trade_date"])
                 nav_df = nav_df.dropna(subset=["daily_return"])
                 # Use fund return as proxy for all sector returns (P2B approximation)
                 sr_rows = []
