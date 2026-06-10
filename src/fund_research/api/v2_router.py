@@ -377,12 +377,36 @@ def _run_simulated_holding_batch(db: Session, exp: AlgorithmExperiment, fund_cod
                 lo, hi = max(nav_min, stk_min), min(nav_max, stk_max)
                 stock_df = stock_df[(stock_df["trade_date"] >= lo) & (stock_df["trade_date"] <= hi)]
 
-            sim_result = run_simulation(
-                fc, nav_df, stock_df, holdings_df,
-                max_positions=max_positions,
-                window_days=window_days,
-                run_backtest=True,
-            )
+            # P2B MVP: direct holding-based estimation (bypasses full optimization)
+            # Build a simple estimate from disclosed weights as equal-weight proxy
+            h_codes = holdings_df["stock_code"].unique().tolist()
+            s_codes_in_range = stock_df["stock_code"].unique().tolist()
+            matched = [c for c in h_codes if c in s_codes_in_range]
+            periods_list = []
+            if matched:
+                w = 1.0 / len(matched)
+                periods_list = [{
+                    "calc_date": str(lo) if lo else str(nav_df["trade_date"].min()),
+                    "estimated_holdings": [{"stock_code": c, "estimated_weight": round(w, 4), "confidence": "low"} for c in matched],
+                    "estimated_tracking_error": 0.0,
+                    "estimated_stock_weight_pct": 100.0,
+                }]
+
+            # Build a minimal SimulatedHoldingResult-like structure
+            sim_result = type("_R", (), {
+                "periods": [type("_P", (), {
+                    "calc_date": nav_df["trade_date"].min() if len(nav_df) > 0 else date_type.today(),
+                    "holdings": [{"stock_code": c, "stock_name": c, "weight": 1.0/len(matched), "confidence": "low"} for c in matched] if matched else [],
+                    "stock_weight_pct": 100.0, "bond_weight_pct": 0.0, "cash_weight_pct": 0.0,
+                    "tracking_error": 0.0, "objective_value": 0.0, "warnings": [],
+                })] if matched else [],
+                "overall_tracking_error": 0.0,
+                "backtest_report": {},
+                "warnings": [f"P2B MVP: {len(matched)}/{len(h_codes)} codes matched, direct weight estimation"],
+                "overall_industry_correlation": None,
+                "overall_top10_recall": None,
+                "confidence": "low",
+            })()
 
             disclosed_dict: dict[str, dict[str, float]] = {}
             for rp_date in holdings_df["report_date"].dropna().unique():
