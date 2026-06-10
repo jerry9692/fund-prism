@@ -45,6 +45,7 @@ export default function ExperimentsPage() {
   const [showCreate, setShowCreate] = useState(false);
   const [name, setName] = useState("");
   const [algo, setAlgo] = useState("simulated_holding");
+  const [fundCodes, setFundCodes] = useState("000001");
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [detail, setDetail] = useState<ExperimentDetail | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
@@ -87,6 +88,7 @@ export default function ExperimentsPage() {
           algorithm_name: algo,
           algorithm_version: "0.1.0",
           parameters: {},
+          sample_fund_codes: fundCodes.split(",").map((s) => s.trim()).filter(Boolean),
         }),
       });
       console.log("[create] status:", res.status);
@@ -163,6 +165,7 @@ export default function ExperimentsPage() {
                 <option value="scoring">综合评分</option>
               </select>
             </label>
+            <label><span>基金代码</span><input value={fundCodes} onChange={(e) => setFundCodes(e.target.value)} placeholder="000001,163406" style={{ width: 140 }} /></label>
             <button className="button-primary" onClick={create}>创建</button>
           </div>
         </div>
