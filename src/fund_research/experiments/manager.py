@@ -132,20 +132,21 @@ def record_result(
 
 
 def delete_experiment(db: Session, experiment_id: int) -> None:
-    """Delete an experiment and its results."""
+    """Delete an experiment and its results (two-phase for DuckDB FK)."""
     exp = db.get(AlgorithmExperiment, experiment_id)
     if exp is None:
         raise ValueError(f"Experiment {experiment_id} not found")
+    # Phase 1: delete FK children, flush to release references
     results = db.scalars(
         select(ExperimentResult).where(ExperimentResult.experiment_id == experiment_id)
     ).all()
     for r in results:
         db.delete(r)
+    if results:
+        db.flush()
+    # Phase 2: delete parent
     db.delete(exp)
-    db.flush()
     db.commit()
-
-    # Verify
     remaining = db.scalar(select(AlgorithmExperiment).where(AlgorithmExperiment.id == experiment_id))
     if remaining is not None:
         raise RuntimeError(f"Delete failed: experiment {experiment_id} still exists after commit")
