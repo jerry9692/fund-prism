@@ -77,19 +77,28 @@ export default function ExperimentsPage() {
 
   async function create() {
     const experimentName = name.trim() || `${ALGO_LABELS[algo] ?? algo} 实验`;
-    await fetch("/api/v2/experiments", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        experiment_name: experimentName,
-        algorithm_name: algo,
-        algorithm_version: "0.1.0",
-        parameters: {},
-      }),
-    });
-    setShowCreate(false);
-    setName("");
-    load();
+    try {
+      const res = await fetch("/api/v2/experiments", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          experiment_name: experimentName,
+          algorithm_name: algo,
+          algorithm_version: "0.1.0",
+          parameters: {},
+        }),
+      });
+      const body = await res.json();
+      if (!res.ok) {
+        alert(`创建失败: ${body.warnings?.join?.("; ") || body.detail || res.status}`);
+        return;
+      }
+      setShowCreate(false);
+      setName("");
+      load();
+    } catch (e) {
+      alert(`创建异常: ${e instanceof Error ? e.message : String(e)}`);
+    }
   }
 
   async function run(id: string) {
