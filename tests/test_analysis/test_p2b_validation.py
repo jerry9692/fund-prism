@@ -375,7 +375,7 @@ class TestRunExperimentPipeline:
             ))
         for i in range(5):
             test_session.add(FundDisclosedHoldings(
-                fund_code="000001", report_date=date(2024, 3, 31),
+                fund_code="000001", report_date=date(2024, 1, 1),
                 security_code=f"{i:06d}", asset_type="股票",
                 weight_pct=10.0, industry="tech" if i < 3 else "finance",
                 rank_in_holdings=i + 1, data_source_level="LOCAL",
@@ -399,6 +399,8 @@ class TestRunExperimentPipeline:
         m = results[0].metrics or {}
         assert m.get("uses_proxy_benchmark") is True
         assert m.get("uses_proxy_sector_returns") is True
+        assert m.get("normalized_weight_sum_by_report") == {"2024-01-01": 1.0}
+        assert m["estimated_total_portfolio_return"] < 0.2
         assert any("P2B 近似" in warning for warning in (results[0].warnings or []))
         if results[0].is_success:
             assert "estimated_total_allocation_effect" in m

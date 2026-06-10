@@ -319,8 +319,8 @@ def _run_dynamic_attribution_batch(
                 weight_rows.append({
                     "report_date": holding.report_date,
                     "sector": sector,
-                    "port_weight": holding.weight_pct or 0.0,
-                    "bench_weight": holding.weight_pct or 0.0,
+                    "port_weight": (holding.weight_pct or 0.0) / 100.0,
+                    "bench_weight": (holding.weight_pct or 0.0) / 100.0,
                 })
 
             holdings_weight_df = pd.DataFrame(weight_rows)
@@ -329,6 +329,15 @@ def _run_dynamic_attribution_batch(
                 as_index=False,
             ).sum()
             holdings_weight_df["bench_weight"] = holdings_weight_df["port_weight"]
+            for weight_column in ("port_weight", "bench_weight"):
+                report_totals = holdings_weight_df.groupby("report_date")[weight_column].transform("sum")
+                holdings_weight_df[weight_column] = (
+                    holdings_weight_df[weight_column] / report_totals.where(report_totals > 0, 1.0)
+                )
+            normalized_weight_sums = {
+                str(report_date): round(float(weight_sum), 6)
+                for report_date, weight_sum in holdings_weight_df.groupby("report_date")["port_weight"].sum().items()
+            }
 
             nav_rows = db.scalars(
                 sa_select(FundNAV)
@@ -374,6 +383,8 @@ def _run_dynamic_attribution_batch(
             )
 
             metrics = {
+                "estimated_total_portfolio_return": attr_result.total_portfolio_return,
+                "estimated_total_benchmark_return": attr_result.total_benchmark_return,
                 "estimated_total_allocation_effect": attr_result.total_allocation_effect,
                 "estimated_total_selection_effect": attr_result.total_selection_effect,
                 "estimated_total_interaction_effect": attr_result.total_interaction_effect,
@@ -382,6 +393,7 @@ def _run_dynamic_attribution_batch(
                 "method": "BHB",
                 "uses_proxy_benchmark": True,
                 "uses_proxy_sector_returns": True,
+                "normalized_weight_sum_by_report": normalized_weight_sums,
             }
             is_success = len(attr_result.periods) > 0 and abs(attr_result.total_residual) < 0.05
             error_message = None if is_success else "归因残差偏高"
