@@ -370,6 +370,13 @@ def _run_simulated_holding_batch(db: Session, exp: AlgorithmExperiment, fund_cod
                 "industry": None, "market_cap": None,
             } for r in stock_rows]) if stock_rows else pd.DataFrame()
 
+            # Limit to overlapping date range
+            if not nav_df.empty and not stock_df.empty:
+                nav_min, nav_max = nav_df["trade_date"].min(), nav_df["trade_date"].max()
+                stk_min, stk_max = stock_df["trade_date"].min(), stock_df["trade_date"].max()
+                lo, hi = max(nav_min, stk_min), min(nav_max, stk_max)
+                stock_df = stock_df[(stock_df["trade_date"] >= lo) & (stock_df["trade_date"] <= hi)]
+
             sim_result = run_simulation(
                 fc, nav_df, stock_df, holdings_df,
                 max_positions=max_positions,
@@ -402,11 +409,12 @@ def _run_simulated_holding_batch(db: Session, exp: AlgorithmExperiment, fund_cod
                 h_codes = holdings_df["stock_code"].unique().tolist() if "stock_code" in holdings_df.columns else []
                 s_codes = stock_df["stock_code"].unique().tolist() if "stock_code" in stock_df.columns else []
                 match = [c for c in h_codes if c in s_codes]
-                nav_dates = f"{nav_df['trade_date'].min()}~{nav_df['trade_date'].max()}" if "trade_date" in nav_df.columns else "?"
-                stk_dates = f"{stock_df['trade_date'].min()}~{stock_df['trade_date'].max()}" if "trade_date" in stock_df.columns else "?"
+                nav_dates = f"{nav_df['trade_date'].min()}~{nav_df['trade_date'].max()}" if "trade_date" in nav_df.columns and len(nav_df) > 0 else "?"
+                stk_dates = f"{stock_df['trade_date'].min()}~{stock_df['trade_date'].max()}" if "trade_date" in stock_df.columns and len(stock_df) > 0 else "?"
+                stk_after = len(stock_df)
                 fail_reason = (
                     f"无可用周期: nav={len(nav_df)} [{nav_dates}],"
-                    f" stocks={len(stock_df)} [{stk_dates}],"
+                    f" stocks={stk_after} [{stk_dates}],"
                     f" holdings={len(holdings_df)}, match={len(match)}/{len(h_codes)}"
                 )
             elif te >= 0.10:
