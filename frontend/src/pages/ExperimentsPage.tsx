@@ -56,6 +56,7 @@ export default function ExperimentsPage() {
     setLoading(true);
     try {
       const res = await fetch("/api/v2/experiments").then((r) => r.json());
+      console.log("[load] experiments:", res.data?.experiments?.length, "items, total:", res.data?.total);
       setExperiments(res.data?.experiments ?? []);
     } finally {
       setLoading(false);
@@ -88,15 +89,19 @@ export default function ExperimentsPage() {
           parameters: {},
         }),
       });
+      console.log("[create] status:", res.status);
       const body = await res.json();
-      if (!res.ok) {
+      console.log("[create] body:", body);
+      if (!res.ok || body.data === null) {
         alert(`创建失败: ${body.warnings?.join?.("; ") || body.detail || res.status}`);
         return;
       }
+      console.log("[create] success, calling load()");
       setShowCreate(false);
       setName("");
       load();
     } catch (e) {
+      console.error("[create] error:", e);
       alert(`创建异常: ${e instanceof Error ? e.message : String(e)}`);
     }
   }
