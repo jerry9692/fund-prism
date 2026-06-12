@@ -1,6 +1,6 @@
 # P2C Handoff — 真实行业/基准收益接入
 
-日期: 2026-06-10
+日期: 2026-06-10 (更新 2026-06-12)
 分支: `codex/p2c-real-benchmark-data`
 基线: `main` 已包含 P2B 修复
 
@@ -60,9 +60,15 @@
 - 缺少基准指数行情时必须失败，不能回退到 P2B proxy
 - 真实结构 E2E seed 增加 `sh000300` 指数行情
 
-## 4. 下一步
+## 4. 已完成（2026-06-12）
+
+- **前端参数输入**: `ExperimentsPage` 已支持 dynamic_attribution 算法的参数输入：
+  - `benchmark_symbol` — 基准指数代码，默认 `sh000300`
+  - `min_return_observations` — 最小收益观测样本数，默认 `3`，number 类型
+  - 选择其他算法时不显示这些字段，参数传 `{}`
+
+## 5. 下一步
 
 1. 接入真实基准行业权重：指数成分、行业分类、成分权重
 2. 根据基金 `FundMain.benchmark` 或用户 review 配置自动解析 `benchmark_symbol`
 3. 把 `dynamic_attribution_result` 表也接入实验结果持久化，而不是只写 `experiment_result.metrics`
-4. 增加前端参数输入：`benchmark_symbol`、`min_return_observations`

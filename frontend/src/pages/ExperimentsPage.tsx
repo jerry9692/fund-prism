@@ -59,6 +59,8 @@ export default function ExperimentsPage() {
   const [detailLoading, setDetailLoading] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
+  const [benchmarkSymbol, setBenchmarkSymbol] = useState("sh000300");
+  const [minReturnObs, setMinReturnObs] = useState(3);
 
   const completedCount = experiments.filter(
     (e) => e.status === "completed" || e.status === "completed_with_failures",
@@ -115,7 +117,9 @@ export default function ExperimentsPage() {
           experiment_name: experimentName,
           algorithm_name: algo,
           algorithm_version: "0.1.0",
-          parameters: {},
+          parameters: algo === "dynamic_attribution"
+            ? { benchmark_symbol: benchmarkSymbol, min_return_observations: Number(minReturnObs) }
+            : {},
           sample_fund_codes: fundCodes.split(",").map((s) => s.trim()).filter(Boolean),
         }),
       });
@@ -225,6 +229,12 @@ export default function ExperimentsPage() {
               </select>
             </label>
             <label><span>基金代码</span><input value={fundCodes} onChange={(e) => setFundCodes(e.target.value)} placeholder="000001,163406" style={{ width: 140 }} /></label>
+            {algo === "dynamic_attribution" && (
+              <>
+                <label><span>基准指数</span><input value={benchmarkSymbol} onChange={(e) => setBenchmarkSymbol(e.target.value)} placeholder="sh000300" style={{ width: 110 }} /></label>
+                <label><span>最小样本</span><input type="number" value={minReturnObs} onChange={(e) => setMinReturnObs(Number(e.target.value))} placeholder="3" style={{ width: 60 }} min={1} /></label>
+              </>
+            )}
             <button className="button-primary" onClick={create}>创建</button>
           </div>
         </div>
