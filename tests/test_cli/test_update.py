@@ -4,7 +4,7 @@ from pathlib import Path
 
 from typer.testing import CliRunner
 
-from fund_research.cli.main import app
+from fund_research.cli.main import _selected_update_entities, app
 
 
 def _write_sample(path: Path) -> None:
@@ -55,3 +55,13 @@ def test_update_rejects_unknown_domain() -> None:
     assert result.exit_code == 1
     assert "暂不支持的数据类型" in result.output
     assert "not-a-domain" in result.output
+
+
+def test_update_domains_include_benchmark_industry_sources() -> None:
+    """New benchmark industry data domains should resolve in update order."""
+    selected = _selected_update_entities(
+        "sample-funds",
+        "benchmark-members,stock-industry,benchmark-industry",
+    )
+
+    assert selected == ["benchmark-members", "stock-industry", "benchmark-industry"]

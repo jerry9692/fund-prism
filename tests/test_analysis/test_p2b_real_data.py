@@ -19,6 +19,7 @@ from sqlalchemy import select as sa_select
 from sqlalchemy.orm import Session
 
 from fund_research.db.models import (
+    BenchmarkIndustryWeight,
     ExperimentResult,
     FundDisclosedHoldings,
     FundNAV,
@@ -107,6 +108,25 @@ def seed_realistic_data(test_session: Session) -> None:
             daily_return=round(ret, 6),
             data_source_level="LOCAL",
         ))
+
+    for rp_date in (date(2024, 3, 31), date(2024, 6, 30), date(2024, 9, 30), date(2024, 12, 31)):
+        for industry, weight_pct in (("电子", 45.0), ("国防军工", 35.0), ("通信", 20.0)):
+            test_session.add(BenchmarkIndustryWeight(
+                benchmark_symbol="sh000300",
+                snapshot_date=rp_date,
+                classification_type="SW",
+                classification_level=1,
+                industry_code=None,
+                industry_name=industry,
+                weight_pct=weight_pct,
+                member_count=20,
+                unmapped_weight_pct=0.0,
+                coverage_pct=100.0,
+                source_member_snapshot=rp_date,
+                source_industry_snapshot=rp_date,
+                algorithm_version="test",
+                warnings=[],
+            ))
 
     test_session.commit()
 
@@ -211,6 +231,8 @@ class TestRealDataPipeline:
             m = results[0].metrics or {}
             assert "estimated_total_allocation_effect" in m
             assert "estimated_total_selection_effect" in m
+            assert m.get("uses_real_benchmark_weights") is True
+            assert m.get("uses_proxy_benchmark_weights") is False
 
     def test_scoring_with_real_structure(
         self, test_client: TestClient, test_session: Session,

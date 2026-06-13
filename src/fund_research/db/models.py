@@ -653,10 +653,13 @@ class ToolAPICallLog(Base):
 
 from fund_research.db.models_phase2 import (  # noqa: E402,F401
     AlgorithmExperiment,
+    BenchmarkIndexMember,
+    BenchmarkIndustryWeight,
     DynamicAttributionResult,
     ExperimentResult,
     ReviewerAnnotation,
     ScoringBacktest,
     ScoringResult,
     SimulatedHoldingResult,
+    StockIndustryMembership,
 )

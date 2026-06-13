@@ -45,6 +45,9 @@ UPDATE_ENTITY_ORDER = [
     "holder-structure",
     "stock-daily",
     "index-daily",
+    "benchmark-members",
+    "stock-industry",
+    "benchmark-industry",
     "official-pdf",
 ]
 UPDATE_DOMAIN_ALIASES = {
@@ -81,6 +84,15 @@ UPDATE_DOMAIN_ALIASES = {
     "stock-daily": "stock-daily",
     "index": "index-daily",
     "index-daily": "index-daily",
+    "benchmark": "benchmark-members",
+    "benchmark-members": "benchmark-members",
+    "benchmark-index-member": "benchmark-members",
+    "benchmark-index-members": "benchmark-members",
+    "benchmark-industry": "benchmark-industry",
+    "benchmark-industry-weight": "benchmark-industry",
+    "benchmark-industry-weights": "benchmark-industry",
+    "stock-industry": "stock-industry",
+    "industry-membership": "stock-industry",
     "official-pdf": "official-pdf",
     "pdf": "official-pdf",
     "all": "all",
@@ -93,7 +105,8 @@ UpdateEntityArg = Annotated[
             "要更新的数据类型 "
             "(sample-funds/fund-info/fund-managers/fund-scale/fund-fees/fund-nav/"
             "fund-dividends/fund-holdings/fund-industry-allocation/"
-            "fund-portfolio-change/holder-structure/stock-daily/index-daily/official-pdf/all)"
+            "fund-portfolio-change/holder-structure/stock-daily/index-daily/"
+            "benchmark-members/stock-industry/benchmark-industry/official-pdf/all)"
         )
     ),
 ]
@@ -423,6 +436,7 @@ def update(
         UpdateSummary,
         latest_holding_stock_codes,
         load_sample_funds,
+        upsert_akshare_benchmark_index_members,
         upsert_akshare_fund_dividends,
         upsert_akshare_fund_fees,
         upsert_akshare_fund_holdings,
@@ -436,6 +450,8 @@ def update(
         upsert_akshare_index_daily,
         upsert_akshare_official_pdf_evidence,
         upsert_akshare_stock_daily,
+        upsert_akshare_stock_industry_membership,
+        upsert_benchmark_industry_weights,
         upsert_sample_funds,
     )
     from fund_research.db.session import create_engine_from_path, init_db
@@ -574,6 +590,40 @@ def update(
                     selected_index_symbols,
                     start_date=start_date,
                     end_date=end_date,
+                    dry_run=dry_run,
+                )
+            )
+        if "benchmark-members" in selected_entities:
+            selected_index_symbols = set(index_symbol) if index_symbol else {
+                "sh000300",
+                "sh000905",
+                "sh000852",
+            }
+            summaries.append(
+                upsert_akshare_benchmark_index_members(
+                    session,
+                    selected_index_symbols,
+                    dry_run=dry_run,
+                )
+            )
+        if "stock-industry" in selected_entities:
+            summaries.append(
+                upsert_akshare_stock_industry_membership(
+                    session,
+                    dry_run=dry_run,
+                )
+            )
+        if "benchmark-industry" in selected_entities:
+            selected_index_symbols = set(index_symbol) if index_symbol else {
+                "sh000300",
+                "sh000905",
+                "sh000852",
+            }
+            summaries.append(
+                upsert_benchmark_industry_weights(
+                    session,
+                    selected_index_symbols,
+                    target_date=end_date,
                     dry_run=dry_run,
                 )
             )

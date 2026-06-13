@@ -20,12 +20,15 @@ depends_on: str | Sequence[str] | None = None
 
 PHASE2_TABLES = {
     "algorithm_experiment",
+    "benchmark_index_member",
+    "benchmark_industry_weight",
     "dynamic_attribution_result",
     "experiment_result",
     "reviewer_annotation",
     "scoring_backtest",
     "scoring_result",
     "simulated_holding_result",
+    "stock_industry_membership",
 }
 
 

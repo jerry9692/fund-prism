@@ -13,6 +13,7 @@ from fund_research.analysis.scoring import score_funds
 from fund_research.analysis.simulated_holding import backtest_disclosure
 from fund_research.db.models import (
     AlgorithmExperiment,
+    BenchmarkIndustryWeight,
     FundDisclosedHoldings,
     FundMain,
     FundNAV,
@@ -28,6 +29,7 @@ BENCHMARK_TEXT_SYMBOL_MAP = (
 )
 MIN_ATTRIBUTION_RETURN_OBSERVATIONS = 3
 MIN_ATTRIBUTION_STOCK_WEIGHT_COVERAGE = 0.8
+MIN_ATTRIBUTION_BENCHMARK_WEIGHT_COVERAGE = 95.0
 
 
 def dispatch_run(db: Session, exp: AlgorithmExperiment) -> list[dict]:
@@ -367,23 +369,21 @@ def _run_dynamic_attribution_batch(
                     "sector": sector,
                     "stock_code": str(holding.security_code),
                     "port_weight": (holding.weight_pct or 0.0) / 100.0,
-                    "bench_weight": (holding.weight_pct or 0.0) / 100.0,
                 })
 
             holding_stock_df = pd.DataFrame(holding_stock_rows)
-            for weight_column in ("port_weight", "bench_weight"):
-                report_totals = holding_stock_df.groupby("report_date")[weight_column].transform("sum")
-                holding_stock_df[weight_column] = (
-                    holding_stock_df[weight_column] / report_totals.where(report_totals > 0, 1.0)
-                )
+            report_totals = holding_stock_df.groupby("report_date")["port_weight"].transform("sum")
+            holding_stock_df["port_weight"] = (
+                holding_stock_df["port_weight"] / report_totals.where(report_totals > 0, 1.0)
+            )
 
-            holdings_weight_df = holding_stock_df.groupby(
+            port_weight_df = holding_stock_df.groupby(
                 ["report_date", "sector"],
                 as_index=False,
-            )[["port_weight", "bench_weight"]].sum()
+            )[["port_weight"]].sum()
             normalized_weight_sums = {
                 str(report_date): round(float(weight_sum), 6)
-                for report_date, weight_sum in holdings_weight_df.groupby("report_date")["port_weight"].sum().items()
+                for report_date, weight_sum in port_weight_df.groupby("report_date")["port_weight"].sum().items()
             }
 
             sector_return_df, return_stats, return_warnings = _build_real_sector_return_df(
@@ -410,6 +410,35 @@ def _run_dynamic_attribution_batch(
                 results.append(_failure_result(fund_code, error, warnings))
                 continue
 
+            benchmark_weight_df, benchmark_weight_stats, benchmark_weight_warnings = (
+                _build_benchmark_industry_weight_df(
+                    db,
+                    benchmark_symbol=benchmark_symbol,
+                    report_dates=sorted(
+                        pd.to_datetime(holding_stock_df["report_date"]).dt.date.unique()
+                    ),
+                )
+            )
+            if benchmark_weight_df.empty:
+                error = f"缺少可用基准行业权重: {benchmark_symbol}"
+                _record_failure(db, exp.id, fund_code, error, warnings=benchmark_weight_warnings)
+                results.append(_failure_result(fund_code, error, benchmark_weight_warnings))
+                continue
+            if len(benchmark_weight_stats) < len(normalized_weight_sums):
+                error = f"基准行业权重覆盖不足: {benchmark_symbol}"
+                _record_failure(db, exp.id, fund_code, error, warnings=benchmark_weight_warnings)
+                results.append(_failure_result(fund_code, error, benchmark_weight_warnings))
+                continue
+
+            holdings_weight_df = port_weight_df.merge(
+                benchmark_weight_df,
+                on=["report_date", "sector"],
+                how="outer",
+            ).fillna({"port_weight": 0.0, "bench_weight": 0.0})
+            sector_return_df, benchmark_only_sector_counts = (
+                _complete_benchmark_only_sector_returns(sector_return_df, benchmark_weight_df)
+            )
+
             attr_result = run_attribution(
                 fund_code,
                 holdings_weight_df,
@@ -430,21 +459,35 @@ def _run_dynamic_attribution_batch(
                 "benchmark_source": benchmark_source,
                 "uses_proxy_benchmark": False,
                 "uses_proxy_sector_returns": False,
-                "uses_proxy_benchmark_weights": True,
+                "uses_proxy_benchmark_weights": False,
                 "uses_real_benchmark_returns": True,
                 "uses_real_sector_returns": True,
+                "uses_real_benchmark_weights": True,
                 "normalized_weight_sum_by_report": normalized_weight_sums,
                 "min_stock_weight_coverage": min_weight_coverage,
                 "return_observation_count_by_report": return_stats.get(
                     "return_observation_count_by_report", {}
                 ),
+                "benchmark_weight_snapshot_by_report": {
+                    report_date: stats.get("snapshot_date")
+                    for report_date, stats in benchmark_weight_stats.items()
+                },
+                "benchmark_weight_coverage_by_report": {
+                    report_date: stats.get("coverage_pct")
+                    for report_date, stats in benchmark_weight_stats.items()
+                },
+                "benchmark_weight_unmapped_pct_by_report": {
+                    report_date: stats.get("unmapped_weight_pct")
+                    for report_date, stats in benchmark_weight_stats.items()
+                },
+                "benchmark_only_sector_count_by_report": benchmark_only_sector_counts,
             }
             is_success = len(attr_result.periods) > 0 and abs(attr_result.total_residual) < 0.05
             error_message = None if is_success else "归因残差偏高"
             warnings = [
                 *attr_result.warnings,
                 *return_warnings,
-                "P2C 限制：基准行业权重暂用基金披露行业权重，尚未接入真实基准成分行业权重",
+                *benchmark_weight_warnings,
             ]
 
             record_result(
@@ -469,6 +512,119 @@ def _run_dynamic_attribution_batch(
             results.append(_failure_result(fund_code, str(exc)[:500]))
 
     return results
+
+
+def _build_benchmark_industry_weight_df(
+    db: Session,
+    *,
+    benchmark_symbol: str,
+    report_dates: list[date_type],
+) -> tuple[pd.DataFrame, dict[str, dict], list[str]]:
+    """Build benchmark industry weights from latest available snapshots."""
+    rows: list[dict] = []
+    stats_by_report: dict[str, dict] = {}
+    warnings: list[str] = []
+
+    for report_date in report_dates:
+        snapshot_date = db.scalar(
+            sa_select(BenchmarkIndustryWeight.snapshot_date)
+            .where(BenchmarkIndustryWeight.benchmark_symbol == benchmark_symbol)
+            .where(BenchmarkIndustryWeight.snapshot_date <= report_date)
+            .where(BenchmarkIndustryWeight.classification_type == "SW")
+            .where(BenchmarkIndustryWeight.classification_level == 1)
+            .order_by(BenchmarkIndustryWeight.snapshot_date.desc())
+            .limit(1)
+        )
+        if snapshot_date is None:
+            warnings.append(f"{report_date} 缺少基准行业权重: {benchmark_symbol}")
+            continue
+
+        weight_rows = db.scalars(
+            sa_select(BenchmarkIndustryWeight)
+            .where(BenchmarkIndustryWeight.benchmark_symbol == benchmark_symbol)
+            .where(BenchmarkIndustryWeight.snapshot_date == snapshot_date)
+            .where(BenchmarkIndustryWeight.classification_type == "SW")
+            .where(BenchmarkIndustryWeight.classification_level == 1)
+            .order_by(BenchmarkIndustryWeight.industry_name)
+        ).all()
+        if not weight_rows:
+            warnings.append(f"{report_date} 基准行业权重快照为空: {benchmark_symbol} {snapshot_date}")
+            continue
+
+        coverage_pct = min(
+            float(row.coverage_pct)
+            for row in weight_rows
+            if row.coverage_pct is not None
+        ) if any(row.coverage_pct is not None for row in weight_rows) else 0.0
+        if coverage_pct < MIN_ATTRIBUTION_BENCHMARK_WEIGHT_COVERAGE:
+            warnings.append(
+                f"{report_date} 基准行业权重覆盖不足: {coverage_pct:.2f}% "
+                f"< {MIN_ATTRIBUTION_BENCHMARK_WEIGHT_COVERAGE:.2f}%"
+            )
+            continue
+
+        total_weight = sum(float(row.weight_pct or 0.0) for row in weight_rows)
+        if total_weight <= 0:
+            warnings.append(f"{report_date} 基准行业权重合计无效: {benchmark_symbol} {snapshot_date}")
+            continue
+
+        unmapped_weight_pct = max(
+            (float(row.unmapped_weight_pct) for row in weight_rows if row.unmapped_weight_pct is not None),
+            default=0.0,
+        )
+        report_key = str(report_date)
+        stats_by_report[report_key] = {
+            "snapshot_date": str(snapshot_date),
+            "coverage_pct": round(coverage_pct, 6),
+            "unmapped_weight_pct": round(unmapped_weight_pct, 6),
+            "raw_weight_sum_pct": round(total_weight, 6),
+        }
+        for row in weight_rows:
+            rows.append({
+                "report_date": report_date,
+                "sector": row.industry_name,
+                "bench_weight": float(row.weight_pct or 0.0) / total_weight,
+            })
+
+    return pd.DataFrame(rows), stats_by_report, warnings
+
+
+def _complete_benchmark_only_sector_returns(
+    sector_return_df: pd.DataFrame,
+    benchmark_weight_df: pd.DataFrame,
+) -> tuple[pd.DataFrame, dict[str, int]]:
+    """Add benchmark-only sectors so Brinson does not treat missing rb as zero."""
+    if sector_return_df.empty or benchmark_weight_df.empty:
+        return sector_return_df, {}
+
+    completed_rows = sector_return_df.to_dict("records")
+    counts_by_report: dict[str, int] = {}
+    returns = sector_return_df.copy()
+    weights = benchmark_weight_df.copy()
+    returns["report_date"] = pd.to_datetime(returns["report_date"]).dt.date
+    weights["report_date"] = pd.to_datetime(weights["report_date"]).dt.date
+
+    for report_date, weight_period in weights.groupby("report_date"):
+        return_period = returns[returns["report_date"] == report_date]
+        if return_period.empty:
+            continue
+
+        missing_sectors = sorted(set(weight_period["sector"]) - set(return_period["sector"]))
+        counts_by_report[str(report_date)] = len(missing_sectors)
+        if not missing_sectors:
+            continue
+
+        benchmark_return = float(return_period["bench_return"].iloc[0])
+        for sector in missing_sectors:
+            completed_rows.append({
+                "report_date": report_date,
+                "sector": sector,
+                "port_return": 0.0,
+                "bench_return": benchmark_return,
+                "sector_stock_weight_coverage": 0.0,
+            })
+
+    return pd.DataFrame(completed_rows), counts_by_report
 
 
 def _resolve_benchmark_symbol(

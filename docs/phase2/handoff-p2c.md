@@ -45,14 +45,19 @@
 - `uses_real_benchmark_returns = true`
 - `uses_proxy_sector_returns = false`
 - `uses_proxy_benchmark = false`
-- `uses_proxy_benchmark_weights = true`
+- `uses_proxy_benchmark_weights = false`
+- `uses_real_benchmark_weights = true`
 - `benchmark_symbol`
 - `benchmark_source`
 - `normalized_weight_sum_by_report`
 - `min_stock_weight_coverage`
 - `return_observation_count_by_report`
+- `benchmark_weight_snapshot_by_report`
+- `benchmark_weight_coverage_by_report`
+- `benchmark_weight_unmapped_pct_by_report`
+- `benchmark_only_sector_count_by_report`
 
-重要限制: 真实基准行业权重尚未接入。当前 Brinson 中 `bench_weight` 仍暂用基金披露行业权重，因此 allocation effect 不能作为正式基准行业配置判断。
+动态归因现在要求 `benchmark_industry_weight` 中存在可用的真实基准行业权重。缺失或覆盖不足时会失败并进入 `needs_review`，不会再回退到基金披露行业权重。
 
 ## 3. 测试
 
@@ -77,9 +82,15 @@
   - 参数 `benchmark_symbol` 优先
   - 其次从 `FundMain.benchmark` 识别 `沪深300 -> sh000300`、`中证500 -> sh000905`、`中证1000 -> sh000852`
   - 识别失败时回退默认 `sh000300`
+- **真实基准行业权重接入**:
+  - 新增 `benchmark_index_member`、`stock_industry_membership`、`benchmark_industry_weight` 表和 Alembic 迁移
+  - AKShare adapter 支持指数成分权重、指数成分列表、申万行业成分归一化
+  - CLI `update` 新增 `benchmark-members`、`stock-industry`、`benchmark-industry` 域
+  - 动态归因 runner 从最近可用 `benchmark_industry_weight` 快照读取 `bench_weight`
+  - 基准行业权重覆盖率低于 95% 或缺失时，实验失败并进入 review
 
 ## 6. 下一步
 
-1. 接入真实基准行业权重：指数成分、行业分类、成分权重
-2. 扩展 `FundMain.benchmark` 解析映射，并增加用户 review 配置覆盖机制
-3. 把 `dynamic_attribution_result` 表也接入实验结果持久化，而不是只写 `experiment_result.metrics`
+1. 扩展 `FundMain.benchmark` 解析映射，并增加用户 review 配置覆盖机制
+2. 把 `dynamic_attribution_result` 表也接入实验结果持久化，而不是只写 `experiment_result.metrics`
+3. 为真实基准行业权重数据源做小样本人工核验：选择 `sh000300`、`sh000905` 各 2 个日期，对照指数公司/行情软件行业分布，记录偏差

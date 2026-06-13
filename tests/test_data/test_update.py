@@ -11,6 +11,7 @@ from sqlalchemy.orm import Session
 from fund_research.core.enums import DataSourceLevel, DataSourceType
 from fund_research.data.adapters.base import FetchResult
 from fund_research.data.update import (
+    upsert_akshare_benchmark_index_members,
     upsert_akshare_fund_dividends,
     upsert_akshare_fund_fees,
     upsert_akshare_fund_holdings,
@@ -24,9 +25,13 @@ from fund_research.data.update import (
     upsert_akshare_index_daily,
     upsert_akshare_official_pdf_evidence,
     upsert_akshare_stock_daily,
+    upsert_akshare_stock_industry_membership,
+    upsert_benchmark_industry_weights,
     upsert_sample_funds,
 )
 from fund_research.db.models import (
+    BenchmarkIndexMember,
+    BenchmarkIndustryWeight,
     DataSourceSnapshot,
     EvidenceRecord,
     FundCompany,
@@ -39,6 +44,7 @@ from fund_research.db.models import (
     FundScale,
     HolderStructure,
     StockDaily,
+    StockIndustryMembership,
     StyleExposureResult,
     TaskLog,
 )
@@ -265,6 +271,64 @@ class FakeAkshareAdapter:
                 }
             ],
         )
+
+    def fetch_index_members_weight(self, symbol: str) -> FetchResult:
+        return self._result(
+            "benchmark_index_member",
+            [
+                {
+                    "benchmark_symbol": symbol,
+                    "index_code": "000300",
+                    "index_name": "沪深300",
+                    "snapshot_date": "2026-06-01",
+                    "stock_code": "600519",
+                    "stock_name": "贵州茅台",
+                    "exchange": "SH",
+                    "weight_pct": "5.25",
+                },
+                {
+                    "benchmark_symbol": symbol,
+                    "index_code": "000300",
+                    "index_name": "沪深300",
+                    "snapshot_date": "2026-06-01",
+                    "stock_code": "000001",
+                    "stock_name": "平安银行",
+                    "exchange": "SZ",
+                    "weight_pct": "1.50",
+                },
+            ],
+        )
+
+    def fetch_sw_industry_membership(self, symbols: set[str] | None = None) -> FetchResult:
+        result = self._result(
+            "stock_industry_membership",
+            [
+                {
+                    "stock_code": "600519",
+                    "stock_name": "贵州茅台",
+                    "classification_type": "SW",
+                    "classification_version": "2021",
+                    "level": 1,
+                    "industry_code": "801120",
+                    "industry_name": "食品饮料",
+                    "parent_industry_code": None,
+                    "effective_date": "2026-06-01",
+                },
+                {
+                    "stock_code": "000001",
+                    "stock_name": "平安银行",
+                    "classification_type": "SW",
+                    "classification_version": "2021",
+                    "level": 1,
+                    "industry_code": "801780",
+                    "industry_name": "银行",
+                    "parent_industry_code": None,
+                    "effective_date": "2026-06-01",
+                },
+            ],
+        )
+        result.source_level = DataSourceLevel.C
+        return result
 
     def fetch_announcements(self, fund_code: str) -> FetchResult:
         return self._result(
@@ -814,6 +878,246 @@ def test_upsert_akshare_index_daily_passes_date_window(test_session: Session) ->
     assert summary.inserted == 1
     assert adapter.seen_start == date(2024, 1, 1)
     assert adapter.seen_end == date(2024, 1, 31)
+
+
+def test_upsert_akshare_benchmark_index_members_writes_weight_snapshots(
+    test_session: Session,
+) -> None:
+    """Benchmark member updates should upsert CSIndex constituent weights."""
+    adapter = FakeAkshareAdapter()
+
+    summary = upsert_akshare_benchmark_index_members(
+        test_session,
+        {"sh000300"},
+        adapter=adapter,
+    )
+    rows = test_session.scalars(
+        select(BenchmarkIndexMember).order_by(BenchmarkIndexMember.stock_code)
+    ).all()
+    snapshot = test_session.scalar(
+        select(DataSourceSnapshot).where(DataSourceSnapshot.entity_type == "benchmark_index_member")
+    )
+
+    assert summary.inserted == 2
+    assert len(rows) == 2
+    assert rows[0].benchmark_symbol == "sh000300"
+    assert rows[0].snapshot_date == date(2026, 6, 1)
+    assert rows[0].source_name == "akshare.index_stock_cons_weight_csindex"
+    assert rows[0].source_level == DataSourceLevel.B.value
+    assert rows[1].stock_code == "600519"
+    assert rows[1].weight_pct == 5.25
+    assert snapshot is not None
+
+    second = upsert_akshare_benchmark_index_members(
+        test_session,
+        {"sh000300"},
+        adapter=adapter,
+    )
+    row_count = test_session.scalar(select(func.count()).select_from(BenchmarkIndexMember))
+    assert second.updated == 2
+    assert row_count == 2
+
+
+def test_upsert_akshare_stock_industry_membership_writes_sw_level_one_rows(
+    test_session: Session,
+) -> None:
+    """Stock industry membership updates should persist SW level-one snapshots."""
+    adapter = FakeAkshareAdapter()
+
+    summary = upsert_akshare_stock_industry_membership(
+        test_session,
+        {"801120.SI"},
+        adapter=adapter,
+    )
+    rows = test_session.scalars(
+        select(StockIndustryMembership).order_by(StockIndustryMembership.stock_code)
+    ).all()
+    snapshot = test_session.scalar(
+        select(DataSourceSnapshot).where(
+            DataSourceSnapshot.entity_type == "stock_industry_membership"
+        )
+    )
+
+    assert summary.inserted == 2
+    assert len(rows) == 2
+    assert rows[0].stock_code == "000001"
+    assert rows[0].classification_type == "SW"
+    assert rows[0].level == 1
+    assert rows[0].industry_name == "银行"
+    assert rows[0].source_level == DataSourceLevel.C.value
+    assert rows[1].industry_name == "食品饮料"
+    assert snapshot is not None
+
+    second = upsert_akshare_stock_industry_membership(
+        test_session,
+        {"801120.SI"},
+        adapter=adapter,
+    )
+    row_count = test_session.scalar(select(func.count()).select_from(StockIndustryMembership))
+    assert second.updated == 2
+    assert row_count == 2
+
+
+def test_upsert_benchmark_industry_weights_aggregates_member_weights(
+    test_session: Session,
+) -> None:
+    """Benchmark industry aggregation should sum member weights by latest industry snapshot."""
+    snapshot_date = date(2026, 6, 1)
+    test_session.add_all([
+        BenchmarkIndexMember(
+            benchmark_symbol="sh000300",
+            index_code="000300",
+            index_name="沪深300",
+            snapshot_date=snapshot_date,
+            stock_code="600519",
+            stock_name="贵州茅台",
+            exchange="SH",
+            weight_pct=50.0,
+            source_name="akshare.index_stock_cons_weight_csindex",
+            source_level=DataSourceLevel.B.value,
+        ),
+        BenchmarkIndexMember(
+            benchmark_symbol="sh000300",
+            index_code="000300",
+            index_name="沪深300",
+            snapshot_date=snapshot_date,
+            stock_code="000001",
+            stock_name="平安银行",
+            exchange="SZ",
+            weight_pct=30.0,
+            source_name="akshare.index_stock_cons_weight_csindex",
+            source_level=DataSourceLevel.B.value,
+        ),
+        BenchmarkIndexMember(
+            benchmark_symbol="sh000300",
+            index_code="000300",
+            index_name="沪深300",
+            snapshot_date=snapshot_date,
+            stock_code="000002",
+            stock_name="万科A",
+            exchange="SZ",
+            weight_pct=20.0,
+            source_name="akshare.index_stock_cons_weight_csindex",
+            source_level=DataSourceLevel.B.value,
+        ),
+        StockIndustryMembership(
+            stock_code="600519",
+            stock_name="贵州茅台",
+            classification_type="SW",
+            classification_version="2021",
+            level=1,
+            industry_code="801120",
+            industry_name="食品饮料",
+            effective_date=snapshot_date,
+            source_name="akshare.sw_index_third_cons",
+            source_level=DataSourceLevel.C.value,
+        ),
+        StockIndustryMembership(
+            stock_code="000001",
+            stock_name="平安银行",
+            classification_type="SW",
+            classification_version="2021",
+            level=1,
+            industry_code="801780",
+            industry_name="银行",
+            effective_date=snapshot_date,
+            source_name="akshare.sw_index_third_cons",
+            source_level=DataSourceLevel.C.value,
+        ),
+        StockIndustryMembership(
+            stock_code="000002",
+            stock_name="万科A",
+            classification_type="SW",
+            classification_version="2021",
+            level=1,
+            industry_code="801780",
+            industry_name="银行",
+            effective_date=snapshot_date,
+            source_name="akshare.sw_index_third_cons",
+            source_level=DataSourceLevel.C.value,
+        ),
+    ])
+    test_session.commit()
+
+    summary = upsert_benchmark_industry_weights(
+        test_session,
+        {"sh000300"},
+        target_date=snapshot_date,
+    )
+    rows = test_session.scalars(
+        select(BenchmarkIndustryWeight).order_by(BenchmarkIndustryWeight.industry_name)
+    ).all()
+
+    assert summary.inserted == 2
+    assert {row.industry_name: row.weight_pct for row in rows} == {
+        "食品饮料": 50.0,
+        "银行": 50.0,
+    }
+    assert all(row.coverage_pct == 100.0 for row in rows)
+    assert all(row.unmapped_weight_pct == 0.0 for row in rows)
+    assert all(row.warnings is None for row in rows)
+
+    second = upsert_benchmark_industry_weights(
+        test_session,
+        {"sh000300"},
+        target_date=snapshot_date,
+    )
+    row_count = test_session.scalar(select(func.count()).select_from(BenchmarkIndustryWeight))
+    assert second.updated == 2
+    assert row_count == 2
+
+
+def test_upsert_benchmark_industry_weights_warns_on_low_mapping_coverage(
+    test_session: Session,
+) -> None:
+    """Low industry mapping coverage should be persisted as warnings for later gating."""
+    snapshot_date = date(2026, 6, 1)
+    test_session.add_all([
+        BenchmarkIndexMember(
+            benchmark_symbol="sh000300",
+            index_code="000300",
+            snapshot_date=snapshot_date,
+            stock_code="600519",
+            weight_pct=80.0,
+            source_name="akshare.index_stock_cons_weight_csindex",
+            source_level=DataSourceLevel.B.value,
+        ),
+        BenchmarkIndexMember(
+            benchmark_symbol="sh000300",
+            index_code="000300",
+            snapshot_date=snapshot_date,
+            stock_code="000001",
+            weight_pct=20.0,
+            source_name="akshare.index_stock_cons_weight_csindex",
+            source_level=DataSourceLevel.B.value,
+        ),
+        StockIndustryMembership(
+            stock_code="600519",
+            classification_type="SW",
+            level=1,
+            industry_name="食品饮料",
+            effective_date=snapshot_date,
+            source_name="akshare.sw_index_third_cons",
+            source_level=DataSourceLevel.C.value,
+        ),
+    ])
+    test_session.commit()
+
+    summary = upsert_benchmark_industry_weights(
+        test_session,
+        {"sh000300"},
+        target_date=snapshot_date,
+    )
+    row = test_session.scalar(select(BenchmarkIndustryWeight))
+
+    assert summary.inserted == 1
+    assert any("覆盖率不足" in warning for warning in summary.warnings)
+    assert row is not None
+    assert row.weight_pct == 100.0
+    assert row.coverage_pct == 80.0
+    assert row.unmapped_weight_pct == 20.0
+    assert row.warnings is not None
+    assert "行业映射覆盖率低于门槛" in row.warnings["items"][0]
 
 
 def test_upsert_akshare_official_pdf_evidence_writes_evidence(

@@ -6,7 +6,12 @@ from datetime import date
 import pandas as pd
 import pytest
 
-from fund_research.data.adapters.akshare import AkshareAdapter
+from fund_research.core.enums import DataSourceLevel
+from fund_research.data.adapters.akshare import (
+    AkshareAdapter,
+    benchmark_symbol_to_index_code,
+    index_code_to_benchmark_symbol,
+)
 
 
 def test_fetch_fund_list_standardizes_columns() -> None:
@@ -431,6 +436,86 @@ def test_fetch_index_daily_standardizes_english_columns() -> None:
     assert row["high_price"] == "3010.0"
     assert row["low_price"] == "2990.0"
     assert row["close_price"] == "3005.0"
+
+
+def test_benchmark_symbol_helpers_convert_csindex_codes() -> None:
+    assert benchmark_symbol_to_index_code("sh000300") == "000300"
+    assert benchmark_symbol_to_index_code("000905") == "000905"
+    assert index_code_to_benchmark_symbol("000852") == "sh000852"
+    assert index_code_to_benchmark_symbol("399371") == "sz399371"
+
+
+def test_fetch_index_members_weight_standardizes_csindex_columns() -> None:
+    """CSIndex member weights should keep snapshot_date separate from trade_date."""
+    captured: dict[str, str] = {}
+
+    def fake_members(symbol: str) -> pd.DataFrame:
+        captured["symbol"] = symbol
+        return pd.DataFrame(
+            [
+                {
+                    "日期": "20260601",
+                    "指数代码": "000300",
+                    "指数名称": "沪深300",
+                    "成分券代码": "600519",
+                    "成分券名称": "贵州茅台",
+                    "交易所": "上海证券交易所",
+                    "权重": 5.25,
+                }
+            ]
+        )
+
+    fake_ak = types.SimpleNamespace(index_stock_cons_weight_csindex=fake_members)
+    adapter = AkshareAdapter(ak_module=fake_ak)
+
+    result = adapter.fetch_index_members_weight("sh000300")
+
+    assert result.is_success is True
+    assert captured["symbol"] == "000300"
+    assert result.data is not None
+    row = result.data.iloc[0]
+    assert row["benchmark_symbol"] == "sh000300"
+    assert row["index_code"] == "000300"
+    assert row["snapshot_date"] == "20260601"
+    assert row["stock_code"] == "600519"
+    assert row["weight_pct"] == 5.25
+    assert "trade_date" not in result.data.columns
+
+
+def test_fetch_sw_industry_membership_standardizes_level_one_rows() -> None:
+    """SW third-level constituents should become level-one industry memberships."""
+    captured: list[str] = []
+
+    def fake_cons(symbol: str) -> pd.DataFrame:
+        captured.append(symbol)
+        return pd.DataFrame(
+            [
+                {
+                    "股票代码": "600519",
+                    "股票简称": "贵州茅台",
+                    "纳入时间": "2021-12-13",
+                    "申万1级": "食品饮料",
+                    "申万2级": "白酒Ⅱ",
+                    "申万3级": "白酒Ⅲ",
+                }
+            ]
+        )
+
+    fake_ak = types.SimpleNamespace(sw_index_third_cons=fake_cons)
+    adapter = AkshareAdapter(ak_module=fake_ak)
+
+    result = adapter.fetch_sw_industry_membership(symbols={"801120.SI"})
+
+    assert result.is_success is True
+    assert result.source_level == DataSourceLevel.C
+    assert captured == ["801120.SI"]
+    assert result.data is not None
+    row = result.data.iloc[0]
+    assert row["stock_code"] == "600519"
+    assert row["classification_type"] == "SW"
+    assert row["level"] == 1
+    assert row["industry_name"] == "食品饮料"
+    assert row["effective_date"] == "2021-12-13"
 
 
 def test_fetch_announcements_standardizes_pdf_columns() -> None:

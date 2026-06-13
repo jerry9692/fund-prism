@@ -158,6 +158,23 @@ def _coalesce_duplicate_columns(data: pd.DataFrame) -> pd.DataFrame:
     return coalesced
 
 
+def benchmark_symbol_to_index_code(symbol: str) -> str:
+    """Convert local benchmark symbol to CSIndex code."""
+    normalized = str(symbol).strip().lower()
+    if len(normalized) == 8 and normalized[:2] in {"sh", "sz"}:
+        return normalized[2:]
+    return normalized.zfill(6) if normalized.isdigit() else normalized
+
+
+def index_code_to_benchmark_symbol(index_code: str) -> str:
+    """Convert a source index code to the local benchmark symbol convention."""
+    code = str(index_code).strip()
+    if len(code) == 8 and code[:2].lower() in {"sh", "sz"}:
+        return code.lower()
+    code = code.zfill(6) if code.isdigit() else code
+    return f"sz{code}" if code.startswith("399") else f"sh{code}"
+
+
 def _manager_id_from_identity(name: str, company_name: str | None = None) -> str:
     identity = f"{company_name or ''}:{name}"
     digest = hashlib.sha1(identity.encode()).hexdigest()[:12]
@@ -266,6 +283,111 @@ class AkshareAdapter(BaseDataAdapter):
                 standardized["daily_return"], errors="coerce"
             ) / 100
         return standardized
+
+    def _success_result_from_canonical(
+        self,
+        entity_type: str,
+        data: pd.DataFrame,
+        started_at: float,
+        *,
+        source_level: DataSourceLevel | None = None,
+    ) -> FetchResult:
+        result = self._success_result(entity_type, data, started_at)
+        if source_level is not None:
+            result.source_level = source_level
+        return result
+
+    def _fetch_index_members(self, symbol: str, *, include_weight: bool) -> FetchResult:
+        index_code = benchmark_symbol_to_index_code(symbol)
+        benchmark_symbol = index_code_to_benchmark_symbol(index_code)
+        func = (
+            self.ak.index_stock_cons_weight_csindex
+            if include_weight
+            else self.ak.index_stock_cons_csindex
+        )
+        started_at = perf_counter()
+        try:
+            data = pd.DataFrame(func(index_code)).rename(
+                columns={
+                    "日期": "snapshot_date",
+                    "指数代码": "index_code",
+                    "指数名称": "index_name",
+                    "成分券代码": "stock_code",
+                    "成分券名称": "stock_name",
+                    "交易所": "exchange",
+                    "权重": "weight_pct",
+                }
+            )
+            for column in ("index_code", "stock_code"):
+                if column in data.columns:
+                    data[column] = data[column].astype(str).str.zfill(6)
+            if "weight_pct" not in data.columns:
+                data["weight_pct"] = None
+            data["benchmark_symbol"] = benchmark_symbol
+            columns = [
+                "benchmark_symbol",
+                "index_code",
+                "index_name",
+                "snapshot_date",
+                "stock_code",
+                "stock_name",
+                "exchange",
+                "weight_pct",
+            ]
+            return self._success_result_from_canonical(
+                "benchmark_index_member",
+                data[columns],
+                started_at,
+                source_level=DataSourceLevel.B,
+            )
+        except Exception as exc:
+            return self._error_result("benchmark_index_member", started_at, exc)
+
+    def _sw_industry_symbols(self) -> list[str]:
+        data = pd.DataFrame(self.ak.sw_index_third_info())
+        if "行业代码" not in data.columns:
+            return []
+        return [
+            f"{code}.SI" if not str(code).endswith(".SI") else str(code)
+            for code in data["行业代码"].dropna().astype(str)
+        ]
+
+    def _normalize_sw_industry_membership(self, frames: list[pd.DataFrame]) -> pd.DataFrame:
+        data = pd.concat(frames, ignore_index=True) if frames else pd.DataFrame()
+        columns = [
+            "stock_code",
+            "stock_name",
+            "classification_type",
+            "classification_version",
+            "level",
+            "industry_code",
+            "industry_name",
+            "parent_industry_code",
+            "effective_date",
+        ]
+        if data.empty:
+            return pd.DataFrame(columns=columns)
+        data = data.rename(
+            columns={
+                "股票代码": "stock_code",
+                "股票简称": "stock_name",
+                "申万1级": "sw_level_1",
+                "纳入时间": "effective_date",
+            }
+        )
+        result = pd.DataFrame()
+        result["stock_code"] = data["stock_code"].astype(str).str.zfill(6)
+        result["stock_name"] = data["stock_name"] if "stock_name" in data.columns else None
+        result["classification_type"] = "SW"
+        result["classification_version"] = "unknown"
+        result["level"] = 1
+        result["industry_code"] = None
+        result["industry_name"] = data["sw_level_1"] if "sw_level_1" in data.columns else None
+        result["parent_industry_code"] = None
+        result["effective_date"] = (
+            data["effective_date"] if "effective_date" in data.columns else date.today()
+        )
+        return result.dropna(subset=["stock_code", "industry_name"])[columns]
 
     def _normalize_fee_detail(self, data: pd.DataFrame) -> pd.DataFrame:
         if not {"fee_type", "fee_name", "fee_value"}.issubset(data.columns):
@@ -470,6 +592,32 @@ class AkshareAdapter(BaseDataAdapter):
             start_date=start_date.strftime("%Y%m%d") if start_date else "",
             end_date=end_date.strftime("%Y%m%d") if end_date else "",
         )
+
+    def fetch_index_members_weight(self, symbol: str) -> FetchResult:
+        """拉取中证指数最新成分权重快照。"""
+        return self._fetch_index_members(symbol, include_weight=True)
+
+    def fetch_index_members(self, symbol: str) -> FetchResult:
+        """拉取中证指数最新成分目录快照。"""
+        return self._fetch_index_members(symbol, include_weight=False)
+
+    def fetch_sw_industry_membership(self, symbols: set[str] | None = None) -> FetchResult:
+        """拉取申万三级行业成分，并标准化为股票行业归属快照。"""
+        started_at = perf_counter()
+        try:
+            target_symbols = sorted(symbols) if symbols else self._sw_industry_symbols()
+            frames = [pd.DataFrame(self.ak.sw_index_third_cons(symbol)) for symbol in target_symbols]
+            data = self._normalize_sw_industry_membership(frames)
+            return self._success_result_from_canonical(
+                "stock_industry_membership",
+                data,
+                started_at,
+                source_level=DataSourceLevel.C,
+            )
+        except Exception as exc:
+            result = self._error_result("stock_industry_membership", started_at, exc)
+            result.source_level = DataSourceLevel.C
+            return result
 
     def fetch_fee_detail(self, fund_code: str) -> FetchResult:
         """拉取基金费率详情。"""

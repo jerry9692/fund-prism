@@ -4,6 +4,7 @@ import csv
 import hashlib
 import json
 import re
+import uuid
 from dataclasses import dataclass
 from datetime import date, datetime
 from pathlib import Path
@@ -13,10 +14,12 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from fund_research.core.enums import DataSourceLevel, DataSourceType, TaskStatus, TaskType
-from fund_research.data.adapters.akshare import AkshareAdapter
+from fund_research.data.adapters.akshare import AkshareAdapter, benchmark_symbol_to_index_code
 from fund_research.data.adapters.base import FetchResult
 from fund_research.data.quality import QualityReport, check_holdings_integrity, check_nav_continuity
 from fund_research.db.models import (
+    BenchmarkIndexMember,
+    BenchmarkIndustryWeight,
     DataSourceSnapshot,
     FundCompany,
     FundDisclosedHoldings,
@@ -28,6 +31,7 @@ from fund_research.db.models import (
     FundScale,
     HolderStructure,
     StockDaily,
+    StockIndustryMembership,
     StyleExposureResult,
     TaskLog,
 )
@@ -210,7 +214,7 @@ def _log_update_task(session: Session, target_entity: str, summary: UpdateSummar
     now = datetime.now()
     session.add(
         TaskLog(
-            task_id=f"{target_entity}:{now.strftime('%Y%m%d%H%M%S%f')}",
+            task_id=f"{target_entity}:{now.strftime('%Y%m%d%H%M%S%f')}:{uuid.uuid4().hex[:8]}",
             task_type=TaskType.DATA_UPDATE.value,
             status=TaskStatus.COMPLETED.value,
             target_entity=target_entity,
@@ -1255,6 +1259,398 @@ def upsert_akshare_index_daily(
 
     if not dry_run:
         _log_update_task(session, "index_daily", summary)
+        session.commit()
+    return summary
+
+
+def _apply_benchmark_index_member_row(
+    session: Session,
+    row: dict,
+    benchmark_symbol: str,
+    source_level: DataSourceLevel,
+    source_name: str,
+    dry_run: bool,
+) -> str:
+    snapshot_date = _parse_date(row.get("snapshot_date"))
+    stock_code = str(row.get("stock_code") or "").strip().zfill(6)
+    if snapshot_date is None or not stock_code:
+        return "skipped"
+
+    symbol = str(row.get("benchmark_symbol") or benchmark_symbol).strip().lower()
+    index_code = str(row.get("index_code") or benchmark_symbol_to_index_code(symbol)).strip().zfill(6)
+    existing = session.scalar(
+        select(BenchmarkIndexMember)
+        .where(BenchmarkIndexMember.benchmark_symbol == symbol)
+        .where(BenchmarkIndexMember.snapshot_date == snapshot_date)
+        .where(BenchmarkIndexMember.stock_code == stock_code)
+    )
+    if dry_run:
+        return "updated" if existing else "inserted"
+    if existing is None:
+        existing = BenchmarkIndexMember(
+            benchmark_symbol=symbol,
+            snapshot_date=snapshot_date,
+            stock_code=stock_code,
+        )
+        session.add(existing)
+        action = "inserted"
+    else:
+        action = "updated"
+
+    existing.index_code = index_code
+    existing.index_name = row.get("index_name")
+    existing.stock_name = row.get("stock_name")
+    existing.exchange = row.get("exchange")
+    existing.weight_pct = _parse_float(row.get("weight_pct"))
+    existing.source_name = source_name
+    existing.source_level = source_level.value
+    existing.raw_payload_hash = row.get("raw_payload_hash")
+    return action
+
+
+def upsert_akshare_benchmark_index_members(
+    session: Session,
+    benchmark_symbols: set[str],
+    *,
+    adapter: AkshareAdapter | None = None,
+    dry_run: bool = False,
+) -> UpdateSummary:
+    """Fetch and upsert benchmark index member weight snapshots."""
+    adapter = adapter or AkshareAdapter()
+    summary = UpdateSummary(
+        entity="benchmark_index_member",
+        source="akshare",
+        requested=len(benchmark_symbols),
+        dry_run=dry_run,
+        warnings=[],
+    )
+    for symbol in sorted(benchmark_symbols):
+        result = adapter.fetch_index_members_weight(symbol)
+        if not dry_run:
+            _snapshot_from_fetch(session, result)
+        if not result.is_success or result.data is None or result.data.empty:
+            summary.skipped += 1
+            summary.warnings.append(result.error_message or f"指数成分权重为空: {symbol}")
+            continue
+        for row in result.data.to_dict(orient="records"):
+            action = _apply_benchmark_index_member_row(
+                session,
+                row,
+                symbol,
+                result.source_level,
+                "akshare.index_stock_cons_weight_csindex",
+                dry_run,
+            )
+            if action == "inserted":
+                summary.inserted += 1
+            elif action == "updated":
+                summary.updated += 1
+            else:
+                summary.skipped += 1
+
+    if not dry_run:
+        _log_update_task(session, "benchmark_index_member", summary)
+        session.commit()
+    return summary
+
+
+def _apply_stock_industry_membership_row(
+    session: Session,
+    row: dict,
+    source_level: DataSourceLevel,
+    source_name: str,
+    dry_run: bool,
+) -> str:
+    stock_code = str(row.get("stock_code") or "").strip().zfill(6)
+    classification_type = str(row.get("classification_type") or "").strip()
+    level = int(_parse_float(row.get("level")) or 0)
+    effective_date = _parse_date(row.get("effective_date")) or date.today()
+    if not stock_code or not classification_type or level <= 0 or not row.get("industry_name"):
+        return "skipped"
+
+    existing = session.scalar(
+        select(StockIndustryMembership)
+        .where(StockIndustryMembership.stock_code == stock_code)
+        .where(StockIndustryMembership.classification_type == classification_type)
+        .where(StockIndustryMembership.level == level)
+        .where(StockIndustryMembership.effective_date == effective_date)
+    )
+    if dry_run:
+        return "updated" if existing else "inserted"
+    if existing is None:
+        existing = StockIndustryMembership(
+            stock_code=stock_code,
+            classification_type=classification_type,
+            level=level,
+            effective_date=effective_date,
+        )
+        session.add(existing)
+        action = "inserted"
+    else:
+        action = "updated"
+
+    existing.stock_name = row.get("stock_name")
+    existing.classification_version = row.get("classification_version")
+    existing.industry_code = row.get("industry_code")
+    existing.industry_name = str(row.get("industry_name")).strip()
+    existing.parent_industry_code = row.get("parent_industry_code")
+    existing.source_name = source_name
+    existing.source_level = source_level.value
+    return action
+
+
+def upsert_akshare_stock_industry_membership(
+    session: Session,
+    industry_symbols: set[str] | None = None,
+    *,
+    adapter: AkshareAdapter | None = None,
+    dry_run: bool = False,
+) -> UpdateSummary:
+    """Fetch and upsert stock industry membership snapshots."""
+    adapter = adapter or AkshareAdapter()
+    summary = UpdateSummary(
+        entity="stock_industry_membership",
+        source="akshare",
+        requested=len(industry_symbols or []),
+        dry_run=dry_run,
+        warnings=[],
+    )
+    result = adapter.fetch_sw_industry_membership(symbols=industry_symbols)
+    if not dry_run:
+        _snapshot_from_fetch(session, result)
+    if not result.is_success or result.data is None or result.data.empty:
+        summary.skipped += 1
+        summary.warnings.append(result.error_message or "股票行业归属为空")
+    else:
+        for row in result.data.to_dict(orient="records"):
+            action = _apply_stock_industry_membership_row(
+                session,
+                row,
+                result.source_level,
+                "akshare.sw_index_third_cons",
+                dry_run,
+            )
+            if action == "inserted":
+                summary.inserted += 1
+            elif action == "updated":
+                summary.updated += 1
+            else:
+                summary.skipped += 1
+
+    if not dry_run:
+        _log_update_task(session, "stock_industry_membership", summary)
+        session.commit()
+    return summary
+
+
+def _latest_benchmark_member_snapshot(
+    session: Session,
+    benchmark_symbol: str,
+    target_date: date,
+) -> date | None:
+    return session.scalar(
+        select(BenchmarkIndexMember.snapshot_date)
+        .where(BenchmarkIndexMember.benchmark_symbol == benchmark_symbol)
+        .where(BenchmarkIndexMember.snapshot_date <= target_date)
+        .order_by(BenchmarkIndexMember.snapshot_date.desc())
+        .limit(1)
+    )
+
+
+def _latest_industry_memberships(
+    session: Session,
+    stock_codes: set[str],
+    target_date: date,
+    classification_type: str,
+    classification_level: int,
+) -> dict[str, StockIndustryMembership]:
+    memberships: dict[str, StockIndustryMembership] = {}
+    for stock_code in sorted(stock_codes):
+        membership = session.scalar(
+            select(StockIndustryMembership)
+            .where(StockIndustryMembership.stock_code == stock_code)
+            .where(StockIndustryMembership.classification_type == classification_type)
+            .where(StockIndustryMembership.level == classification_level)
+            .where(StockIndustryMembership.effective_date <= target_date)
+            .order_by(StockIndustryMembership.effective_date.desc())
+            .limit(1)
+        )
+        if membership is not None:
+            memberships[stock_code] = membership
+    return memberships
+
+
+def _upsert_benchmark_industry_weight_row(
+    session: Session,
+    *,
+    benchmark_symbol: str,
+    snapshot_date: date,
+    classification_type: str,
+    classification_level: int,
+    industry_code: str | None,
+    industry_name: str,
+    weight_pct: float,
+    member_count: int,
+    unmapped_weight_pct: float,
+    coverage_pct: float,
+    source_member_snapshot: date,
+    source_industry_snapshot: date | None,
+    algorithm_version: str,
+    warnings: dict | None,
+    dry_run: bool,
+) -> str:
+    existing = session.scalar(
+        select(BenchmarkIndustryWeight)
+        .where(BenchmarkIndustryWeight.benchmark_symbol == benchmark_symbol)
+        .where(BenchmarkIndustryWeight.snapshot_date == snapshot_date)
+        .where(BenchmarkIndustryWeight.classification_type == classification_type)
+        .where(BenchmarkIndustryWeight.classification_level == classification_level)
+        .where(BenchmarkIndustryWeight.industry_name == industry_name)
+    )
+    if dry_run:
+        return "updated" if existing else "inserted"
+    if existing is None:
+        existing = BenchmarkIndustryWeight(
+            benchmark_symbol=benchmark_symbol,
+            snapshot_date=snapshot_date,
+            classification_type=classification_type,
+            classification_level=classification_level,
+            industry_name=industry_name,
+        )
+        session.add(existing)
+        action = "inserted"
+    else:
+        action = "updated"
+
+    existing.industry_code = industry_code
+    existing.weight_pct = weight_pct
+    existing.member_count = member_count
+    existing.unmapped_weight_pct = unmapped_weight_pct
+    existing.coverage_pct = coverage_pct
+    existing.source_member_snapshot = source_member_snapshot
+    existing.source_industry_snapshot = source_industry_snapshot
+    existing.algorithm_version = algorithm_version
+    existing.warnings = warnings
+    return action
+
+
+def upsert_benchmark_industry_weights(
+    session: Session,
+    benchmark_symbols: set[str],
+    *,
+    target_date: date | None = None,
+    classification_type: str = "SW",
+    classification_level: int = 1,
+    min_coverage_pct: float = 95.0,
+    algorithm_version: str = "benchmark_industry_weight:0.1.0",
+    dry_run: bool = False,
+) -> UpdateSummary:
+    """Aggregate benchmark index members into industry weights."""
+    calc_date = target_date or date.today()
+    summary = UpdateSummary(
+        entity="benchmark_industry_weight",
+        source="local_aggregation",
+        requested=len(benchmark_symbols),
+        dry_run=dry_run,
+        warnings=[],
+    )
+
+    for symbol in sorted(benchmark_symbols):
+        member_snapshot = _latest_benchmark_member_snapshot(session, symbol, calc_date)
+        if member_snapshot is None:
+            summary.skipped += 1
+            summary.warnings.append(f"缺少指数成分权重快照: {symbol}")
+            continue
+
+        member_rows = session.scalars(
+            select(BenchmarkIndexMember)
+            .where(BenchmarkIndexMember.benchmark_symbol == symbol)
+            .where(BenchmarkIndexMember.snapshot_date == member_snapshot)
+        ).all()
+        weighted_members = [
+            row
+            for row in member_rows
+            if row.weight_pct is not None and row.weight_pct > 0 and row.stock_code
+        ]
+        total_weight = sum(float(row.weight_pct or 0.0) for row in weighted_members)
+        if total_weight <= 0:
+            summary.skipped += 1
+            summary.warnings.append(f"指数成分权重为空或无效: {symbol}/{member_snapshot}")
+            continue
+
+        memberships = _latest_industry_memberships(
+            session,
+            {str(row.stock_code) for row in weighted_members},
+            calc_date,
+            classification_type,
+            classification_level,
+        )
+        industry_weights: dict[str, float] = {}
+        industry_codes: dict[str, str | None] = {}
+        industry_counts: dict[str, int] = {}
+        industry_snapshot_dates = [
+            membership.effective_date for membership in memberships.values()
+        ]
+        mapped_weight = 0.0
+        for row in weighted_members:
+            membership = memberships.get(str(row.stock_code))
+            if membership is None:
+                continue
+            weight = float(row.weight_pct or 0.0)
+            mapped_weight += weight
+            industry_weights[membership.industry_name] = (
+                industry_weights.get(membership.industry_name, 0.0) + weight
+            )
+            industry_codes[membership.industry_name] = membership.industry_code
+            industry_counts[membership.industry_name] = industry_counts.get(membership.industry_name, 0) + 1
+
+        coverage_pct = round(mapped_weight / total_weight * 100.0, 6)
+        unmapped_weight_pct = round(max(total_weight - mapped_weight, 0.0), 6)
+        warning_items: list[str] = []
+        if coverage_pct < min_coverage_pct:
+            warning_items.append(
+                f"行业映射覆盖率低于门槛: {coverage_pct:.2f}% < {min_coverage_pct:.2f}%"
+            )
+            summary.warnings.append(f"{symbol} 行业映射覆盖率不足: {coverage_pct:.2f}%")
+        if not 99.0 <= total_weight <= 101.0:
+            warning_items.append(f"指数成分权重和异常: {total_weight:.4f}")
+            summary.warnings.append(f"{symbol} 指数成分权重和异常: {total_weight:.4f}")
+        if mapped_weight <= 0:
+            summary.skipped += 1
+            summary.warnings.append(f"无可映射行业成分: {symbol}/{member_snapshot}")
+            continue
+
+        source_industry_snapshot = max(industry_snapshot_dates) if industry_snapshot_dates else None
+        row_warnings = {"items": warning_items} if warning_items else None
+        for industry_name, raw_weight in sorted(industry_weights.items()):
+            normalized_weight = round(raw_weight / mapped_weight * 100.0, 6)
+            action = _upsert_benchmark_industry_weight_row(
+                session,
+                benchmark_symbol=symbol,
+                snapshot_date=member_snapshot,
+                classification_type=classification_type,
+                classification_level=classification_level,
+                industry_code=industry_codes.get(industry_name),
+                industry_name=industry_name,
+                weight_pct=normalized_weight,
+                member_count=industry_counts[industry_name],
+                unmapped_weight_pct=unmapped_weight_pct,
+                coverage_pct=coverage_pct,
+                source_member_snapshot=member_snapshot,
+                source_industry_snapshot=source_industry_snapshot,
+                algorithm_version=algorithm_version,
+                warnings=row_warnings,
+                dry_run=dry_run,
+            )
+            if action == "inserted":
+                summary.inserted += 1
+            elif action == "updated":
+                summary.updated += 1
+            else:
+                summary.skipped += 1
+
+    if not dry_run:
+        _log_update_task(session, "benchmark_industry_weight", summary)
         session.commit()
     return summary
 
