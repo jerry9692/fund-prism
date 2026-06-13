@@ -75,3 +75,4 @@ def test_update_help_includes_stock_industry_stability_options() -> None:
     assert "--industry-symbol" in result.output
     assert "--request-interval" in result.output
     assert "--retry" in result.output
+    assert "--industry-batch-size" in result.output

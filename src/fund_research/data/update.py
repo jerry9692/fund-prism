@@ -1399,6 +1399,74 @@ def _apply_stock_industry_membership_row(
     return action
 
 
+def _chunked_symbols(symbols: list[str], batch_size: int) -> list[list[str]]:
+    if batch_size <= 0:
+        return [symbols]
+    return [symbols[index : index + batch_size] for index in range(0, len(symbols), batch_size)]
+
+
+def _sw_industry_symbol_cache_path(cache_dir: Path) -> Path:
+    return cache_dir / "stock_industry" / "sw_third_symbols.json"
+
+
+def _read_sw_industry_symbol_cache(cache_dir: Path) -> list[str]:
+    cache_path = _sw_industry_symbol_cache_path(cache_dir)
+    if not cache_path.exists():
+        return []
+    try:
+        payload = json.loads(cache_path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return []
+    symbols = payload.get("symbols", []) if isinstance(payload, dict) else []
+    return sorted({str(symbol).strip() for symbol in symbols if str(symbol).strip()})
+
+
+def _write_sw_industry_symbol_cache(
+    cache_dir: Path,
+    symbols: list[str],
+    warnings: list[str],
+) -> None:
+    cache_path = _sw_industry_symbol_cache_path(cache_dir)
+    payload = {
+        "fetched_at": datetime.now().isoformat(timespec="seconds"),
+        "source": "akshare.sw_index_third_info",
+        "symbols": sorted(symbols),
+    }
+    try:
+        cache_path.parent.mkdir(parents=True, exist_ok=True)
+        cache_path.write_text(
+            json.dumps(payload, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+    except OSError as exc:
+        warnings.append(f"申万三级行业列表缓存写入失败: {exc}")
+
+
+def _resolve_sw_industry_symbols(
+    adapter: AkshareAdapter,
+    cache_dir: Path,
+    warnings: list[str],
+) -> list[str]:
+    try:
+        symbols = sorted({symbol.strip() for symbol in adapter._sw_industry_symbols() if symbol.strip()})
+    except Exception as exc:
+        cached = _read_sw_industry_symbol_cache(cache_dir)
+        if cached:
+            warnings.append(f"申万三级行业列表实时获取失败，使用本地缓存: {exc}")
+            return cached
+        raise RuntimeError(f"申万三级行业列表实时获取失败且无本地缓存: {exc}") from exc
+
+    if symbols:
+        _write_sw_industry_symbol_cache(cache_dir, symbols, warnings)
+        return symbols
+
+    cached = _read_sw_industry_symbol_cache(cache_dir)
+    if cached:
+        warnings.append("申万三级行业列表实时获取为空，使用本地缓存")
+        return cached
+    raise RuntimeError("申万三级行业列表实时获取为空且无本地缓存")
+
+
 def upsert_akshare_stock_industry_membership(
     session: Session,
     industry_symbols: set[str] | None = None,
@@ -1406,43 +1474,73 @@ def upsert_akshare_stock_industry_membership(
     adapter: AkshareAdapter | None = None,
     request_interval_seconds: float = 0.0,
     max_retries: int = 0,
+    industry_batch_size: int = 0,
+    symbol_cache_dir: Path | None = None,
     dry_run: bool = False,
 ) -> UpdateSummary:
     """Fetch and upsert stock industry membership snapshots."""
     adapter = adapter or AkshareAdapter()
+    target_symbols = sorted(industry_symbols) if industry_symbols else None
     summary = UpdateSummary(
         entity="stock_industry_membership",
         source="akshare",
-        requested=len(industry_symbols or []),
+        requested=len(target_symbols or []),
         dry_run=dry_run,
         warnings=[],
     )
-    result = adapter.fetch_sw_industry_membership(
-        symbols=industry_symbols,
-        request_interval_seconds=request_interval_seconds,
-        max_retries=max_retries,
-    )
-    if not dry_run:
-        _snapshot_from_fetch(session, result)
-    summary.warnings.extend(result.warnings)
-    if not result.is_success or result.data is None or result.data.empty:
-        summary.skipped += 1
-        summary.warnings.append(result.error_message or "股票行业归属为空")
-    else:
-        for row in result.data.to_dict(orient="records"):
-            action = _apply_stock_industry_membership_row(
-                session,
-                row,
-                result.source_level,
-                "akshare.sw_index_third_cons",
-                dry_run,
+
+    if target_symbols is None and symbol_cache_dir is not None:
+        try:
+            target_symbols = _resolve_sw_industry_symbols(
+                adapter,
+                symbol_cache_dir,
+                summary.warnings,
             )
-            if action == "inserted":
-                summary.inserted += 1
-            elif action == "updated":
-                summary.updated += 1
-            else:
-                summary.skipped += 1
+            summary.requested = len(target_symbols)
+        except RuntimeError as exc:
+            summary.skipped += 1
+            summary.warnings.append(str(exc))
+            if not dry_run:
+                _log_update_task(session, "stock_industry_membership", summary)
+                session.commit()
+            return summary
+
+    batches: list[list[str] | None] = (
+        [None]
+        if target_symbols is None
+        else _chunked_symbols(target_symbols, industry_batch_size)
+    )
+
+    for batch in batches:
+        result = adapter.fetch_sw_industry_membership(
+            symbols=set(batch) if batch is not None else None,
+            request_interval_seconds=request_interval_seconds,
+            max_retries=max_retries,
+        )
+        if not dry_run:
+            _snapshot_from_fetch(session, result)
+        summary.warnings.extend(result.warnings)
+        if not result.is_success or result.data is None or result.data.empty:
+            summary.skipped += len(batch or []) or 1
+            summary.warnings.append(result.error_message or "股票行业归属为空")
+        else:
+            for row in result.data.to_dict(orient="records"):
+                action = _apply_stock_industry_membership_row(
+                    session,
+                    row,
+                    result.source_level,
+                    "akshare.sw_index_third_cons",
+                    dry_run,
+                )
+                if action == "inserted":
+                    summary.inserted += 1
+                elif action == "updated":
+                    summary.updated += 1
+                else:
+                    summary.skipped += 1
+
+        if not dry_run:
+            session.commit()
 
     if not dry_run:
         _log_update_task(session, "stock_industry_membership", summary)

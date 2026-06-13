@@ -349,6 +349,63 @@ class FakeAkshareAdapter:
         )
 
 
+class BatchedStockIndustryAdapter(FakeAkshareAdapter):
+    """Fake adapter that returns symbol-specific stock industry rows."""
+
+    def __init__(self) -> None:
+        self.calls: list[set[str]] = []
+
+    def _sw_industry_symbols(self) -> list[str]:
+        return ["801120.SI", "801780.SI"]
+
+    def fetch_sw_industry_membership(
+        self,
+        symbols: set[str] | None = None,
+        *,
+        request_interval_seconds: float = 0.0,
+        max_retries: int = 0,
+    ) -> FetchResult:
+        selected_symbols = set(symbols or [])
+        self.calls.append(selected_symbols)
+        rows_by_symbol = {
+            "801120.SI": {
+                "stock_code": "600519",
+                "stock_name": "贵州茅台",
+                "classification_type": "SW",
+                "classification_version": "2021",
+                "level": 1,
+                "industry_code": "801120",
+                "industry_name": "食品饮料",
+                "parent_industry_code": None,
+                "effective_date": "2026-06-01",
+            },
+            "801780.SI": {
+                "stock_code": "000001",
+                "stock_name": "平安银行",
+                "classification_type": "SW",
+                "classification_version": "2021",
+                "level": 1,
+                "industry_code": "801780",
+                "industry_name": "银行",
+                "parent_industry_code": None,
+                "effective_date": "2026-06-01",
+            },
+        }
+        result = self._result(
+            "stock_industry_membership",
+            [rows_by_symbol[symbol] for symbol in sorted(selected_symbols)],
+        )
+        result.source_level = DataSourceLevel.C
+        return result
+
+
+class CachedOnlyStockIndustryAdapter(BatchedStockIndustryAdapter):
+    """Fake adapter whose live SW symbol list endpoint is unavailable."""
+
+    def _sw_industry_symbols(self) -> list[str]:
+        raise RuntimeError("live endpoint unavailable")
+
+
 class NoPDFAnnouncementAdapter(FakeAkshareAdapter):
     """Fake adapter with announcements but no PDF link."""
 
@@ -962,6 +1019,61 @@ def test_upsert_akshare_stock_industry_membership_writes_sw_level_one_rows(
     row_count = test_session.scalar(select(func.count()).select_from(StockIndustryMembership))
     assert second.updated == 2
     assert row_count == 2
+
+
+def test_upsert_akshare_stock_industry_membership_batches_and_caches_symbols(
+    test_session: Session,
+    tmp_path: Path,
+) -> None:
+    """Full stock-industry updates should batch commits and cache the SW symbol list."""
+    adapter = BatchedStockIndustryAdapter()
+
+    summary = upsert_akshare_stock_industry_membership(
+        test_session,
+        None,
+        adapter=adapter,
+        industry_batch_size=1,
+        symbol_cache_dir=tmp_path,
+    )
+    rows = test_session.scalars(
+        select(StockIndustryMembership).order_by(StockIndustryMembership.stock_code)
+    ).all()
+    cache_path = tmp_path / "stock_industry" / "sw_third_symbols.json"
+
+    assert summary.requested == 2
+    assert summary.inserted == 2
+    assert adapter.calls == [{"801120.SI"}, {"801780.SI"}]
+    assert len(rows) == 2
+    assert cache_path.exists()
+    assert "801120.SI" in cache_path.read_text(encoding="utf-8")
+    assert "801780.SI" in cache_path.read_text(encoding="utf-8")
+
+
+def test_upsert_akshare_stock_industry_membership_uses_cached_symbols_on_live_failure(
+    test_session: Session,
+    tmp_path: Path,
+) -> None:
+    """A cached SW symbol list should let stock-industry resume when live listing fails."""
+    cache_path = tmp_path / "stock_industry" / "sw_third_symbols.json"
+    cache_path.parent.mkdir(parents=True)
+    cache_path.write_text(
+        '{"symbols": ["801120.SI"], "source": "test"}',
+        encoding="utf-8",
+    )
+    adapter = CachedOnlyStockIndustryAdapter()
+
+    summary = upsert_akshare_stock_industry_membership(
+        test_session,
+        None,
+        adapter=adapter,
+        industry_batch_size=1,
+        symbol_cache_dir=tmp_path,
+    )
+
+    assert summary.requested == 1
+    assert summary.inserted == 1
+    assert adapter.calls == [{"801120.SI"}]
+    assert any("使用本地缓存" in warning for warning in summary.warnings or [])
 
 
 def test_upsert_benchmark_industry_weights_aggregates_member_weights(

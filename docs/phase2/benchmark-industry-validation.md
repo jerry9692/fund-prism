@@ -153,6 +153,69 @@ stock_industry_membership: 649
 - 乐咕乐股页面声明其数据来自公开数据并由自动收集更新，不能作为 A/B 级权威行业源。当前仍应按 C 级处理。
 - 全量 336 个三级行业直接遍历会触发 429，不能用无节流批处理作为默认更新方式。
 
+### 3.2.1 全量 stock-industry 跑数准备
+
+2026-06-13 晚间验证发现，慢速全量抓取仍可能被本地会话超时中断；同时
+`akshare.sw_index_third_info()` 在异常页面形态下可能报
+`AttributeError: 'NoneType' object has no attribute 'find_all'`，导致全量任务还没进入分行业抓取就失败。
+
+已调整更新链路:
+
+- CLI 默认把申万三级行业 symbol 列表缓存到 `data/cache/stock_industry/sw_third_symbols.json`。
+- 不指定 `--industry-symbol` 时，优先实时获取并刷新缓存；实时获取失败但缓存存在时，使用缓存继续跑。
+- `stock-industry` 默认按 20 个行业一批提交，批次之间已经写入数据库；中途超时后可重复执行同一命令续跑，已有唯一键会转为 update。
+
+明天推荐先跑小批次慢速全量:
+
+```powershell
+.venv\Scripts\fund-research.exe update `
+  --domains stock-industry `
+  --request-interval 2 `
+  --retry 2 `
+  --industry-batch-size 10 `
+  --db-path data\benchmark_validation.sqlite
+```
+
+如果仍频繁超时，继续降低批次:
+
+```powershell
+.venv\Scripts\fund-research.exe update `
+  --domains stock-industry `
+  --request-interval 3 `
+  --retry 3 `
+  --industry-batch-size 5 `
+  --db-path data\benchmark_validation.sqlite
+```
+
+跑完后检查:
+
+```powershell
+.venv\Scripts\python.exe -c "import sqlite3; db='data/benchmark_validation.sqlite'; con=sqlite3.connect(db); print(con.execute('select count(*), count(distinct industry_name) from stock_industry_membership').fetchone()); print(con.execute('select industry_name, count(*) from stock_industry_membership group by industry_name order by count(*) desc limit 10').fetchall())"
+```
+
+2026-06-13 收尾 smoke:
+
+```powershell
+.venv\Scripts\fund-research.exe update `
+  --domains stock-industry `
+  --industry-symbol 801120.SI `
+  --request-interval 1 `
+  --retry 1 `
+  --industry-batch-size 1 `
+  --db-path data\benchmark_validation.sqlite
+```
+
+结果: `requested=1, inserted=0, updated=123, skipped=0, warnings=[]`。
+库内仍为 `stock_industry_membership=(649 rows, 3 industries)`，说明单行业
+smoke 未制造重复行，upsert 可重复执行。
+
+明天固定顺序:
+
+1. 先按上方推荐命令慢速全量跑 `stock-industry`，优先使用 `--industry-batch-size 10`。
+2. 跑完检查 `stock_industry_membership` 行数、行业数和前 10 大行业行数。
+3. 再跑 `benchmark-industry` 重新聚合 `sh000300`、`sh000905`。
+4. 最后做真实行业分布对照验收；验收通过前，不要把 `benchmark_industry_weight` 用作高置信默认结论。
+
 ### 3.3 聚合后的 benchmark_industry_weight
 
 命令一:

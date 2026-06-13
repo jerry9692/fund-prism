@@ -166,6 +166,10 @@ RetryOption = Annotated[
     int,
     typer.Option("--retry", help="单个数据项失败后的重试次数，主要用于 stock-industry"),
 ]
+IndustryBatchSizeOption = Annotated[
+    int,
+    typer.Option("--industry-batch-size", help="stock-industry 每批提交的行业数量，0 表示不分批"),
+]
 
 
 def _selected_update_entities(entity: str, domains: str | None) -> list[str]:
@@ -442,6 +446,7 @@ def update(
     year: YearOption = None,
     request_interval: RequestIntervalOption = 0.0,
     retry: RetryOption = 0,
+    industry_batch_size: IndustryBatchSizeOption = 20,
 ) -> None:
     """更新本地数据。"""
     from sqlalchemy.orm import sessionmaker
@@ -477,7 +482,8 @@ def update(
         console.print(f"[red]暂不支持的数据类型:[/] {exc}")
         raise typer.Exit(code=1) from None
 
-    sample = sample or get_settings().sample_funds_path_absolute
+    settings = get_settings()
+    sample = sample or settings.sample_funds_path_absolute
     if not sample.exists():
         console.print(f"[red]样本文件不存在:[/] {sample}")
         raise typer.Exit(code=1)
@@ -628,6 +634,8 @@ def update(
                     set(industry_symbol) if industry_symbol else None,
                     request_interval_seconds=max(request_interval, 0.0),
                     max_retries=max(retry, 0),
+                    industry_batch_size=max(industry_batch_size, 0),
+                    symbol_cache_dir=settings.cache_dir_absolute,
                     dry_run=dry_run,
                 )
             )
