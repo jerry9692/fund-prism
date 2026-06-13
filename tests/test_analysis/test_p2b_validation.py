@@ -20,6 +20,7 @@ from fund_research.analysis.simulated_holding import run_simulation
 from fund_research.db.models import (
     ExperimentResult,
     FundDisclosedHoldings,
+    FundMain,
     FundNAV,
     StockDaily,
 )
@@ -427,6 +428,67 @@ class TestRunExperimentPipeline:
         if results[0].is_success:
             assert "estimated_total_allocation_effect" in m
             assert "estimated_total_selection_effect" in m
+
+    def test_run_dynamic_attribution_resolves_benchmark_from_fund_profile(
+        self,
+        test_client: TestClient,
+        test_session: Session,
+    ):
+        """未显式传 benchmark_symbol 时，应从 FundMain.benchmark 轻量识别基准。"""
+        test_session.add(
+            FundMain(
+                fund_code="000001",
+                short_name="测试基金",
+                full_name="测试基金",
+                benchmark="中证500指数收益率 * 95% + 银行活期存款利率 * 5%",
+                data_source_level="LOCAL",
+            )
+        )
+        for i in range(4):
+            test_session.add(FundDisclosedHoldings(
+                fund_code="000001", report_date=date(2024, 1, 1),
+                security_code=f"{i:06d}", asset_type="股票",
+                weight_pct=25.0, industry="tech" if i < 2 else "finance",
+                rank_in_holdings=i + 1, data_source_level="LOCAL",
+            ))
+            for day in range(6):
+                test_session.add(StockDaily(
+                    stock_code=f"{i:06d}",
+                    trade_date=date(2024, 1, 1) + timedelta(days=day),
+                    close_price=100.0 + day,
+                    daily_return=0.01,
+                    data_source_level="LOCAL",
+                ))
+        for day in range(6):
+            test_session.add(StockDaily(
+                stock_code="sh000905",
+                trade_date=date(2024, 1, 1) + timedelta(days=day),
+                close_price=6000.0 + day,
+                daily_return=0.005,
+                data_source_level="LOCAL",
+            ))
+        test_session.commit()
+
+        create_resp = test_client.post("/api/v2/experiments", json={
+            "experiment_name": "attr-auto-benchmark",
+            "algorithm_name": "dynamic_attribution",
+            "parameters": {},
+            "sample_fund_codes": ["000001"],
+        })
+        exp_id = create_resp.json()["data"]["id"]
+
+        run_resp = test_client.post(f"/api/v2/experiments/{exp_id}/run")
+        assert run_resp.status_code == 200
+        assert run_resp.json()["data"]["status"] == "completed"
+
+        from sqlalchemy import select as sa_select
+        result = test_session.scalars(
+            sa_select(ExperimentResult).where(ExperimentResult.experiment_id == int(exp_id))
+        ).one()
+        metrics = result.metrics or {}
+        assert metrics.get("benchmark_symbol") == "sh000905"
+        assert metrics.get("benchmark_source") == "fund_benchmark:中证500"
+        assert metrics.get("uses_real_benchmark_returns") is True
 
     def test_run_dynamic_attribution_without_benchmark_data_fails(
         self,

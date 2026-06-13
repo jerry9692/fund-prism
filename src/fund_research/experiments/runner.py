@@ -14,12 +14,18 @@ from fund_research.analysis.simulated_holding import backtest_disclosure
 from fund_research.db.models import (
     AlgorithmExperiment,
     FundDisclosedHoldings,
+    FundMain,
     FundNAV,
     StockDaily,
 )
 from fund_research.experiments.manager import record_result
 
 DEFAULT_ATTRIBUTION_BENCHMARK_SYMBOL = "sh000300"
+BENCHMARK_TEXT_SYMBOL_MAP = (
+    ("沪深300", "sh000300"),
+    ("中证500", "sh000905"),
+    ("中证1000", "sh000852"),
+)
 MIN_ATTRIBUTION_RETURN_OBSERVATIONS = 3
 MIN_ATTRIBUTION_STOCK_WEIGHT_COVERAGE = 0.8
 
@@ -302,9 +308,6 @@ def _run_dynamic_attribution_batch(
 ) -> list[dict]:
     """Run dynamic attribution experiments and persist per-fund results."""
     params = exp.parameters or {}
-    benchmark_symbol = str(
-        params.get("benchmark_symbol") or DEFAULT_ATTRIBUTION_BENCHMARK_SYMBOL
-    ).strip()
     min_observations = int(
         params.get("min_return_observations") or MIN_ATTRIBUTION_RETURN_OBSERVATIONS
     )
@@ -334,6 +337,7 @@ def _run_dynamic_attribution_batch(
                 continue
 
             stock_codes = {str(holding.security_code) for holding in stock_holdings}
+            benchmark_symbol, benchmark_source = _resolve_benchmark_symbol(db, fund_code, params)
             market_rows = db.scalars(
                 sa_select(StockDaily)
                 .where(StockDaily.stock_code.in_(stock_codes | {benchmark_symbol}))
@@ -423,6 +427,7 @@ def _run_dynamic_attribution_batch(
                 "period_count": len(attr_result.periods),
                 "method": "BHB",
                 "benchmark_symbol": benchmark_symbol,
+                "benchmark_source": benchmark_source,
                 "uses_proxy_benchmark": False,
                 "uses_proxy_sector_returns": False,
                 "uses_proxy_benchmark_weights": True,
@@ -464,6 +469,25 @@ def _run_dynamic_attribution_batch(
             results.append(_failure_result(fund_code, str(exc)[:500]))
 
     return results
+
+
+def _resolve_benchmark_symbol(
+    db: Session,
+    fund_code: str,
+    parameters: dict | None,
+) -> tuple[str, str]:
+    """Resolve dynamic attribution benchmark from explicit params or fund profile text."""
+    configured = str((parameters or {}).get("benchmark_symbol") or "").strip()
+    if configured:
+        return configured, "parameter"
+
+    fund = db.scalar(sa_select(FundMain).where(FundMain.fund_code == fund_code))
+    benchmark_text = fund.benchmark if fund and fund.benchmark else ""
+    for keyword, symbol in BENCHMARK_TEXT_SYMBOL_MAP:
+        if keyword in benchmark_text:
+            return symbol, f"fund_benchmark:{keyword}"
+
+    return DEFAULT_ATTRIBUTION_BENCHMARK_SYMBOL, "default"
 
 
 def _market_rows_to_return_df(rows: list[StockDaily]) -> pd.DataFrame:

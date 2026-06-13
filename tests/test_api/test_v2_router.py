@@ -36,6 +36,37 @@ def test_create_experiment_accepts_json_dates(
     assert exp.backtest_end == date(2024, 12, 31)
 
 
+def test_create_dynamic_attribution_experiment_stores_parameters(
+    test_client: TestClient,
+    test_session: Session,
+) -> None:
+    response = test_client.post(
+        "/api/v2/experiments",
+        json={
+            "experiment_name": "动态归因参数测试",
+            "algorithm_name": "dynamic_attribution",
+            "algorithm_version": "0.1.0",
+            "parameters": {
+                "benchmark_symbol": "sh000905",
+                "min_return_observations": 5,
+            },
+            "sample_fund_codes": ["000001"],
+        },
+    )
+
+    payload = response.json()
+    assert response.status_code == 200
+    assert payload["conclusion_status"] == "computed"
+
+    exp = test_session.get(AlgorithmExperiment, int(payload["data"]["id"]))
+    assert exp is not None
+    assert exp.parameters == {
+        "benchmark_symbol": "sh000905",
+        "min_return_observations": 5,
+    }
+    assert isinstance(exp.parameters["min_return_observations"], int)
+
+
 def test_record_experiment_result_accepts_json_date(
     test_client: TestClient,
 ) -> None:

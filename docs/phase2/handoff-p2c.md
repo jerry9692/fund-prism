@@ -1,7 +1,7 @@
 # P2C Handoff — 真实行业/基准收益接入
 
-日期: 2026-06-10 (更新 2026-06-12)
-分支: `codex/p2c-real-benchmark-data`
+日期: 2026-06-10 (更新 2026-06-13)
+分支: 已合并到 `main`
 基线: `main` 已包含 P2B 修复
 
 ## 1. 本轮目标
@@ -20,6 +20,7 @@
 文件: `src/fund_research/experiments/runner.py`
 
 - `dynamic_attribution` 支持实验参数 `benchmark_symbol`，缺省为 `sh000300`
+- 未显式传 `benchmark_symbol` 时，会从 `FundMain.benchmark` 轻量识别 `沪深300`、`中证500`、`中证1000`
 - 读取基金披露股票持仓，按报告期把 `weight_pct` 转为 0-1 权重并归一化
 - 读取持仓股票和基准指数的 `StockDaily` 行情
 - 若 `daily_return` 缺失，会从 `close_price` 回算
@@ -46,6 +47,7 @@
 - `uses_proxy_benchmark = false`
 - `uses_proxy_benchmark_weights = true`
 - `benchmark_symbol`
+- `benchmark_source`
 - `normalized_weight_sum_by_report`
 - `min_stock_weight_coverage`
 - `return_observation_count_by_report`
@@ -67,8 +69,17 @@
   - `min_return_observations` — 最小收益观测样本数，默认 `3`，number 类型
   - 选择其他算法时不显示这些字段，参数传 `{}`
 
-## 5. 下一步
+## 5. 已完成（2026-06-13）
+
+- **P2C 合并**: `codex/p2c-real-benchmark-data` 已合并并推送到 `main`
+- **参数落库测试**: API 创建 `dynamic_attribution` 实验时会保存 `benchmark_symbol` 和 `min_return_observations`
+- **轻量基准自动解析**:
+  - 参数 `benchmark_symbol` 优先
+  - 其次从 `FundMain.benchmark` 识别 `沪深300 -> sh000300`、`中证500 -> sh000905`、`中证1000 -> sh000852`
+  - 识别失败时回退默认 `sh000300`
+
+## 6. 下一步
 
 1. 接入真实基准行业权重：指数成分、行业分类、成分权重
-2. 根据基金 `FundMain.benchmark` 或用户 review 配置自动解析 `benchmark_symbol`
+2. 扩展 `FundMain.benchmark` 解析映射，并增加用户 review 配置覆盖机制
 3. 把 `dynamic_attribution_result` 表也接入实验结果持久化，而不是只写 `experiment_result.metrics`
