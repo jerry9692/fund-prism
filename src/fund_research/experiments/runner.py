@@ -19,6 +19,10 @@ from fund_research.db.models import (
 )
 from fund_research.experiments.manager import record_result
 
+DEFAULT_ATTRIBUTION_BENCHMARK_SYMBOL = "sh000300"
+MIN_ATTRIBUTION_RETURN_OBSERVATIONS = 3
+MIN_ATTRIBUTION_STOCK_WEIGHT_COVERAGE = 0.8
+
 
 def dispatch_run(db: Session, exp: AlgorithmExperiment) -> list[dict]:
     """Dispatch an experiment to the matching algorithm runner."""
@@ -297,7 +301,13 @@ def _run_dynamic_attribution_batch(
     fund_codes: list[str],
 ) -> list[dict]:
     """Run dynamic attribution experiments and persist per-fund results."""
-    proxy_warning = "P2B 近似：行业收益和基准收益使用基金收益代理，不能作为正式归因结论"
+    params = exp.parameters or {}
+    benchmark_symbol = str(
+        params.get("benchmark_symbol") or DEFAULT_ATTRIBUTION_BENCHMARK_SYMBOL
+    ).strip()
+    min_observations = int(
+        params.get("min_return_observations") or MIN_ATTRIBUTION_RETURN_OBSERVATIONS
+    )
     results: list[dict] = []
 
     for fund_code in fund_codes:
@@ -313,67 +323,88 @@ def _run_dynamic_attribution_batch(
                 results.append(_failure_result(fund_code, "无持仓数据"))
                 continue
 
-            weight_rows = []
+            stock_holdings = [
+                holding
+                for holding in holdings_rows
+                if holding.asset_type == "股票" and holding.security_code
+            ]
+            if not stock_holdings:
+                _record_failure(db, exp.id, fund_code, "无股票持仓数据")
+                results.append(_failure_result(fund_code, "无股票持仓数据"))
+                continue
+
+            stock_codes = {str(holding.security_code) for holding in stock_holdings}
+            market_rows = db.scalars(
+                sa_select(StockDaily)
+                .where(StockDaily.stock_code.in_(stock_codes | {benchmark_symbol}))
+                .order_by(StockDaily.stock_code, StockDaily.trade_date)
+            ).all()
+            market_df = _market_rows_to_return_df(market_rows)
+            if market_df.empty:
+                error = "无持仓股票或基准指数行情数据"
+                _record_failure(db, exp.id, fund_code, error)
+                results.append(_failure_result(fund_code, error))
+                continue
+
+            benchmark_returns = market_df[market_df["stock_code"] == benchmark_symbol]
+            if benchmark_returns.empty:
+                error = f"缺少基准指数行情: {benchmark_symbol}"
+                _record_failure(db, exp.id, fund_code, error)
+                results.append(_failure_result(fund_code, error))
+                continue
+
+            holding_stock_rows = []
             for holding in holdings_rows:
+                if holding.asset_type != "股票" or not holding.security_code:
+                    continue
                 sector = holding.industry or "未分类"
-                weight_rows.append({
+                holding_stock_rows.append({
                     "report_date": holding.report_date,
                     "sector": sector,
+                    "stock_code": str(holding.security_code),
                     "port_weight": (holding.weight_pct or 0.0) / 100.0,
                     "bench_weight": (holding.weight_pct or 0.0) / 100.0,
                 })
 
-            holdings_weight_df = pd.DataFrame(weight_rows)
-            holdings_weight_df = holdings_weight_df.groupby(
+            holding_stock_df = pd.DataFrame(holding_stock_rows)
+            for weight_column in ("port_weight", "bench_weight"):
+                report_totals = holding_stock_df.groupby("report_date")[weight_column].transform("sum")
+                holding_stock_df[weight_column] = (
+                    holding_stock_df[weight_column] / report_totals.where(report_totals > 0, 1.0)
+                )
+
+            holdings_weight_df = holding_stock_df.groupby(
                 ["report_date", "sector"],
                 as_index=False,
-            ).sum()
-            holdings_weight_df["bench_weight"] = holdings_weight_df["port_weight"]
-            for weight_column in ("port_weight", "bench_weight"):
-                report_totals = holdings_weight_df.groupby("report_date")[weight_column].transform("sum")
-                holdings_weight_df[weight_column] = (
-                    holdings_weight_df[weight_column] / report_totals.where(report_totals > 0, 1.0)
-                )
+            )[["port_weight", "bench_weight"]].sum()
             normalized_weight_sums = {
                 str(report_date): round(float(weight_sum), 6)
                 for report_date, weight_sum in holdings_weight_df.groupby("report_date")["port_weight"].sum().items()
             }
 
-            nav_rows = db.scalars(
-                sa_select(FundNAV)
-                .where(FundNAV.fund_code == fund_code)
-                .order_by(FundNAV.trade_date)
-            ).all()
-            if nav_rows:
-                nav_df = pd.DataFrame([
-                    {"trade_date": row.trade_date, "daily_return": row.daily_return}
-                    for row in nav_rows
-                ])
-                nav_df["trade_date"] = pd.to_datetime(nav_df["trade_date"])
-                nav_df = nav_df.dropna(subset=["daily_return"])
-                return_rows = []
-                for report_date in holdings_weight_df["report_date"].unique():
-                    report_ts = pd.Timestamp(report_date)
-                    next_ts = report_ts + pd.DateOffset(months=3)
-                    window = nav_df[
-                        (nav_df["trade_date"] >= report_ts)
-                        & (nav_df["trade_date"] < next_ts)
-                    ]
-                    if window.empty:
-                        continue
-                    period_return = (1 + window["daily_return"]).prod() - 1
-                    for _idx, weight_row in holdings_weight_df[
-                        holdings_weight_df["report_date"] == report_date
-                    ].iterrows():
-                        return_rows.append({
-                            "report_date": report_date,
-                            "sector": weight_row["sector"],
-                            "port_return": period_return,
-                            "bench_return": period_return * 0.9,
-                        })
-                sector_return_df = pd.DataFrame(return_rows) if return_rows else pd.DataFrame()
-            else:
-                sector_return_df = pd.DataFrame()
+            sector_return_df, return_stats, return_warnings = _build_real_sector_return_df(
+                holding_stock_df,
+                market_df,
+                benchmark_symbol=benchmark_symbol,
+                min_observations=min_observations,
+            )
+            if sector_return_df.empty:
+                error = "真实行业/基准收益样本不足"
+                warnings = return_warnings or ["未能从持仓股票行情和基准指数行情构造有效归因周期"]
+                _record_failure(db, exp.id, fund_code, error, warnings=warnings)
+                results.append(_failure_result(fund_code, error, warnings))
+                continue
+
+            min_weight_coverage = return_stats.get("min_stock_weight_coverage", 0.0)
+            if min_weight_coverage < MIN_ATTRIBUTION_STOCK_WEIGHT_COVERAGE:
+                error = f"持仓股票行情覆盖不足: {min_weight_coverage:.1%}"
+                warnings = [
+                    *return_warnings,
+                    f"要求覆盖率 >= {MIN_ATTRIBUTION_STOCK_WEIGHT_COVERAGE:.0%}",
+                ]
+                _record_failure(db, exp.id, fund_code, error, warnings=warnings)
+                results.append(_failure_result(fund_code, error, warnings))
+                continue
 
             attr_result = run_attribution(
                 fund_code,
@@ -391,13 +422,25 @@ def _run_dynamic_attribution_batch(
                 "estimated_total_residual": attr_result.total_residual,
                 "period_count": len(attr_result.periods),
                 "method": "BHB",
-                "uses_proxy_benchmark": True,
-                "uses_proxy_sector_returns": True,
+                "benchmark_symbol": benchmark_symbol,
+                "uses_proxy_benchmark": False,
+                "uses_proxy_sector_returns": False,
+                "uses_proxy_benchmark_weights": True,
+                "uses_real_benchmark_returns": True,
+                "uses_real_sector_returns": True,
                 "normalized_weight_sum_by_report": normalized_weight_sums,
+                "min_stock_weight_coverage": min_weight_coverage,
+                "return_observation_count_by_report": return_stats.get(
+                    "return_observation_count_by_report", {}
+                ),
             }
             is_success = len(attr_result.periods) > 0 and abs(attr_result.total_residual) < 0.05
             error_message = None if is_success else "归因残差偏高"
-            warnings = [*attr_result.warnings, proxy_warning]
+            warnings = [
+                *attr_result.warnings,
+                *return_warnings,
+                "P2C 限制：基准行业权重暂用基金披露行业权重，尚未接入真实基准成分行业权重",
+            ]
 
             record_result(
                 db,
@@ -421,6 +464,126 @@ def _run_dynamic_attribution_batch(
             results.append(_failure_result(fund_code, str(exc)[:500]))
 
     return results
+
+
+def _market_rows_to_return_df(rows: list[StockDaily]) -> pd.DataFrame:
+    data = pd.DataFrame([
+        {
+            "trade_date": row.trade_date,
+            "stock_code": row.stock_code,
+            "close_price": row.close_price,
+            "daily_return": row.daily_return,
+        }
+        for row in rows
+    ])
+    if data.empty:
+        return pd.DataFrame(columns=["trade_date", "stock_code", "daily_return"])
+    data["trade_date"] = pd.to_datetime(data["trade_date"])
+    data = data.sort_values(["stock_code", "trade_date"])
+    if "daily_return" not in data.columns or data["daily_return"].isna().all():
+        data["daily_return"] = (
+            pd.to_numeric(data["close_price"], errors="coerce")
+            .groupby(data["stock_code"])
+            .pct_change()
+        )
+    else:
+        missing = data["daily_return"].isna()
+        if missing.any():
+            inferred = (
+                pd.to_numeric(data["close_price"], errors="coerce")
+                .groupby(data["stock_code"])
+                .pct_change()
+            )
+            data.loc[missing, "daily_return"] = inferred.loc[missing]
+    data["daily_return"] = pd.to_numeric(data["daily_return"], errors="coerce")
+    return data[["trade_date", "stock_code", "daily_return"]].dropna()
+
+
+def _build_real_sector_return_df(
+    holding_stock_df: pd.DataFrame,
+    market_df: pd.DataFrame,
+    *,
+    benchmark_symbol: str,
+    min_observations: int,
+) -> tuple[pd.DataFrame, dict, list[str]]:
+    return_rows: list[dict] = []
+    warnings: list[str] = []
+    coverage_by_report: dict[str, float] = {}
+    observations_by_report: dict[str, int] = {}
+    report_dates = sorted(pd.to_datetime(holding_stock_df["report_date"]).dt.date.unique())
+
+    for index, report_date in enumerate(report_dates):
+        period_start = pd.Timestamp(report_date)
+        period_end = (
+            pd.Timestamp(report_dates[index + 1])
+            if index + 1 < len(report_dates)
+            else period_start + pd.DateOffset(months=3)
+        )
+        period_market = market_df[
+            (market_df["trade_date"] >= period_start)
+            & (market_df["trade_date"] < period_end)
+        ]
+        period_benchmark = period_market[period_market["stock_code"] == benchmark_symbol]
+        observations_by_report[str(report_date)] = int(len(period_benchmark))
+        if len(period_benchmark) < min_observations:
+            warnings.append(
+                f"{report_date} 基准 {benchmark_symbol} 收益样本不足: {len(period_benchmark)}"
+            )
+            continue
+
+        benchmark_return = _compound_returns(period_benchmark["daily_return"])
+        period_holdings = holding_stock_df[holding_stock_df["report_date"] == report_date]
+        stock_returns = {
+            stock_code: _compound_returns(stock_frame["daily_return"])
+            for stock_code, stock_frame in period_market[
+                period_market["stock_code"].isin(period_holdings["stock_code"])
+            ].groupby("stock_code")
+            if len(stock_frame) >= min_observations
+        }
+        available_weight = float(
+            period_holdings[
+                period_holdings["stock_code"].isin(stock_returns)
+            ]["port_weight"].sum()
+        )
+        coverage_by_report[str(report_date)] = round(available_weight, 6)
+        if available_weight <= 0:
+            warnings.append(f"{report_date} 持仓股票行情无有效收益样本")
+            continue
+
+        for sector, sector_holdings in period_holdings.groupby("sector"):
+            usable = sector_holdings[sector_holdings["stock_code"].isin(stock_returns)]
+            sector_weight = float(sector_holdings["port_weight"].sum())
+            usable_weight = float(usable["port_weight"].sum())
+            if usable.empty or usable_weight <= 0:
+                warnings.append(f"{report_date} 行业 {sector} 缺少持仓股票收益样本")
+                continue
+            sector_return = sum(
+                float(row["port_weight"]) / usable_weight * stock_returns[str(row["stock_code"])]
+                for _idx, row in usable.iterrows()
+            )
+            return_rows.append({
+                "report_date": report_date,
+                "sector": sector,
+                "port_return": sector_return,
+                "bench_return": benchmark_return,
+                "sector_stock_weight_coverage": round(usable_weight / sector_weight, 6)
+                if sector_weight > 0
+                else 0.0,
+            })
+
+    stats = {
+        "min_stock_weight_coverage": min(coverage_by_report.values()) if coverage_by_report else 0.0,
+        "stock_weight_coverage_by_report": coverage_by_report,
+        "return_observation_count_by_report": observations_by_report,
+    }
+    return pd.DataFrame(return_rows), stats, warnings
+
+
+def _compound_returns(returns) -> float:
+    values = pd.to_numeric(pd.Series(returns), errors="coerce").dropna()
+    if values.empty:
+        return 0.0
+    return float((1.0 + values).prod() - 1.0)
 
 
 def _run_scoring_batch(

@@ -95,6 +95,19 @@ def seed_realistic_data(test_session: Session) -> None:
                 data_source_level="LOCAL",
             ))
 
+    # Benchmark index daily: stored in stock_daily with index symbol.
+    benchmark_level = 4000.0
+    for i in range(0, 242, 5):
+        ret = float(rng.normal(0.0001, 0.01))
+        benchmark_level *= 1.0 + ret
+        test_session.add(StockDaily(
+            stock_code="sh000300",
+            trade_date=start + timedelta(days=i),
+            close_price=round(benchmark_level, 2),
+            daily_return=round(ret, 6),
+            data_source_level="LOCAL",
+        ))
+
     test_session.commit()
 
 
