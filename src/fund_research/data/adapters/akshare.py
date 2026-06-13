@@ -3,11 +3,13 @@
 import hashlib
 from collections.abc import Callable
 from datetime import date
-from time import perf_counter
+from io import StringIO
+from time import perf_counter, sleep
 from types import ModuleType
 from typing import Any
 
 import pandas as pd
+import requests
 
 from fund_research.core.enums import DataSourceLevel, DataSourceType
 from fund_research.data.adapters.base import BaseDataAdapter, FetchResult
@@ -352,6 +354,27 @@ class AkshareAdapter(BaseDataAdapter):
             for code in data["行业代码"].dropna().astype(str)
         ]
 
+    def _fetch_sw_industry_membership_frame(self, symbol: str) -> pd.DataFrame:
+        try:
+            return pd.DataFrame(self.ak.sw_index_third_cons(symbol))
+        except ValueError as exc:
+            if "Length mismatch" not in str(exc):
+                raise
+            url = f"https://legulegu.com/stockdata/index-composition?industryCode={symbol}"
+            response = requests.get(
+                url,
+                headers={
+                    "User-Agent": (
+                        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                        "AppleWebKit/537.36 (KHTML, like Gecko) "
+                        "Chrome/114.0.0.0 Safari/537.36"
+                    )
+                },
+                timeout=30,
+            )
+            response.raise_for_status()
+            return pd.read_html(StringIO(response.text))[0]
+
     def _normalize_sw_industry_membership(self, frames: list[pd.DataFrame]) -> pd.DataFrame:
         data = pd.concat(frames, ignore_index=True) if frames else pd.DataFrame()
         columns = [
@@ -376,7 +399,7 @@ class AkshareAdapter(BaseDataAdapter):
             }
         )
         result = pd.DataFrame()
-        result["stock_code"] = data["stock_code"].astype(str).str.zfill(6)
+        result["stock_code"] = data["stock_code"].astype(str).str.extract(r"(\d{6})", expand=False)
         result["stock_name"] = data["stock_name"] if "stock_name" in data.columns else None
         result["classification_type"] = "SW"
         result["classification_version"] = "unknown"
@@ -601,19 +624,51 @@ class AkshareAdapter(BaseDataAdapter):
         """拉取中证指数最新成分目录快照。"""
         return self._fetch_index_members(symbol, include_weight=False)
 
-    def fetch_sw_industry_membership(self, symbols: set[str] | None = None) -> FetchResult:
+    def fetch_sw_industry_membership(
+        self,
+        symbols: set[str] | None = None,
+        *,
+        request_interval_seconds: float = 0.0,
+        max_retries: int = 0,
+    ) -> FetchResult:
         """拉取申万三级行业成分，并标准化为股票行业归属快照。"""
         started_at = perf_counter()
         try:
             target_symbols = sorted(symbols) if symbols else self._sw_industry_symbols()
-            frames = [pd.DataFrame(self.ak.sw_index_third_cons(symbol)) for symbol in target_symbols]
+            frames: list[pd.DataFrame] = []
+            warnings: list[str] = []
+            for index, symbol in enumerate(target_symbols):
+                if index > 0 and request_interval_seconds > 0:
+                    sleep(request_interval_seconds)
+                for attempt in range(max_retries + 1):
+                    try:
+                        frames.append(self._fetch_sw_industry_membership_frame(symbol))
+                        break
+                    except Exception as exc:
+                        if attempt < max_retries:
+                            if request_interval_seconds > 0:
+                                sleep(request_interval_seconds)
+                            continue
+                        warnings.append(f"{symbol} 拉取失败: {exc}")
+
             data = self._normalize_sw_industry_membership(frames)
-            return self._success_result_from_canonical(
+            if data.empty and warnings:
+                result = self._error_result(
+                    "stock_industry_membership",
+                    started_at,
+                    RuntimeError("; ".join(warnings[:5])),
+                )
+                result.source_level = DataSourceLevel.C
+                result.warnings = warnings
+                return result
+            result = self._success_result_from_canonical(
                 "stock_industry_membership",
                 data,
                 started_at,
                 source_level=DataSourceLevel.C,
             )
+            result.warnings = warnings
+            return result
         except Exception as exc:
             result = self._error_result("stock_industry_membership", started_at, exc)
             result.source_level = DataSourceLevel.C

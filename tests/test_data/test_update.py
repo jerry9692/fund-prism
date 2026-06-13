@@ -299,7 +299,13 @@ class FakeAkshareAdapter:
             ],
         )
 
-    def fetch_sw_industry_membership(self, symbols: set[str] | None = None) -> FetchResult:
+    def fetch_sw_industry_membership(
+        self,
+        symbols: set[str] | None = None,
+        *,
+        request_interval_seconds: float = 0.0,
+        max_retries: int = 0,
+    ) -> FetchResult:
         result = self._result(
             "stock_industry_membership",
             [

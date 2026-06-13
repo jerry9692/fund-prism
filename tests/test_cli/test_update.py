@@ -65,3 +65,13 @@ def test_update_domains_include_benchmark_industry_sources() -> None:
     )
 
     assert selected == ["benchmark-members", "stock-industry", "benchmark-industry"]
+
+
+def test_update_help_includes_stock_industry_stability_options() -> None:
+    """stock-industry should expose controls for segmented, throttled updates."""
+    result = CliRunner().invoke(app, ["update", "--help"])
+
+    assert result.exit_code == 0
+    assert "--industry-symbol" in result.output
+    assert "--request-interval" in result.output
+    assert "--retry" in result.output

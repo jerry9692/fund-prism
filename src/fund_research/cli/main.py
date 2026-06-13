@@ -122,6 +122,10 @@ IndexSymbolOption = Annotated[
     list[str] | None,
     typer.Option("--index-symbol", help="只更新指定指数 symbol，可重复传入"),
 ]
+IndustrySymbolOption = Annotated[
+    list[str] | None,
+    typer.Option("--industry-symbol", help="只更新指定行业 symbol，可重复传入，如 801120.SI"),
+]
 SamplePathOption = Annotated[
     Path | None,
     typer.Option("--sample", help="样本基金 CSV 路径；不传则读取 FUND_SAMPLE_FUNDS_PATH"),
@@ -153,6 +157,14 @@ ReportDateOption = Annotated[
 YearOption = Annotated[
     int | None,
     typer.Option("--year", help="分红年度 YYYY"),
+]
+RequestIntervalOption = Annotated[
+    float,
+    typer.Option("--request-interval", help="批量抓取请求间隔秒数，主要用于 stock-industry"),
+]
+RetryOption = Annotated[
+    int,
+    typer.Option("--retry", help="单个数据项失败后的重试次数，主要用于 stock-industry"),
 ]
 
 
@@ -419,6 +431,7 @@ def update(
     fund_code: FundCodeOption = None,
     stock_code: StockCodeOption = None,
     index_symbol: IndexSymbolOption = None,
+    industry_symbol: IndustrySymbolOption = None,
     sample: SamplePathOption = None,
     db_path: DbPathOption = None,
     dry_run: DryRunOption = False,
@@ -427,6 +440,8 @@ def update(
     end: EndDateOption = None,
     report_date: ReportDateOption = None,
     year: YearOption = None,
+    request_interval: RequestIntervalOption = 0.0,
+    retry: RetryOption = 0,
 ) -> None:
     """更新本地数据。"""
     from sqlalchemy.orm import sessionmaker
@@ -610,6 +625,9 @@ def update(
             summaries.append(
                 upsert_akshare_stock_industry_membership(
                     session,
+                    set(industry_symbol) if industry_symbol else None,
+                    request_interval_seconds=max(request_interval, 0.0),
+                    max_retries=max(retry, 0),
                     dry_run=dry_run,
                 )
             )

@@ -518,6 +518,112 @@ def test_fetch_sw_industry_membership_standardizes_level_one_rows() -> None:
     assert row["effective_date"] == "2021-12-13"
 
 
+def test_fetch_sw_industry_membership_falls_back_for_current_legulegu_shape(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Current Legulegu SW table has 18 columns and exchange-suffixed stock codes."""
+
+    def broken_cons(symbol: str) -> pd.DataFrame:
+        raise ValueError("Length mismatch: Expected axis has 18 elements, new values have 17 elements")
+
+    class FakeResponse:
+        text = """
+        <table>
+          <tr>
+            <th>序号</th><th>股票代码</th><th>股票简称</th><th>纳入时间</th>
+            <th>申万1级</th><th>细分概念</th><th>价格</th><th>市盈率</th>
+            <th>市盈率ttm</th><th>市净率</th><th>ROE(%)</th><th>股息率</th>
+            <th>市值（亿元）</th><th>近1日涨幅(2026-06-12)</th>
+            <th>近5日涨幅(2026-06-12)</th><th>今年以来涨幅(2026-06-12)</th>
+            <th>净利润增速(%)</th><th>营收增速(%)</th>
+          </tr>
+          <tr>
+            <td>1</td><td>600419.SH</td><td>天润乳业</td><td>2018-07-13</td>
+            <td>食品饮料</td><td>加载中...</td><td>8.03</td><td>61.08</td>
+            <td>17.53</td><td>1.03</td><td>1.21%</td><td>0.25%</td>
+            <td>25.34</td><td>1.52%</td><td>-3.25%</td><td>-19.11%</td>
+            <td>140.58%</td><td>6.76%</td>
+          </tr>
+        </table>
+        """
+
+        def raise_for_status(self) -> None:
+            return None
+
+    def fake_get(url: str, **kwargs) -> FakeResponse:
+        assert "industryCode=801120.SI" in url
+        return FakeResponse()
+
+    fake_ak = types.SimpleNamespace(sw_index_third_cons=broken_cons)
+    monkeypatch.setattr("fund_research.data.adapters.akshare.requests.get", fake_get)
+    adapter = AkshareAdapter(ak_module=fake_ak)
+
+    result = adapter.fetch_sw_industry_membership(symbols={"801120.SI"})
+
+    assert result.is_success is True
+    assert result.data is not None
+    row = result.data.iloc[0]
+    assert row["stock_code"] == "600419"
+    assert row["stock_name"] == "天润乳业"
+    assert row["industry_name"] == "食品饮料"
+    assert row["effective_date"] == "2018-07-13"
+
+
+def test_fetch_sw_industry_membership_keeps_partial_success() -> None:
+    """One failed industry page should not discard other successfully fetched pages."""
+
+    def fake_cons(symbol: str) -> pd.DataFrame:
+        if symbol == "bad.SI":
+            raise RuntimeError("429 Too Many Requests")
+        return pd.DataFrame([{
+            "股票代码": "600519.SH",
+            "股票简称": "贵州茅台",
+            "纳入时间": "2001-08-27",
+            "申万1级": "食品饮料",
+        }])
+
+    fake_ak = types.SimpleNamespace(sw_index_third_cons=fake_cons)
+    adapter = AkshareAdapter(ak_module=fake_ak)
+
+    result = adapter.fetch_sw_industry_membership(symbols={"801120.SI", "bad.SI"})
+
+    assert result.is_success is True
+    assert result.data is not None
+    assert len(result.data) == 1
+    assert result.data.iloc[0]["stock_code"] == "600519"
+    assert any("bad.SI 拉取失败" in warning for warning in result.warnings)
+
+
+def test_fetch_sw_industry_membership_retries_before_warning() -> None:
+    """A transient industry page failure should be retried before warning."""
+    attempts = {"801120.SI": 0}
+
+    def flaky_cons(symbol: str) -> pd.DataFrame:
+        attempts[symbol] += 1
+        if attempts[symbol] == 1:
+            raise RuntimeError("temporary 429")
+        return pd.DataFrame([{
+            "股票代码": "600519.SH",
+            "股票简称": "贵州茅台",
+            "纳入时间": "2001-08-27",
+            "申万1级": "食品饮料",
+        }])
+
+    fake_ak = types.SimpleNamespace(sw_index_third_cons=flaky_cons)
+    adapter = AkshareAdapter(ak_module=fake_ak)
+
+    result = adapter.fetch_sw_industry_membership(
+        symbols={"801120.SI"},
+        max_retries=1,
+    )
+
+    assert result.is_success is True
+    assert result.data is not None
+    assert len(result.data) == 1
+    assert attempts["801120.SI"] == 2
+    assert result.warnings == []
+
+
 def test_fetch_announcements_standardizes_pdf_columns() -> None:
     """Announcement aliases should expose canonical PDF evidence fields."""
     fake_ak = types.SimpleNamespace(

@@ -1404,6 +1404,8 @@ def upsert_akshare_stock_industry_membership(
     industry_symbols: set[str] | None = None,
     *,
     adapter: AkshareAdapter | None = None,
+    request_interval_seconds: float = 0.0,
+    max_retries: int = 0,
     dry_run: bool = False,
 ) -> UpdateSummary:
     """Fetch and upsert stock industry membership snapshots."""
@@ -1415,9 +1417,14 @@ def upsert_akshare_stock_industry_membership(
         dry_run=dry_run,
         warnings=[],
     )
-    result = adapter.fetch_sw_industry_membership(symbols=industry_symbols)
+    result = adapter.fetch_sw_industry_membership(
+        symbols=industry_symbols,
+        request_interval_seconds=request_interval_seconds,
+        max_retries=max_retries,
+    )
     if not dry_run:
         _snapshot_from_fetch(session, result)
+    summary.warnings.extend(result.warnings)
     if not result.is_success or result.data is None or result.data.empty:
         summary.skipped += 1
         summary.warnings.append(result.error_message or "股票行业归属为空")
