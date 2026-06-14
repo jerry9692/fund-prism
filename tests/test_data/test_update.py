@@ -27,6 +27,7 @@ from fund_research.data.update import (
     upsert_akshare_stock_daily,
     upsert_akshare_stock_industry_membership,
     upsert_benchmark_industry_weights,
+    upsert_local_stock_industry_membership,
     upsert_sample_funds,
 )
 from fund_research.db.models import (
@@ -1074,6 +1075,109 @@ def test_upsert_akshare_stock_industry_membership_uses_cached_symbols_on_live_fa
     assert summary.inserted == 1
     assert adapter.calls == [{"801120.SI"}]
     assert any("使用本地缓存" in warning for warning in summary.warnings or [])
+
+
+def test_upsert_local_stock_industry_membership_imports_csv_and_cleans_codes(
+    test_session: Session,
+    tmp_path: Path,
+) -> None:
+    """Local stock-industry files should import auditable SW level-one mappings."""
+    industry_file = tmp_path / "stock_industry_sw.csv"
+    industry_file.write_text(
+        "\n".join([
+            "stock_code,stock_name,industry_name,effective_date,source_name",
+            "600519.SH,贵州茅台,食品饮料,2026-06-01,manual_sw_sample",
+            "000001.SZ,平安银行,银行,2026-06-01,manual_sw_sample",
+        ]),
+        encoding="utf-8",
+    )
+
+    summary = upsert_local_stock_industry_membership(test_session, industry_file)
+    rows = test_session.scalars(
+        select(StockIndustryMembership).order_by(StockIndustryMembership.stock_code)
+    ).all()
+    snapshot = test_session.scalar(
+        select(DataSourceSnapshot).where(
+            DataSourceSnapshot.entity_type == "stock_industry_membership"
+        )
+    )
+
+    assert summary.requested == 2
+    assert summary.inserted == 2
+    assert summary.warnings == []
+    assert [row.stock_code for row in rows] == ["000001", "600519"]
+    assert rows[0].source_name == "manual_sw_sample"
+    assert rows[0].source_level == DataSourceLevel.LOCAL.value
+    assert snapshot is not None
+    assert snapshot.source_type == DataSourceType.LOCAL_FILE.value
+
+
+def test_upsert_local_stock_industry_membership_reimport_updates_existing_rows(
+    test_session: Session,
+    tmp_path: Path,
+) -> None:
+    """Re-importing the same local industry file should update instead of duplicating."""
+    industry_file = tmp_path / "stock_industry_sw.csv"
+    industry_file.write_text(
+        "\n".join([
+            "stock_code,stock_name,industry_name,effective_date",
+            "600519.SH,贵州茅台,食品饮料,2026-06-01",
+        ]),
+        encoding="utf-8",
+    )
+
+    first = upsert_local_stock_industry_membership(test_session, industry_file)
+    second = upsert_local_stock_industry_membership(test_session, industry_file)
+    row_count = test_session.scalar(select(func.count()).select_from(StockIndustryMembership))
+
+    assert first.inserted == 1
+    assert second.updated == 1
+    assert row_count == 1
+
+
+def test_upsert_local_stock_industry_membership_imports_xlsx(
+    test_session: Session,
+    tmp_path: Path,
+) -> None:
+    """Local stock-industry imports should also accept XLSX mapping files."""
+    industry_file = tmp_path / "stock_industry_sw.xlsx"
+    pd.DataFrame([{
+        "stock_code": "000001.SZ",
+        "stock_name": "平安银行",
+        "industry_name": "银行",
+        "effective_date": "2026-06-01",
+    }]).to_excel(industry_file, index=False)
+
+    summary = upsert_local_stock_industry_membership(test_session, industry_file)
+    row = test_session.scalar(select(StockIndustryMembership))
+
+    assert summary.inserted == 1
+    assert row is not None
+    assert row.stock_code == "000001"
+    assert row.industry_name == "银行"
+
+
+def test_upsert_local_stock_industry_membership_warns_for_missing_required_columns(
+    test_session: Session,
+    tmp_path: Path,
+) -> None:
+    """Rows without stock code or industry name should be skipped with warnings."""
+    industry_file = tmp_path / "bad_stock_industry_sw.csv"
+    industry_file.write_text(
+        "\n".join([
+            "stock_code,stock_name,effective_date",
+            "600519.SH,贵州茅台,2026-06-01",
+        ]),
+        encoding="utf-8",
+    )
+
+    summary = upsert_local_stock_industry_membership(test_session, industry_file)
+    row_count = test_session.scalar(select(func.count()).select_from(StockIndustryMembership))
+
+    assert summary.requested == 1
+    assert summary.skipped == 1
+    assert row_count == 0
+    assert any("缺少必要字段" in warning for warning in summary.warnings or [])
 
 
 def test_upsert_benchmark_industry_weights_aggregates_member_weights(

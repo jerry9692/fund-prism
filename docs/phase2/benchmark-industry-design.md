@@ -67,6 +67,7 @@ AKShare 本地源码显示，权重接口下载路径形如：
 |------|--------------|----------|------|------|
 | 申万一级/二级/三级行业 taxonomy | `sw_index_first_info()` / `sw_index_second_info()` / `sw_index_third_info()` | 乐咕乐股申万行业页 | 有行业代码和层级 | 非官方，页面解析风险 |
 | 申万一级行业成分 | `sw_index_third_cons(801xxx.SI)` | 乐咕乐股 | 返回股票及申万1级字段 | 第一版只落一级归属，应遍历一级 symbol；不要默认遍历 `850xxx.SI` 三级 symbol |
+| 本地行业映射文件 | `stock-industry --industry-file` | 用户本地 CSV/XLSX | 可审计、可重复导入 | 需要人工确认来源和快照日期 |
 | 东方财富行业板块列表 | `stock_board_industry_name_em()` | 东方财富 | 调用简单 | 行业体系不是申万/中信正式口径 |
 | 东方财富行业板块成分 | `stock_board_industry_cons_em(symbol)` | 东方财富 | 成分可得 | 行业口径更偏行情板块 |
 | 已有持仓披露行业 | `fund_disclosed_holdings.industry` | 基金披露/AKShare | 已入库 | 只覆盖基金持仓，不覆盖指数全成分 |
@@ -78,6 +79,7 @@ AKShare 本地源码显示，权重接口下载路径形如：
 - 动态归因第一阶段只需要行业级聚合，不需要三级行业精细度。
 - 申万一级便于解释，行业数量适中。
 - `IndustryCategory` 已按分类体系/层级设计，容易承接 taxonomy。
+- 当乐咕页面源不稳定时，优先使用本地 CSV/XLSX 行业映射导入 fallback 补齐 `stock_industry_membership`。
 - 东方财富行业板块可作为备用或健康检查，不建议作为默认正式口径。
 
 ### 3.3 数据源等级建议

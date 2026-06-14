@@ -1361,7 +1361,7 @@ def _apply_stock_industry_membership_row(
     source_name: str,
     dry_run: bool,
 ) -> str:
-    stock_code = str(row.get("stock_code") or "").strip().zfill(6)
+    stock_code = str(row.get("stock_code") or "").strip().split(".")[0].zfill(6)
     classification_type = str(row.get("classification_type") or "").strip()
     level = int(_parse_float(row.get("level")) or 0)
     effective_date = _parse_date(row.get("effective_date")) or date.today()
@@ -1397,6 +1397,126 @@ def _apply_stock_industry_membership_row(
     existing.source_name = source_name
     existing.source_level = source_level.value
     return action
+
+
+def _read_stock_industry_file(path: Path) -> list[dict[str, Any]]:
+    suffix = path.suffix.lower()
+    if suffix == ".csv":
+        with path.open(encoding="utf-8-sig", newline="") as handle:
+            return list(csv.DictReader(handle))
+    if suffix in {".xlsx", ".xls"}:
+        import pandas as pd
+
+        return pd.read_excel(path).to_dict(orient="records")
+    raise ValueError(f"暂不支持的行业映射文件格式: {suffix or '<none>'}")
+
+
+def _normalize_local_stock_industry_row(row: dict[str, Any], default_source_name: str) -> dict[str, Any]:
+    def pick(*names: str) -> Any:
+        for name in names:
+            value = row.get(name)
+            if value is not None and str(value).strip() != "":
+                return value
+        return None
+
+    source_name = str(pick("source_name", "source", "来源") or default_source_name).strip()
+    source_level_raw = str(pick("source_level", "来源等级") or DataSourceLevel.LOCAL.value).strip()
+    try:
+        source_level = DataSourceLevel(source_level_raw.upper())
+    except ValueError:
+        source_level = DataSourceLevel.LOCAL
+
+    return {
+        "stock_code": pick("stock_code", "股票代码", "证券代码", "code"),
+        "stock_name": pick("stock_name", "股票简称", "证券简称", "name"),
+        "classification_type": pick("classification_type", "分类体系") or "SW",
+        "classification_version": pick("classification_version", "分类版本") or "2021",
+        "level": pick("level", "分类层级") or 1,
+        "industry_code": pick("industry_code", "行业代码"),
+        "industry_name": pick("industry_name", "申万1级", "一级行业", "行业名称"),
+        "parent_industry_code": pick("parent_industry_code", "上级行业代码"),
+        "effective_date": pick("effective_date", "生效日期", "纳入时间") or date.today(),
+        "source_name": source_name,
+        "source_level": source_level,
+    }
+
+
+def upsert_local_stock_industry_membership(
+    session: Session,
+    industry_file: Path,
+    *,
+    dry_run: bool = False,
+) -> UpdateSummary:
+    """Import stock industry memberships from a local CSV/XLSX mapping file."""
+    summary = UpdateSummary(
+        entity="stock_industry_membership",
+        source=str(industry_file),
+        dry_run=dry_run,
+        warnings=[],
+    )
+    if not industry_file.exists():
+        summary.skipped = 1
+        summary.warnings.append(f"行业映射文件不存在: {industry_file}")
+        return summary
+
+    try:
+        raw_rows = _read_stock_industry_file(industry_file)
+    except Exception as exc:
+        summary.skipped = 1
+        summary.warnings.append(str(exc))
+        return summary
+
+    summary.requested = len(raw_rows)
+    default_source_name = f"local_file:{industry_file.name}"
+    normalized_rows = [
+        _normalize_local_stock_industry_row(row, default_source_name)
+        for row in raw_rows
+    ]
+
+    missing_required = {
+        "stock_code": sum(1 for row in normalized_rows if not row.get("stock_code")),
+        "industry_name": sum(1 for row in normalized_rows if not row.get("industry_name")),
+    }
+    for index, row in enumerate(normalized_rows, start=1):
+        source_level = row.pop("source_level")
+        source_name = row.pop("source_name")
+        action = _apply_stock_industry_membership_row(
+            session,
+            row,
+            source_level,
+            source_name,
+            dry_run,
+        )
+        if action == "inserted":
+            summary.inserted += 1
+        elif action == "updated":
+            summary.updated += 1
+        else:
+            summary.skipped += 1
+            summary.warnings.append(f"行业映射文件第 {index} 行缺少必要字段")
+
+    if dry_run:
+        return summary
+
+    session.add(
+        DataSourceSnapshot(
+            source_name=default_source_name,
+            source_type=DataSourceType.LOCAL_FILE.value,
+            source_level=DataSourceLevel.LOCAL.value,
+            fetch_timestamp=datetime.now(),
+            entity_type="stock_industry_membership",
+            field_count=len(raw_rows[0]) if raw_rows else 0,
+            record_count=len(raw_rows),
+            coverage_rate=(summary.changed / summary.requested) if summary.requested else 0.0,
+            missing_fields=missing_required,
+            anomaly_count=summary.skipped,
+            is_success=summary.skipped == 0,
+            error_message=None if summary.skipped == 0 else "Some local stock industry rows were skipped",
+        )
+    )
+    _log_update_task(session, "stock_industry_membership", summary)
+    session.commit()
+    return summary
 
 
 def _chunked_symbols(symbols: list[str], batch_size: int) -> list[list[str]]:

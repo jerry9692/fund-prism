@@ -126,6 +126,10 @@ IndustrySymbolOption = Annotated[
     list[str] | None,
     typer.Option("--industry-symbol", help="只更新指定行业 symbol，可重复传入，如 801120.SI"),
 ]
+IndustryFileOption = Annotated[
+    Path | None,
+    typer.Option("--industry-file", help="从本地 CSV/XLSX 导入股票行业归属，传入后 stock-industry 不走网络抓取"),
+]
 SamplePathOption = Annotated[
     Path | None,
     typer.Option("--sample", help="样本基金 CSV 路径；不传则读取 FUND_SAMPLE_FUNDS_PATH"),
@@ -436,6 +440,7 @@ def update(
     stock_code: StockCodeOption = None,
     index_symbol: IndexSymbolOption = None,
     industry_symbol: IndustrySymbolOption = None,
+    industry_file: IndustryFileOption = None,
     sample: SamplePathOption = None,
     db_path: DbPathOption = None,
     dry_run: DryRunOption = False,
@@ -472,6 +477,7 @@ def update(
         upsert_akshare_stock_daily,
         upsert_akshare_stock_industry_membership,
         upsert_benchmark_industry_weights,
+        upsert_local_stock_industry_membership,
         upsert_sample_funds,
     )
     from fund_research.db.session import create_engine_from_path, init_db
@@ -628,17 +634,26 @@ def update(
                 )
             )
         if "stock-industry" in selected_entities:
-            summaries.append(
-                upsert_akshare_stock_industry_membership(
-                    session,
-                    set(industry_symbol) if industry_symbol else None,
-                    request_interval_seconds=max(request_interval, 0.0),
-                    max_retries=max(retry, 0),
-                    industry_batch_size=max(industry_batch_size, 0),
-                    symbol_cache_dir=settings.cache_dir_absolute,
-                    dry_run=dry_run,
+            if industry_file is not None:
+                summaries.append(
+                    upsert_local_stock_industry_membership(
+                        session,
+                        industry_file,
+                        dry_run=dry_run,
+                    )
                 )
-            )
+            else:
+                summaries.append(
+                    upsert_akshare_stock_industry_membership(
+                        session,
+                        set(industry_symbol) if industry_symbol else None,
+                        request_interval_seconds=max(request_interval, 0.0),
+                        max_retries=max(retry, 0),
+                        industry_batch_size=max(industry_batch_size, 0),
+                        symbol_cache_dir=settings.cache_dir_absolute,
+                        dry_run=dry_run,
+                    )
+                )
         if "benchmark-industry" in selected_entities:
             selected_index_symbols = set(index_symbol) if index_symbol else {
                 "sh000300",

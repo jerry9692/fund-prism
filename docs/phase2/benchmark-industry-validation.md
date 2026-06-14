@@ -171,6 +171,7 @@ stock_industry_membership: 649
 - 默认 symbol 列表从 `sw_index_third_info()` 改为 `sw_index_first_info()`。
 - 历史 `sw_third_symbols.json` 缓存不再使用，避免误读 `850xxx.SI` 三级行业缓存。
 - `akshare.sw_index_third_cons()` 报 `No tables found` 时，也进入直接读取乐咕页面的 fallback。
+- 新增 `--industry-file` 本地导入 fallback，支持用可审计 CSV/XLSX 补齐行业归属。
 
 2026-06-14 实跑结果:
 
@@ -368,7 +369,7 @@ benchmark_industry_weight: 6
 优先做数据源稳定性，不扩算法：
 
 1. 给 `benchmark-members` 增加本地文件导入 fallback，支持把中证官网下载的 `closeweight.xls` 手动放到 `data/cache/benchmark_members/{index_code}/` 后解析入库。
-2. 给 `stock-industry` 增加本地行业映射文件导入 fallback，例如支持 CSV/XLSX: `stock_code, stock_name, industry_name, effective_date, source_name`。
+2. 使用 `stock-industry --industry-file` 本地行业映射导入 fallback，例如 CSV/XLSX: `stock_code, stock_name, industry_name, effective_date, source_name`。
 3. 用本地 fallback 补齐行业归属后，再重新跑两个指数的行业权重聚合，目标是 `coverage_pct >= 95%`。
 4. 手工对照一份行情软件或指数公司行业分布截图，记录 `行业名 / 本地权重 / 对照权重 / 差值`，差值超过 1pp 的行业逐项解释。
 
@@ -384,7 +385,24 @@ benchmark_industry_weight: 6
   --db-path data\benchmark_validation.sqlite
 ```
 
-补齐本地行业映射 fallback 后，再重新聚合:
+推荐本地行业映射文件格式:
+
+```csv
+stock_code,stock_name,industry_name,effective_date,source_name
+600519.SH,贵州茅台,食品饮料,2026-06-01,manual_sw_mapping
+000001.SZ,平安银行,银行,2026-06-01,manual_sw_mapping
+```
+
+导入本地行业映射:
+
+```powershell
+.venv\Scripts\fund-research.exe update `
+  --domains stock-industry `
+  --industry-file data\local\stock_industry_sw.csv `
+  --db-path data\benchmark_validation.sqlite
+```
+
+补齐本地行业映射后，再重新聚合:
 
 ```powershell
 .venv\Scripts\fund-research.exe update `

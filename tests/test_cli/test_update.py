@@ -76,3 +76,39 @@ def test_update_help_includes_stock_industry_stability_options() -> None:
     assert "--request-interval" in result.output
     assert "--retry" in result.output
     assert "--industry-batch-size" in result.output
+    assert "--industry-file" in result.output
+
+
+def test_update_stock_industry_accepts_local_industry_file(tmp_path: Path) -> None:
+    """stock-industry should support local mapping files without network access."""
+    sample_path = tmp_path / "sample.csv"
+    db_path = tmp_path / "fund_research.sqlite"
+    industry_path = tmp_path / "stock_industry_sw.csv"
+    _write_sample(sample_path)
+    industry_path.write_text(
+        "\n".join([
+            "stock_code,stock_name,industry_name,effective_date",
+            "600519.SH,贵州茅台,食品饮料,2026-06-01",
+        ]),
+        encoding="utf-8",
+    )
+
+    result = CliRunner().invoke(
+        app,
+        [
+            "update",
+            "--domains",
+            "stock-industry",
+            "--industry-file",
+            str(industry_path),
+            "--sample",
+            str(sample_path),
+            "--db-path",
+            str(db_path),
+            "--dry-run",
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert "stock_industry" in result.output
+    assert "DRY-RUN" in result.output
