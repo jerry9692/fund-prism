@@ -1038,7 +1038,7 @@ def test_upsert_akshare_stock_industry_membership_batches_and_caches_symbols(
     rows = test_session.scalars(
         select(StockIndustryMembership).order_by(StockIndustryMembership.stock_code)
     ).all()
-    cache_path = tmp_path / "stock_industry" / "sw_third_symbols.json"
+    cache_path = tmp_path / "stock_industry" / "sw_level_one_symbols.json"
 
     assert summary.requested == 2
     assert summary.inserted == 2
@@ -1054,7 +1054,7 @@ def test_upsert_akshare_stock_industry_membership_uses_cached_symbols_on_live_fa
     tmp_path: Path,
 ) -> None:
     """A cached SW symbol list should let stock-industry resume when live listing fails."""
-    cache_path = tmp_path / "stock_industry" / "sw_third_symbols.json"
+    cache_path = tmp_path / "stock_industry" / "sw_level_one_symbols.json"
     cache_path.parent.mkdir(parents=True)
     cache_path.write_text(
         '{"symbols": ["801120.SI"], "source": "test"}',

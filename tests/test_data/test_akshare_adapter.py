@@ -482,6 +482,22 @@ def test_fetch_index_members_weight_standardizes_csindex_columns() -> None:
     assert "trade_date" not in result.data.columns
 
 
+def test_sw_industry_symbols_uses_level_one_info() -> None:
+    """Full SW industry updates should iterate level-one industry symbols."""
+
+    fake_ak = types.SimpleNamespace(
+        sw_index_first_info=lambda: pd.DataFrame(
+            {
+                "行业代码": ["801120", "801780.SI"],
+                "行业名称": ["食品饮料", "银行"],
+            }
+        )
+    )
+    adapter = AkshareAdapter(ak_module=fake_ak)
+
+    assert adapter._sw_industry_symbols() == ["801120.SI", "801780.SI"]
+
+
 def test_fetch_sw_industry_membership_standardizes_level_one_rows() -> None:
     """SW third-level constituents should become level-one industry memberships."""
     captured: list[str] = []
@@ -567,6 +583,46 @@ def test_fetch_sw_industry_membership_falls_back_for_current_legulegu_shape(
     assert row["stock_name"] == "天润乳业"
     assert row["industry_name"] == "食品饮料"
     assert row["effective_date"] == "2018-07-13"
+
+
+def test_fetch_sw_industry_membership_falls_back_when_akshare_finds_no_table(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Temporary empty AKShare parses should use the direct Legulegu fallback."""
+
+    def broken_cons(symbol: str) -> pd.DataFrame:
+        raise ValueError("No tables found")
+
+    class FakeResponse:
+        text = """
+        <table>
+          <tr>
+            <th>股票代码</th><th>股票简称</th><th>纳入时间</th><th>申万1级</th>
+          </tr>
+          <tr>
+            <td>000001.SZ</td><td>平安银行</td><td>2005-01-01</td><td>银行</td>
+          </tr>
+        </table>
+        """
+
+        def raise_for_status(self) -> None:
+            return None
+
+    def fake_get(url: str, **kwargs) -> FakeResponse:
+        assert "industryCode=801780.SI" in url
+        return FakeResponse()
+
+    fake_ak = types.SimpleNamespace(sw_index_third_cons=broken_cons)
+    monkeypatch.setattr("fund_research.data.adapters.akshare.requests.get", fake_get)
+    adapter = AkshareAdapter(ak_module=fake_ak)
+
+    result = adapter.fetch_sw_industry_membership(symbols={"801780.SI"})
+
+    assert result.is_success is True
+    assert result.data is not None
+    row = result.data.iloc[0]
+    assert row["stock_code"] == "000001"
+    assert row["industry_name"] == "银行"
 
 
 def test_fetch_sw_industry_membership_keeps_partial_success() -> None:

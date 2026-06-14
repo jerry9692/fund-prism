@@ -11,8 +11,8 @@
 原因不是聚合算法本身，而是数据链路还没有完整跑通：
 
 - 指数成分权重: 关闭全局代理/TUN 后，`index_stock_cons_weight_csindex` 已成功写入 `benchmark_index_member` 800 行，`sh000300` 300 行、`sh000905` 500 行。
-- 股票申万一级行业归属: 小样本可用，三类申万行业成功标准化并入临时库 649 行；全量 336 个三级行业直接遍历会触发 429，需要节流、缓存和断点续跑。
-- 聚合后的 `benchmark_industry_weight`: `2026-06-13` 可生成 6 行小样本行业权重，但覆盖率只有 `sh000300=35.04%`、`sh000905=23.99%`，低于 95% 门槛；`2026-03-31` 因权重快照晚于目标日期而正确拒绝使用。
+- 股票申万一级行业归属: 小样本可用；2026-06-14 修正默认 symbol 列表后，临时库提升到 1443 行、8 个行业，但乐咕页面仍有大量一级行业返回空表。
+- 聚合后的 `benchmark_industry_weight`: `2026-06-14` 重新聚合后覆盖率提升到 `sh000300=46.88%`、`sh000905=38.53%`，仍低于 95% 门槛；`2026-03-31` 因权重快照晚于目标日期而正确拒绝使用。
 
 因此，当前 runner 的严格 gating 是必要的：缺少 `benchmark_industry_weight` 或覆盖率不足时应失败并进入 `needs_review`，不能回退到基金持仓行业权重。
 
@@ -29,7 +29,7 @@
 
 - 中证权重接口在全局代理/TUN 下会出现 SSL EOF；关代理后可以拉通。
 - AKShare 中证权重接口语义是最新权重快照，不是完整历史权重序列。
-- 当前仅完成三个申万一级行业的小样本归属，无法达到 95% 行业映射覆盖率。
+- 当前只完成 8 个申万一级行业归属，无法达到 95% 行业映射覆盖率。
 - 没有全量行业归属时，无法计算可进入默认动态归因的行业权重，也无法计算与公开行业分布的完整数值偏差。
 
 本轮保留两个目标日期作为聚合验证点：
@@ -37,7 +37,7 @@
 - `2026-06-13`: 可使用 `2026-05-29` 中证权重快照，但行业映射覆盖率不足。
 - `2026-03-31`: 不可使用 `2026-05-29` 权重快照，因为该快照晚于目标日期。
 
-结论：只有 `2026-06-13` 能生成低覆盖率样本结果，不能通过验收；`2026-03-31` 正确失败。
+结论：`2026-06-13/2026-06-14` 能生成低覆盖率样本结果，不能通过验收；`2026-03-31` 正确失败。
 
 ## 3. 执行记录
 
@@ -151,19 +151,50 @@ stock_industry_membership: 649
 - 银行样本完全一致。
 - 电子、食品饮料行数与公开页面文本有差异，可能来自页面缓存、实时表格、停复牌/退市过滤或解析时间差；该差异需要后续人工抽查。
 - 乐咕乐股页面声明其数据来自公开数据并由自动收集更新，不能作为 A/B 级权威行业源。当前仍应按 C 级处理。
-- 全量 336 个三级行业直接遍历会触发 429，不能用无节流批处理作为默认更新方式。
+- 第一版只落申万一级行业归属，默认全量应遍历 `801xxx.SI` 一级行业 symbol；直接遍历 `850xxx.SI` 三级行业 symbol 会出现大量 `No tables found`，不能作为默认更新方式。
 
 ### 3.2.1 全量 stock-industry 跑数准备
 
 2026-06-13 晚间验证发现，慢速全量抓取仍可能被本地会话超时中断；同时
-`akshare.sw_index_third_info()` 在异常页面形态下可能报
-`AttributeError: 'NoneType' object has no attribute 'find_all'`，导致全量任务还没进入分行业抓取就失败。
+`akshare.sw_index_third_info()` 返回的是 `850xxx.SI` 三级行业 symbol；这些 symbol
+不适合作为当前申万一级归属入库的默认遍历入口。2026-06-14 实跑显示，
+直接遍历三级 symbol 会产生大量 `No tables found`，且长时间无新增行业成员。
 
 已调整更新链路:
 
-- CLI 默认把申万三级行业 symbol 列表缓存到 `data/cache/stock_industry/sw_third_symbols.json`。
+- CLI 默认把申万一级行业 symbol 列表缓存到 `data/cache/stock_industry/sw_level_one_symbols.json`。
 - 不指定 `--industry-symbol` 时，优先实时获取并刷新缓存；实时获取失败但缓存存在时，使用缓存继续跑。
 - `stock-industry` 默认按 20 个行业一批提交，批次之间已经写入数据库；中途超时后可重复执行同一命令续跑，已有唯一键会转为 update。
+
+2026-06-14 修正:
+
+- 默认 symbol 列表从 `sw_index_third_info()` 改为 `sw_index_first_info()`。
+- 历史 `sw_third_symbols.json` 缓存不再使用，避免误读 `850xxx.SI` 三级行业缓存。
+- `akshare.sw_index_third_cons()` 报 `No tables found` 时，也进入直接读取乐咕页面的 fallback。
+
+2026-06-14 实跑结果:
+
+```text
+stock-industry:
+requested=31, inserted=794, updated=484, skipped=21
+stock_industry_membership: 1443 rows, 8 industries
+```
+
+当前成功覆盖的行业:
+
+| industry_name | rows |
+|---|---:|
+| 电子 | 484 |
+| 基础化工 | 410 |
+| 有色金属 | 142 |
+| 食品饮料 | 123 |
+| 农林牧渔 | 104 |
+| 家用电器 | 94 |
+| 钢铁 | 44 |
+| 银行 | 42 |
+
+仍失败的典型行业页面返回 `No tables found`，对 25 个失败 symbol 使用
+`--industry-batch-size 1 --request-interval 5 --retry 2` 逐个重试后，15 分钟内没有新增入库行，并出现请求卡住。因此当前 C 级乐咕页面源不能通过全量行业验收。
 
 明天推荐先跑小批次慢速全量:
 
@@ -215,6 +246,17 @@ smoke 未制造重复行，upsert 可重复执行。
 2. 跑完检查 `stock_industry_membership` 行数、行业数和前 10 大行业行数。
 3. 再跑 `benchmark-industry` 重新聚合 `sh000300`、`sh000905`。
 4. 最后做真实行业分布对照验收；验收通过前，不要把 `benchmark_industry_weight` 用作高置信默认结论。
+
+2026-06-14 重新聚合结果:
+
+```text
+benchmark-industry:
+requested=2, inserted=10, updated=6, skipped=0
+sh000300 coverage_pct=46.88%, unmapped_weight_pct=53.12%
+sh000905 coverage_pct=38.53%, unmapped_weight_pct=61.48%
+```
+
+结论: 覆盖率相对 2026-06-13 小样本有所提升，但仍远低于 95% 验收线。真实基准行业权重数据验收仍未通过，不能进入高置信默认结论。
 
 ### 3.3 聚合后的 benchmark_industry_weight
 
@@ -311,12 +353,13 @@ benchmark_industry_weight: 6
 
 - `sw_index_third_cons` 页面列数变动时，adapter 会直接从页面读取并只取所需字段。
 - 新增测试覆盖 18 列页面和 `.SH/.SZ` 股票代码后缀清洗。
-- `stock-industry` 已支持 `--industry-symbol`、`--request-interval`、`--retry`，便于分批、限速、重试和断点续跑。
+- `stock-industry` 已支持 `--industry-symbol`、`--request-interval`、`--retry`、`--industry-batch-size`，便于分批、限速、重试和断点续跑。
+- 2026-06-14 修复默认全量 symbol 列表口径：从三级 `850xxx.SI` 改为一级 `801xxx.SI`。
 
 仍需修复或增强：
 
 1. 中证权重文件在全局代理/TUN 下会 TLS/SSL EOF，需要文档提醒“关代理/直连”或增加本地文件导入 fallback。
-2. 申万行业全量拉取仍需要实跑验证合适的间隔参数；若仍频繁 429，再增加更长等待或本地缓存。
+2. 申万行业全量拉取不能只依赖当前乐咕页面源；2026-06-14 慢速重试后仍有大量 `No tables found`，需要换源或增加本地行业映射文件导入 fallback。
 3. 行业归属数据源为 C 级，后续最好补一个更权威的申万/中信来源或人工小样本复核流程。
 4. 中证权重接口只有最新快照时，历史日期不能标为真实历史权重，只能标为“最近快照近似”或直接拒绝。
 
@@ -325,29 +368,29 @@ benchmark_industry_weight: 6
 优先做数据源稳定性，不扩算法：
 
 1. 给 `benchmark-members` 增加本地文件导入 fallback，支持把中证官网下载的 `closeweight.xls` 手动放到 `data/cache/benchmark_members/{index_code}/` 后解析入库。
-2. 用慢速参数重跑 `stock-industry` 全量，建议从 `--request-interval 1 --retry 2` 起步；如果仍 429，把 interval 提到 2-3 秒。
-3. 完成申万行业全量归属入库后，再重新跑两个指数的行业权重聚合，目标是 `coverage_pct >= 95%`。
+2. 给 `stock-industry` 增加本地行业映射文件导入 fallback，例如支持 CSV/XLSX: `stock_code, stock_name, industry_name, effective_date, source_name`。
+3. 用本地 fallback 补齐行业归属后，再重新跑两个指数的行业权重聚合，目标是 `coverage_pct >= 95%`。
 4. 手工对照一份行情软件或指数公司行业分布截图，记录 `行业名 / 本地权重 / 对照权重 / 差值`，差值超过 1pp 的行业逐项解释。
 
-建议命令:
-
-```powershell
-.venv\Scripts\fund-research.exe update `
-  --domains stock-industry `
-  --request-interval 1 `
-  --retry 2 `
-  --db-path data\benchmark_validation.sqlite
-```
-
-分批调试命令:
+当前不建议继续反复撞乐咕全量页面。若只是验证 CLI 链路，可用单行业 smoke:
 
 ```powershell
 .venv\Scripts\fund-research.exe update `
   --domains stock-industry `
   --industry-symbol 801120.SI `
-  --industry-symbol 801780.SI `
   --request-interval 1 `
   --retry 1 `
+  --industry-batch-size 1 `
+  --db-path data\benchmark_validation.sqlite
+```
+
+补齐本地行业映射 fallback 后，再重新聚合:
+
+```powershell
+.venv\Scripts\fund-research.exe update `
+  --domains benchmark-industry `
+  --index-symbol sh000300 `
+  --index-symbol sh000905 `
   --db-path data\benchmark_validation.sqlite
 ```
 

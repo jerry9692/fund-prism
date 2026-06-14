@@ -1406,7 +1406,7 @@ def _chunked_symbols(symbols: list[str], batch_size: int) -> list[list[str]]:
 
 
 def _sw_industry_symbol_cache_path(cache_dir: Path) -> Path:
-    return cache_dir / "stock_industry" / "sw_third_symbols.json"
+    return cache_dir / "stock_industry" / "sw_level_one_symbols.json"
 
 
 def _read_sw_industry_symbol_cache(cache_dir: Path) -> list[str]:
@@ -1429,7 +1429,7 @@ def _write_sw_industry_symbol_cache(
     cache_path = _sw_industry_symbol_cache_path(cache_dir)
     payload = {
         "fetched_at": datetime.now().isoformat(timespec="seconds"),
-        "source": "akshare.sw_index_third_info",
+        "source": "akshare.sw_index_first_info",
         "symbols": sorted(symbols),
     }
     try:
@@ -1439,7 +1439,7 @@ def _write_sw_industry_symbol_cache(
             encoding="utf-8",
         )
     except OSError as exc:
-        warnings.append(f"申万三级行业列表缓存写入失败: {exc}")
+        warnings.append(f"申万一级行业列表缓存写入失败: {exc}")
 
 
 def _resolve_sw_industry_symbols(
@@ -1452,9 +1452,9 @@ def _resolve_sw_industry_symbols(
     except Exception as exc:
         cached = _read_sw_industry_symbol_cache(cache_dir)
         if cached:
-            warnings.append(f"申万三级行业列表实时获取失败，使用本地缓存: {exc}")
+            warnings.append(f"申万一级行业列表实时获取失败，使用本地缓存: {exc}")
             return cached
-        raise RuntimeError(f"申万三级行业列表实时获取失败且无本地缓存: {exc}") from exc
+        raise RuntimeError(f"申万一级行业列表实时获取失败且无本地缓存: {exc}") from exc
 
     if symbols:
         _write_sw_industry_symbol_cache(cache_dir, symbols, warnings)
@@ -1462,9 +1462,9 @@ def _resolve_sw_industry_symbols(
 
     cached = _read_sw_industry_symbol_cache(cache_dir)
     if cached:
-        warnings.append("申万三级行业列表实时获取为空，使用本地缓存")
+        warnings.append("申万一级行业列表实时获取为空，使用本地缓存")
         return cached
-    raise RuntimeError("申万三级行业列表实时获取为空且无本地缓存")
+    raise RuntimeError("申万一级行业列表实时获取为空且无本地缓存")
 
 
 def upsert_akshare_stock_industry_membership(

@@ -346,7 +346,7 @@ class AkshareAdapter(BaseDataAdapter):
             return self._error_result("benchmark_index_member", started_at, exc)
 
     def _sw_industry_symbols(self) -> list[str]:
-        data = pd.DataFrame(self.ak.sw_index_third_info())
+        data = pd.DataFrame(self.ak.sw_index_first_info())
         if "行业代码" not in data.columns:
             return []
         return [
@@ -358,7 +358,8 @@ class AkshareAdapter(BaseDataAdapter):
         try:
             return pd.DataFrame(self.ak.sw_index_third_cons(symbol))
         except ValueError as exc:
-            if "Length mismatch" not in str(exc):
+            message = str(exc)
+            if "Length mismatch" not in message and "No tables found" not in message:
                 raise
             url = f"https://legulegu.com/stockdata/index-composition?industryCode={symbol}"
             response = requests.get(

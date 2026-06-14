@@ -66,12 +66,12 @@ AKShare 本地源码显示，权重接口下载路径形如：
 | 数据 | AKShare 接口 | 底层来源 | 优点 | 风险 |
 |------|--------------|----------|------|------|
 | 申万一级/二级/三级行业 taxonomy | `sw_index_first_info()` / `sw_index_second_info()` / `sw_index_third_info()` | 乐咕乐股申万行业页 | 有行业代码和层级 | 非官方，页面解析风险 |
-| 申万三级行业成分 | `sw_index_third_cons(symbol)` | 乐咕乐股 | 返回股票及申万1/2/3级 | 需要遍历三级行业，调用量较大 |
+| 申万一级行业成分 | `sw_index_third_cons(801xxx.SI)` | 乐咕乐股 | 返回股票及申万1级字段 | 第一版只落一级归属，应遍历一级 symbol；不要默认遍历 `850xxx.SI` 三级 symbol |
 | 东方财富行业板块列表 | `stock_board_industry_name_em()` | 东方财富 | 调用简单 | 行业体系不是申万/中信正式口径 |
 | 东方财富行业板块成分 | `stock_board_industry_cons_em(symbol)` | 东方财富 | 成分可得 | 行业口径更偏行情板块 |
 | 已有持仓披露行业 | `fund_disclosed_holdings.industry` | 基金披露/AKShare | 已入库 | 只覆盖基金持仓，不覆盖指数全成分 |
 
-推荐第一版行业体系：申万一级，派生自 `sw_index_third_cons()` 返回的 `申万1级` 字段。
+推荐第一版行业体系：申万一级，派生自 `sw_index_third_cons(801xxx.SI)` 返回的 `申万1级` 字段。
 
 理由：
 
