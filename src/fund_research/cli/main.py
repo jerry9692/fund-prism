@@ -463,6 +463,16 @@ def check_dynamic_attribution(
         "--index-symbol",
         help="动态归因基准指数代码，如 sh000300；不传则按基金资料解析或默认 sh000300",
     ),
+    min_report_date: str | None = typer.Option(
+        None,
+        "--min-report-date",
+        help="只检查不早于该日期的持仓报告期，格式 YYYY-MM-DD",
+    ),
+    max_report_date: str | None = typer.Option(
+        None,
+        "--max-report-date",
+        help="只检查不晚于该日期的持仓报告期，格式 YYYY-MM-DD",
+    ),
     min_return_observations: int = typer.Option(
         3,
         "--min-return-observations",
@@ -472,6 +482,21 @@ def check_dynamic_attribution(
         180,
         "--max-snapshot-age-days",
         help="基准行业权重快照最大允许年龄",
+    ),
+    ready_only: bool = typer.Option(
+        False,
+        "--ready-only",
+        help="只显示已经满足动态归因运行条件的样本",
+    ),
+    limit: int | None = typer.Option(
+        None,
+        "--limit",
+        help="最多显示多少条候选样本",
+    ),
+    output_json: bool = typer.Option(
+        False,
+        "--json",
+        help="以 JSON 输出检查结果，便于脚本读取",
     ),
     require_ready: bool = typer.Option(
         False,
@@ -492,9 +517,20 @@ def check_dynamic_attribution(
             session,
             set(fund_code) if fund_code else None,
             benchmark_symbol=benchmark_symbol,
+            min_report_date=date.fromisoformat(min_report_date) if min_report_date else None,
+            max_report_date=date.fromisoformat(max_report_date) if max_report_date else None,
             min_return_observations=min_return_observations,
             max_snapshot_age_days=max_snapshot_age_days,
+            ready_only=ready_only,
+            limit=limit,
         )
+
+    ready_count = sum(1 for row in rows if row["is_ready"])
+    if output_json:
+        console.print_json(data={"ready": ready_count, "total": len(rows), "rows": rows})
+        if require_ready and ready_count == 0:
+            raise typer.Exit(code=1)
+        return
 
     table = Table(title="动态归因运行条件检查")
     table.add_column("ready")
@@ -536,10 +572,98 @@ def check_dynamic_attribution(
         )
 
     console.print(table)
-    ready_count = sum(1 for row in rows if row["is_ready"])
     console.print(f"ready={ready_count}/{len(rows)}")
     if require_ready and ready_count == 0:
         raise typer.Exit(code=1)
+
+
+@app.command("create-dynamic-attribution-experiment")
+def create_dynamic_attribution_experiment(
+    db_path: DbPathOption = None,
+    report_date: str = typer.Option(
+        ...,
+        "--report-date",
+        help="只从该持仓报告期的 ready 样本创建实验，格式 YYYY-MM-DD",
+    ),
+    fund_code: FundCodeOption = None,
+    benchmark_symbol: str | None = typer.Option(
+        None,
+        "--benchmark-symbol",
+        "--index-symbol",
+        help="动态归因基准指数代码，如 sh000300；不传则按基金资料解析或默认 sh000300",
+    ),
+    experiment_name: str = typer.Option(
+        "Dynamic attribution ready sample",
+        "--experiment-name",
+        help="实验名称",
+    ),
+    algorithm_version: str = typer.Option(
+        "0.1.0",
+        "--algorithm-version",
+        help="算法版本",
+    ),
+    min_return_observations: int = typer.Option(
+        3,
+        "--min-return-observations",
+        help="每个报告期最少基准收益观测数",
+    ),
+    max_snapshot_age_days: int = typer.Option(
+        180,
+        "--max-snapshot-age-days",
+        help="基准行业权重快照最大允许年龄",
+    ),
+    limit: int | None = typer.Option(
+        None,
+        "--limit",
+        help="最多纳入多少只 ready 基金",
+    ),
+) -> None:
+    """从指定报告期的 ready 样本创建动态归因实验。"""
+    from sqlalchemy.orm import sessionmaker
+
+    from fund_research.db.session import create_engine_from_path
+    from fund_research.experiments.manager import create_experiment
+    from fund_research.experiments.readiness import assess_dynamic_attribution_readiness
+
+    target_report_date = date.fromisoformat(report_date)
+    engine = create_engine_from_path(db_path)
+    session_factory = sessionmaker(bind=engine)
+    with session_factory() as session:
+        rows = assess_dynamic_attribution_readiness(
+            session,
+            set(fund_code) if fund_code else None,
+            benchmark_symbol=benchmark_symbol,
+            min_report_date=target_report_date,
+            max_report_date=target_report_date,
+            min_return_observations=min_return_observations,
+            max_snapshot_age_days=max_snapshot_age_days,
+            ready_only=True,
+            limit=limit,
+        )
+        sample_fund_codes = sorted({row["fund_code"] for row in rows})
+        if not sample_fund_codes:
+            console.print("[red]未找到满足动态归因运行条件的样本，未创建实验[/]")
+            raise typer.Exit(code=1)
+
+        parameters = {
+            "report_dates": [report_date],
+            "min_return_observations": min_return_observations,
+            "max_benchmark_weight_snapshot_age_days": max_snapshot_age_days,
+        }
+        if benchmark_symbol:
+            parameters["benchmark_symbol"] = benchmark_symbol
+        exp = create_experiment(
+            session,
+            experiment_name=experiment_name,
+            algorithm_name="dynamic_attribution",
+            algorithm_version=algorithm_version,
+            parameters=parameters,
+            sample_fund_codes=sample_fund_codes,
+        )
+
+    console.print(f"[green]OK[/] 已创建动态归因实验: id={exp.id}")
+    console.print(f"report_date={report_date}, funds={len(sample_fund_codes)}")
+    console.print(f"parameters={json.dumps(parameters, ensure_ascii=False)}")
 
 
 @app.command()

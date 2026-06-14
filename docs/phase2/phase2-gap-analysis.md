@@ -1,0 +1,124 @@
+# Phase 2 Gap Analysis
+
+Date: 2026-06-14
+
+This note compares the current Phase 2 implementation with the v0.4 overall
+requirements and `docs/phase2/requirements.md`. It is intentionally conservative:
+the project should prefer `needs_review` over unsupported high-confidence output.
+
+## Current Direction
+
+The implementation is still aligned with v0.4.
+
+- Estimated outputs remain isolated behind `estimated_*` fields or Phase 2 result
+  tables with non-factual conclusion status.
+- Dynamic attribution refuses to use future benchmark snapshots or proxy benchmark
+  industry weights.
+- Experiment readiness now explains why a fund/report date cannot run.
+- Raw third-party data stays local and ignored by git.
+- Experiment CRUD, runner, validation report, CLI/API readiness, and result
+  recording are in place.
+
+The main drift is priority, not principle: recent work focused heavily on real
+benchmark data for dynamic attribution, while Phase 2 still needs stronger
+simulated holding backtests, scoring backtests, manual review, and controlled UI.
+
+Estimated Phase 2 completion: about 52%.
+
+## Completion Breakdown
+
+| Area | Estimate | Notes |
+| --- | ---: | --- |
+| P2A experiment foundation | 90-95% | CRUD, runner, API, failure recording, tests are mostly ready. |
+| P2B algorithm validation | 50-60% | Algorithms run, but simulated holding and scoring need validation-grade backtests. |
+| P2C controlled product views | 25-35% | Backend readiness exists; frontend and review flows are still thin. |
+| Final Phase 2 acceptance | 15-20% | Needs full realistic loop, frontend checks, and check-data acceptance. |
+
+## Completed Since P2C
+
+- Dynamic attribution readiness checker for fund/report-date candidates.
+- CLI/API creation of dynamic attribution experiments from ready candidates.
+- Report-date filtering in dynamic attribution runner.
+- Strict benchmark industry weight gating.
+- Phase 2 domain result persistence:
+  - `simulated_holding_result`
+  - `dynamic_attribution_result`
+  - `scoring_result`
+
+## Remaining Acceptance Gaps
+
+### Simulated Holding
+
+Current runner still uses a naive disclosed-holding replication path for the
+experiment batch. This is useful as a baseline, but it is not yet the intended
+validation-grade simulation path.
+
+Next acceptance target:
+
+- Select at least 30 funds with multiple disclosure periods.
+- Use earlier disclosure and stock/NAV windows to estimate holdings.
+- Validate against later disclosed holdings.
+- Record top holding recall, industry correlation, tracking error, input
+  coverage, and failure taxonomy.
+- Treat failed or low-quality samples as `needs_review`.
+
+### Dynamic Attribution
+
+Current implementation is useful and more trustworthy than the earlier proxy
+path, but it is mostly a disclosed-holding attribution validation loop. It does
+not yet prove that simulated-holding-driven dynamic attribution is reliable.
+
+Next acceptance target:
+
+- Keep `disclosed_holding_attribution` conceptually separate from
+  `estimated_holding_dynamic_attribution`.
+- Run dynamic attribution only when required real benchmark returns, benchmark
+  industry weights, stock returns, and holding industry mappings are present.
+- Attach residual and data quality metadata to result tables and UI.
+- Do not block all Phase 2 work on unavailable historical CSI files; use local
+  historical files or optional token-based providers when available.
+
+### Scoring
+
+Current scoring isolates unverified estimated dimensions, which is correct. It
+still needs a real backtest before it can become a default product conclusion.
+
+Next acceptance target:
+
+- Build a deterministic-only scoring version first.
+- Use NAV-derived return/risk/drawdown plus stable metadata dimensions when
+  available.
+- Run grouped future-return and IC backtests.
+- Persist `scoring_backtest` rows.
+- Keep scores experimental until monotonicity and sample coverage are acceptable.
+
+### Manual Review
+
+The `reviewer_annotation` table exists, but the workflow is not yet productized.
+
+Next acceptance target:
+
+- Add minimal API and UI for manual validation.
+- Allow reviewer notes, lock/exclude decisions, and evidence references.
+- Ensure review state can downgrade or block estimated conclusions.
+
+### Frontend
+
+Visual polish can wait. Phase 2 needs controlled truthfulness first.
+
+Next acceptance target:
+
+- Add pages/panels for experiment readiness, failure reasons, estimated result
+  labels, validation metrics, and manual review.
+- Keep API base URL configurable.
+- Avoid presenting experimental results as default high-confidence conclusions.
+
+## Recommended Next Work Order
+
+1. Commit the current readiness/result-persistence/doc updates.
+2. Run full backend tests and lint.
+3. Build simulated holding validation with a small real sample before expanding.
+4. Add scoring backtest MVP and persist `scoring_backtest`.
+5. Add manual review API/UI.
+6. Improve frontend information architecture, then polish visuals.
+

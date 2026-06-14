@@ -182,3 +182,50 @@ def test_dynamic_attribution_readiness_counts_close_price_observations(
     assert row["is_ready"] is True
     assert row["stock_return_weight_coverage"] == 1.0
     assert row["benchmark_return_observations"] == 5
+
+
+def test_dynamic_attribution_readiness_filters_ready_candidates(
+    test_session: Session,
+) -> None:
+    """Candidate discovery should support date filters, ready-only, and limits."""
+    old_report_date = date(2026, 3, 31)
+    ready_report_date = date(2026, 6, 1)
+    test_session.add_all([
+        FundDisclosedHoldings(
+            fund_code="000001",
+            report_date=old_report_date,
+            asset_type="股票",
+            security_code="688012",
+            security_name="中微公司",
+            weight_pct=100.0,
+            industry="电子",
+            data_source_level="LOCAL",
+        ),
+        FundDisclosedHoldings(
+            fund_code="000002",
+            report_date=ready_report_date,
+            asset_type="股票",
+            security_code="300308",
+            security_name="中际旭创",
+            weight_pct=100.0,
+            industry="通信",
+            data_source_level="LOCAL",
+        ),
+    ])
+    _seed_market_data(test_session, report_date=old_report_date, stock_codes=["688012"])
+    _seed_market_data(test_session, report_date=ready_report_date, stock_codes=["300308"])
+    _seed_benchmark_weights(test_session, snapshot_date=date(2026, 5, 29))
+    test_session.commit()
+
+    rows = assess_dynamic_attribution_readiness(
+        test_session,
+        benchmark_symbol="sh000300",
+        min_report_date=date(2026, 5, 29),
+        ready_only=True,
+        limit=1,
+    )
+
+    assert len(rows) == 1
+    assert rows[0]["fund_code"] == "000002"
+    assert rows[0]["report_date"] == "2026-06-01"
+    assert rows[0]["is_ready"] is True

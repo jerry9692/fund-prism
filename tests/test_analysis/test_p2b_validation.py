@@ -14,15 +14,19 @@ from datetime import date, timedelta
 import numpy as np
 import pandas as pd
 from fastapi.testclient import TestClient
+from sqlalchemy import select as sa_select
 from sqlalchemy.orm import Session
 
 from fund_research.analysis.simulated_holding import run_simulation
 from fund_research.db.models import (
     BenchmarkIndustryWeight,
+    DynamicAttributionResult,
     ExperimentResult,
     FundDisclosedHoldings,
     FundMain,
     FundNAV,
+    ScoringResult,
+    SimulatedHoldingResult,
     StockDaily,
 )
 
@@ -321,6 +325,11 @@ class TestRunExperimentPipeline:
         assert metrics["matched_stock_count"] == 2
         assert metrics["return_sample_count"] > 20
         assert metrics["estimated_overall_tracking_error"] < 0.001
+        persisted = test_session.scalars(sa_select(SimulatedHoldingResult)).one()
+        assert persisted.fund_code == "000001"
+        assert persisted.conclusion_status == "estimated"
+        assert persisted.input_coverage == 1.0
+        assert persisted.holdings_detail
 
     def test_run_experiment_unknown_algorithm_returns_failure(
         self,
@@ -452,6 +461,11 @@ class TestRunExperimentPipeline:
         if results[0].is_success:
             assert "estimated_total_allocation_effect" in m
             assert "estimated_total_selection_effect" in m
+        persisted = test_session.scalars(sa_select(DynamicAttributionResult)).one()
+        assert persisted.fund_code == "000001"
+        assert persisted.conclusion_status == "estimated"
+        assert persisted.detail["benchmark_symbol"] == "sh000300"
+        assert persisted.detail["input_quality"]["uses_real_benchmark_weights"] is True
 
     def test_run_dynamic_attribution_resolves_benchmark_from_fund_profile(
         self,
@@ -700,6 +714,91 @@ class TestRunExperimentPipeline:
         assert result.error_message == "缺少可用基准行业权重: sh000300"
         assert any("基准行业权重快照过旧" in warning for warning in (result.warnings or []))
 
+    def test_run_dynamic_attribution_respects_report_date_filter(
+        self,
+        test_client: TestClient,
+        test_session: Session,
+    ):
+        """动态归因应能只运行 readiness 选出的报告期，避免被同基金旧报告期拖失败。"""
+        old_report = date(2024, 1, 1)
+        ready_report = date(2024, 6, 1)
+        for report_date, suffix in ((old_report, "old"), (ready_report, "new")):
+            for i, industry in enumerate(("tech", "finance")):
+                stock_code = f"{i:05d}{0 if suffix == 'old' else 1}"
+                test_session.add(FundDisclosedHoldings(
+                    fund_code="000001",
+                    report_date=report_date,
+                    security_code=stock_code,
+                    asset_type="股票",
+                    weight_pct=50.0,
+                    industry=industry,
+                    rank_in_holdings=i + 1,
+                    data_source_level="LOCAL",
+                ))
+                for day in range(6):
+                    test_session.add(StockDaily(
+                        stock_code=stock_code,
+                        trade_date=report_date + timedelta(days=day),
+                        close_price=100.0 + day,
+                        daily_return=0.01,
+                        data_source_level="LOCAL",
+                    ))
+        for day in range(6):
+            test_session.add(StockDaily(
+                stock_code="sh000300",
+                trade_date=ready_report + timedelta(days=day),
+                close_price=4000.0 + day,
+                daily_return=0.005,
+                data_source_level="LOCAL",
+            ))
+        for industry, weight_pct in (("finance", 50.0), ("tech", 50.0)):
+            test_session.add(BenchmarkIndustryWeight(
+                benchmark_symbol="sh000300",
+                snapshot_date=ready_report,
+                classification_type="SW",
+                classification_level=1,
+                industry_code=None,
+                industry_name=industry,
+                weight_pct=weight_pct,
+                member_count=10,
+                unmapped_weight_pct=0.0,
+                coverage_pct=100.0,
+                source_member_snapshot=ready_report,
+                source_industry_snapshot=ready_report,
+                algorithm_version="test",
+                warnings=[],
+            ))
+        test_session.commit()
+
+        create_resp = test_client.post("/api/v2/experiments", json={
+            "experiment_name": "attr-report-filter",
+            "algorithm_name": "dynamic_attribution",
+            "parameters": {
+                "benchmark_symbol": "sh000300",
+                "report_dates": ["2024-06-01"],
+            },
+            "sample_fund_codes": ["000001"],
+        })
+        exp_id = create_resp.json()["data"]["id"]
+
+        run_resp = test_client.post(f"/api/v2/experiments/{exp_id}/run")
+        assert run_resp.status_code == 200
+        assert run_resp.json()["data"]["status"] == "completed"
+
+        from sqlalchemy import select as sa_select
+        result = test_session.scalars(
+            sa_select(ExperimentResult).where(ExperimentResult.experiment_id == int(exp_id))
+        ).one()
+        metrics = result.metrics or {}
+        assert result.is_success
+        assert metrics["normalized_weight_sum_by_report"] == {"2024-06-01": 1.0}
+        assert metrics["benchmark_weight_snapshot_by_report"] == {"2024-06-01": "2024-06-01"}
+        assert metrics["report_date_filter"] == {
+            "report_dates": ["2024-06-01"],
+            "min_report_date": None,
+            "max_report_date": None,
+        }
+
     def test_run_scoring_excludes_unverified_estimated_dims(
         self,
         test_client: TestClient,
@@ -726,3 +825,7 @@ class TestRunExperimentPipeline:
         data = run_resp.json()["data"]
         # Scoring should at least attempt to run for the available funds
         assert data["fund_count"] > 0
+        persisted = test_session.scalars(sa_select(ScoringResult)).all()
+        assert {row.fund_code for row in persisted} == {"000000", "000001"}
+        assert all(row.conclusion_status == "needs_review" for row in persisted)
+        assert all(row.contains_estimated is True for row in persisted)

@@ -1,11 +1,17 @@
 """Phase 2 v2 Tool API tests."""
 
-from datetime import date
+from datetime import date, timedelta
 
 from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session
 
-from fund_research.db.models import AlgorithmExperiment, ExperimentResult
+from fund_research.db.models import (
+    AlgorithmExperiment,
+    BenchmarkIndustryWeight,
+    ExperimentResult,
+    FundDisclosedHoldings,
+    StockDaily,
+)
 
 
 def test_create_experiment_accepts_json_dates(
@@ -65,6 +71,96 @@ def test_create_dynamic_attribution_experiment_stores_parameters(
         "min_return_observations": 5,
     }
     assert isinstance(exp.parameters["min_return_observations"], int)
+
+
+def test_dynamic_attribution_readiness_endpoint_returns_candidates(
+    test_client: TestClient,
+    test_session: Session,
+) -> None:
+    report_date = date(2026, 6, 1)
+    test_session.add(
+        FundDisclosedHoldings(
+            fund_code="000001",
+            report_date=report_date,
+            asset_type="股票",
+            security_code="688012",
+            security_name="中微公司",
+            weight_pct=100.0,
+            industry="电子",
+            data_source_level="LOCAL",
+        )
+    )
+    for stock_code in ("688012", "sh000300"):
+        for index in range(5):
+            test_session.add(
+                StockDaily(
+                    stock_code=stock_code,
+                    trade_date=report_date + timedelta(days=index),
+                    close_price=100.0 + index,
+                    data_source_level="LOCAL",
+                )
+            )
+    test_session.add(
+        BenchmarkIndustryWeight(
+            benchmark_symbol="sh000300",
+            snapshot_date=date(2026, 5, 29),
+            classification_type="SW",
+            classification_level=1,
+            industry_name="电子",
+            weight_pct=100.0,
+            member_count=1,
+            unmapped_weight_pct=0.0,
+            coverage_pct=100.0,
+            source_member_snapshot=date(2026, 5, 29),
+            source_industry_snapshot=date(2026, 5, 29),
+            algorithm_version="test",
+            warnings=[],
+        )
+    )
+    test_session.commit()
+
+    response = test_client.get(
+        "/api/v2/experiments/dynamic-attribution/readiness",
+        params={
+            "fund_code": "000001",
+            "benchmark_symbol": "sh000300",
+            "ready_only": True,
+            "limit": 1,
+        },
+    )
+
+    payload = response.json()
+    assert response.status_code == 200
+    assert payload["conclusion_status"] == "computed"
+    assert payload["data"]["ready"] == 1
+    assert payload["data"]["total"] == 1
+    assert payload["data"]["rows"][0]["fund_code"] == "000001"
+    assert payload["data"]["rows"][0]["is_ready"] is True
+
+    create_response = test_client.post(
+        "/api/v2/experiments/dynamic-attribution/from-ready",
+        json={
+            "experiment_name": "ready attr",
+            "report_date": "2026-06-01",
+            "benchmark_symbol": "sh000300",
+            "limit": 1,
+        },
+    )
+    create_payload = create_response.json()
+    assert create_response.status_code == 200
+    assert create_payload["conclusion_status"] == "computed"
+    assert create_payload["data"]["sample_fund_codes"] == ["000001"]
+    assert create_payload["data"]["parameters"] == {
+        "benchmark_symbol": "sh000300",
+        "report_dates": ["2026-06-01"],
+        "min_return_observations": 3,
+        "max_benchmark_weight_snapshot_age_days": 180,
+    }
+    exp = test_session.get(AlgorithmExperiment, int(create_payload["data"]["experiment_id"]))
+    assert exp is not None
+    assert exp.algorithm_name == "dynamic_attribution"
+    assert exp.sample_fund_codes == ["000001"]
+    assert exp.parameters["report_dates"] == ["2026-06-01"]
 
 
 def test_record_experiment_result_accepts_json_date(

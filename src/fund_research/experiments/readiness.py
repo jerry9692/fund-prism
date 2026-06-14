@@ -26,8 +26,12 @@ def assess_dynamic_attribution_readiness(
     fund_codes: set[str] | None = None,
     *,
     benchmark_symbol: str | None = None,
+    min_report_date: date_type | None = None,
+    max_report_date: date_type | None = None,
     min_return_observations: int = MIN_ATTRIBUTION_RETURN_OBSERVATIONS,
     max_snapshot_age_days: int = MAX_ATTRIBUTION_BENCHMARK_WEIGHT_STALENESS_DAYS,
+    ready_only: bool = False,
+    limit: int | None = None,
 ) -> list[dict]:
     """Assess whether disclosed holdings can run dynamic attribution."""
     report_stmt = (
@@ -38,6 +42,10 @@ def assess_dynamic_attribution_readiness(
     )
     if fund_codes:
         report_stmt = report_stmt.where(FundDisclosedHoldings.fund_code.in_(fund_codes))
+    if min_report_date is not None:
+        report_stmt = report_stmt.where(FundDisclosedHoldings.report_date >= min_report_date)
+    if max_report_date is not None:
+        report_stmt = report_stmt.where(FundDisclosedHoldings.report_date <= max_report_date)
 
     rows = []
     for fund_code, report_date in session.execute(report_stmt).all():
@@ -51,6 +59,11 @@ def assess_dynamic_attribution_readiness(
                 max_snapshot_age_days=max_snapshot_age_days,
             )
         )
+    rows.sort(key=lambda row: (0 if row["is_ready"] else 1, row["fund_code"], row["report_date"]))
+    if ready_only:
+        rows = [row for row in rows if row["is_ready"]]
+    if limit is not None and limit >= 0:
+        rows = rows[:limit]
     return rows
 
 

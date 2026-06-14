@@ -19,6 +19,15 @@ from fund_research.db.models import (
     FundNAV,
     StockDaily,
 )
+from fund_research.db.models import (
+    DynamicAttributionResult as DbDynamicAttributionResult,
+)
+from fund_research.db.models import (
+    ScoringResult as DbScoringResult,
+)
+from fund_research.db.models import (
+    SimulatedHoldingResult as DbSimulatedHoldingResult,
+)
 from fund_research.experiments.manager import record_result
 
 DEFAULT_ATTRIBUTION_BENCHMARK_SYMBOL = "sh000300"
@@ -280,6 +289,16 @@ def _run_simulated_holding_batch(
                 failure_reason = f"跟踪误差偏高 TE={tracking_error:.4f}"
             is_success = failure_reason is None
             warnings = sim_result.warnings if not is_success else []
+            _persist_simulated_holding_result(
+                db,
+                exp,
+                fund_code=fund_code,
+                sim_result=sim_result,
+                metrics=metrics,
+                warning_messages=warnings,
+                raw_holding_count=len(raw_holding_weights),
+                is_success=is_success,
+            )
 
             record_result(
                 db,
@@ -327,15 +346,26 @@ def _run_dynamic_attribution_batch(
 
     for fund_code in fund_codes:
         try:
-            holdings_rows = db.scalars(
+            exact_report_dates, min_report_date, max_report_date = _resolve_report_date_filters(params)
+            holdings_stmt = (
                 sa_select(FundDisclosedHoldings)
                 .where(FundDisclosedHoldings.fund_code == fund_code)
                 .order_by(FundDisclosedHoldings.report_date)
-            ).all()
+            )
+            if exact_report_dates:
+                holdings_stmt = holdings_stmt.where(
+                    FundDisclosedHoldings.report_date.in_(exact_report_dates)
+                )
+            if min_report_date is not None:
+                holdings_stmt = holdings_stmt.where(FundDisclosedHoldings.report_date >= min_report_date)
+            if max_report_date is not None:
+                holdings_stmt = holdings_stmt.where(FundDisclosedHoldings.report_date <= max_report_date)
+            holdings_rows = db.scalars(holdings_stmt).all()
 
             if not holdings_rows:
-                _record_failure(db, exp.id, fund_code, "无持仓数据")
-                results.append(_failure_result(fund_code, "无持仓数据"))
+                error = "无符合报告期过滤条件的持仓数据" if _has_report_date_filter(params) else "无持仓数据"
+                _record_failure(db, exp.id, fund_code, error)
+                results.append(_failure_result(fund_code, error))
                 continue
 
             stock_holdings = [
@@ -497,6 +527,11 @@ def _run_dynamic_attribution_batch(
                     for report_date, stats in benchmark_weight_stats.items()
                 },
                 "benchmark_only_sector_count_by_report": benchmark_only_sector_counts,
+                "report_date_filter": _report_date_filter_metadata(
+                    exact_report_dates,
+                    min_report_date,
+                    max_report_date,
+                ),
             }
             is_success = len(attr_result.periods) > 0 and abs(attr_result.total_residual) < 0.05
             error_message = None if is_success else "归因残差偏高"
@@ -505,6 +540,15 @@ def _run_dynamic_attribution_batch(
                 *return_warnings,
                 *benchmark_weight_warnings,
             ]
+            _persist_dynamic_attribution_result(
+                db,
+                exp,
+                fund_code=fund_code,
+                attr_result=attr_result,
+                metrics=metrics,
+                warning_messages=warnings,
+                is_success=is_success,
+            )
 
             record_result(
                 db,
@@ -675,6 +719,67 @@ def _resolve_benchmark_symbol(
             return symbol, f"fund_benchmark:{keyword}"
 
     return DEFAULT_ATTRIBUTION_BENCHMARK_SYMBOL, "default"
+
+
+def _has_report_date_filter(parameters: dict | None) -> bool:
+    params = parameters or {}
+    return any(
+        params.get(key)
+        for key in ("report_date", "report_dates", "min_report_date", "max_report_date")
+    )
+
+
+def _resolve_report_date_filters(
+    parameters: dict | None,
+) -> tuple[set[date_type] | None, date_type | None, date_type | None]:
+    """Resolve optional dynamic attribution report-date filters from experiment params."""
+    params = parameters or {}
+    exact_dates: set[date_type] = set()
+    report_date = params.get("report_date")
+    if report_date:
+        exact_dates.add(_parse_report_date_param(report_date, "report_date"))
+
+    report_dates = params.get("report_dates")
+    if report_dates:
+        if isinstance(report_dates, str):
+            report_dates = [report_dates]
+        for index, raw_date in enumerate(report_dates):
+            exact_dates.add(_parse_report_date_param(raw_date, f"report_dates[{index}]"))
+
+    min_report_date = (
+        _parse_report_date_param(params.get("min_report_date"), "min_report_date")
+        if params.get("min_report_date")
+        else None
+    )
+    max_report_date = (
+        _parse_report_date_param(params.get("max_report_date"), "max_report_date")
+        if params.get("max_report_date")
+        else None
+    )
+    return exact_dates or None, min_report_date, max_report_date
+
+
+def _parse_report_date_param(value, field_name: str) -> date_type:
+    if isinstance(value, date_type):
+        return value
+    if isinstance(value, str):
+        try:
+            return date_type.fromisoformat(value)
+        except ValueError as exc:
+            raise ValueError(f"{field_name} 必须是 YYYY-MM-DD: {value}") from exc
+    raise ValueError(f"{field_name} 必须是 YYYY-MM-DD: {value}")
+
+
+def _report_date_filter_metadata(
+    exact_report_dates: set[date_type] | None,
+    min_report_date: date_type | None,
+    max_report_date: date_type | None,
+) -> dict:
+    return {
+        "report_dates": sorted(str(report_date) for report_date in exact_report_dates or []),
+        "min_report_date": str(min_report_date) if min_report_date else None,
+        "max_report_date": str(max_report_date) if max_report_date else None,
+    }
 
 
 def _market_rows_to_return_df(rows: list[StockDaily]) -> pd.DataFrame:
@@ -859,6 +964,13 @@ def _run_scoring_batch(
             for fund_score in scoring.fund_scores:
                 is_success = fund_score.total_score > 0
                 warnings = scoring.warnings if not is_success else []
+                _persist_scoring_result(
+                    db,
+                    exp,
+                    fund_score=fund_score,
+                    scoring=scoring,
+                    warning_messages=warnings,
+                )
                 record_result(
                     db,
                     experiment_id=exp.id,
@@ -889,6 +1001,128 @@ def _run_scoring_batch(
                     results.append(_failure_result(fund_code, error))
 
     return results
+
+
+def _persist_simulated_holding_result(
+    db: Session,
+    exp: AlgorithmExperiment,
+    *,
+    fund_code: str,
+    sim_result,
+    metrics: dict,
+    warning_messages: list[str],
+    raw_holding_count: int,
+    is_success: bool,
+) -> None:
+    """Persist simulated holding periods into the Phase 2 result table."""
+    matched_count = int(metrics.get("matched_stock_count") or 0)
+    input_coverage = (
+        round(matched_count / raw_holding_count, 6)
+        if raw_holding_count > 0
+        else None
+    )
+    conclusion_status = "estimated" if is_success else "needs_review"
+    for period in sim_result.periods:
+        db.add(DbSimulatedHoldingResult(
+            fund_code=fund_code,
+            calc_date=period.calc_date,
+            algorithm_name=exp.algorithm_name,
+            algorithm_version=exp.algorithm_version,
+            parameters=exp.parameters or {},
+            holdings_detail=period.holdings,
+            tracking_error=period.tracking_error,
+            daily_rmse=period.tracking_error,
+            industry_correlation=metrics.get("estimated_overall_industry_correlation"),
+            top10_recall=metrics.get("estimated_overall_top10_recall"),
+            stock_weight_pct=period.stock_weight_pct,
+            bond_weight_pct=period.bond_weight_pct,
+            cash_weight_pct=period.cash_weight_pct,
+            confidence=sim_result.confidence,
+            conclusion_status=conclusion_status,
+            is_backtest=True,
+            backtest_report_date=period.calc_date,
+            warnings=warning_messages or sim_result.warnings,
+            input_coverage=input_coverage,
+        ))
+
+
+def _persist_dynamic_attribution_result(
+    db: Session,
+    exp: AlgorithmExperiment,
+    *,
+    fund_code: str,
+    attr_result,
+    metrics: dict,
+    warning_messages: list[str],
+    is_success: bool,
+) -> None:
+    """Persist Brinson attribution periods into the Phase 2 result table."""
+    conclusion_status = "estimated" if is_success else "needs_review"
+    for period in attr_result.periods:
+        active_return = period.portfolio_return - period.benchmark_return
+        residual_pct = (
+            abs(period.residual) / abs(active_return)
+            if abs(active_return) > 1e-12
+            else None
+        )
+        db.add(DbDynamicAttributionResult(
+            fund_code=fund_code,
+            period_start=period.period_start,
+            period_end=period.period_end,
+            algorithm_name=exp.algorithm_name,
+            algorithm_version=exp.algorithm_version,
+            parameters=exp.parameters or {},
+            total_return=period.portfolio_return,
+            beta_return=period.benchmark_return,
+            allocation_return=period.allocation_effect,
+            sector_rotation_return=period.allocation_effect,
+            stock_selection_return=period.selection_effect,
+            convertible_bond_return=None,
+            ipo_return=None,
+            residual=period.residual,
+            residual_pct=round(residual_pct, 6) if residual_pct is not None else None,
+            detail={
+                "method": attr_result.method,
+                "benchmark_symbol": metrics.get("benchmark_symbol"),
+                "benchmark_source": metrics.get("benchmark_source"),
+                "sector_details": period.sector_details,
+                "input_quality": {
+                    "uses_real_benchmark_returns": metrics.get("uses_real_benchmark_returns"),
+                    "uses_real_sector_returns": metrics.get("uses_real_sector_returns"),
+                    "uses_real_benchmark_weights": metrics.get("uses_real_benchmark_weights"),
+                    "min_stock_weight_coverage": metrics.get("min_stock_weight_coverage"),
+                },
+            },
+            confidence=attr_result.confidence,
+            conclusion_status=conclusion_status,
+            warnings=warning_messages,
+        ))
+
+
+def _persist_scoring_result(
+    db: Session,
+    exp: AlgorithmExperiment,
+    *,
+    fund_score,
+    scoring,
+    warning_messages: list[str],
+) -> None:
+    """Persist a composite score into the Phase 2 scoring result table."""
+    db.add(DbScoringResult(
+        fund_code=fund_score.fund_code,
+        calc_date=date_type.today(),
+        score_version=scoring.score_version,
+        algorithm_version=exp.algorithm_version,
+        weight_config=scoring.weight_config,
+        total_score=fund_score.total_score,
+        sub_scores=fund_score.sub_scores,
+        percentile_rank=fund_score.percentile_rank,
+        deduction_reasons=fund_score.deduction_reasons,
+        contains_estimated=fund_score.contains_estimated,
+        confidence="low" if fund_score.contains_estimated else "medium",
+        conclusion_status="needs_review" if fund_score.contains_estimated else "computed",
+        warnings=warning_messages or scoring.warnings,
+    ))
 
 
 def _record_failure(

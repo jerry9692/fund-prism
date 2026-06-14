@@ -220,3 +220,318 @@ metrics = {}
 - 同库数据链路、持仓行业回填、持仓与基准行情覆盖已经满足本样本的动态归因运行条件。
 - 仍然不能继续把该样本当作通过样本，因为 `2026-05-29` 基准行业权重晚于 `2026-03-31` 报告期。
 - 后续在扩展动态归因样本前，先运行 `check-dynamic-attribution --require-ready`，避免实验运行后才发现基础数据不满足 gate。
+
+### 候选样本发现扩展
+
+新增过滤参数:
+
+- `--min-report-date YYYY-MM-DD`: 只检查不早于该日期的报告期。
+- `--max-report-date YYYY-MM-DD`: 只检查不晚于该日期的报告期。
+- `--ready-only`: 只输出已满足运行条件的样本。
+- `--limit N`: 限制输出候选数量。
+- `--json`: 输出 JSON，便于脚本或前端调试读取。
+
+示例:
+
+```powershell
+.venv\Scripts\fund-research.exe check-dynamic-attribution `
+  --benchmark-symbol sh000300 `
+  --min-report-date 2026-05-29 `
+  --ready-only `
+  --limit 5 `
+  --json `
+  --db-path data\fund_research.duckdb
+```
+
+当前主库结果:
+
+```json
+{
+  "ready": 0,
+  "total": 0,
+  "rows": []
+}
+```
+
+同时新增 v2 Tool API:
+
+```text
+GET /api/v2/experiments/dynamic-attribution/readiness
+```
+
+支持 query 参数:
+
+- `fund_code`
+- `benchmark_symbol`
+- `min_report_date`
+- `max_report_date`
+- `min_return_observations`
+- `max_snapshot_age_days`
+- `ready_only`
+- `limit`
+
+该 API 返回统一 `APIResponse`，其中 `data.rows` 与 CLI JSON 行结构一致。
+
+### 从 ready 样本创建实验
+
+新增 runner 参数:
+
+- `report_date`: 单个报告期。
+- `report_dates`: 多个报告期。
+- `min_report_date`: 最早报告期。
+- `max_report_date`: 最晚报告期。
+
+动态归因 runner 会先按这些参数过滤 `fund_disclosed_holdings`，再构造行业权重和收益序列。这样 readiness 按报告期筛出的样本，可以安全转成实验参数，不会被同基金其他旧报告期拖失败。
+
+新增 CLI:
+
+```powershell
+.venv\Scripts\fund-research.exe create-dynamic-attribution-experiment `
+  --report-date 2026-06-01 `
+  --benchmark-symbol sh000300 `
+  --db-path data\fund_research.duckdb
+```
+
+行为:
+
+- 只检查指定 `--report-date` 的 ready 样本。
+- 找到样本时创建 `dynamic_attribution` pending 实验。
+- 实验参数自动写入 `report_dates=[report_date]`、`min_return_observations`、`max_benchmark_weight_snapshot_age_days`。
+- 找不到样本时返回非零退出码，且不创建实验。
+
+当前主库结果:
+
+```text
+未找到满足动态归因运行条件的样本，未创建实验
+```
+
+新增 v2 Tool API:
+
+```text
+POST /api/v2/experiments/dynamic-attribution/from-ready
+```
+
+请求体示例:
+
+```json
+{
+  "experiment_name": "ready attr",
+  "report_date": "2026-06-01",
+  "benchmark_symbol": "sh000300",
+  "limit": 10
+}
+```
+
+返回:
+
+- 有 ready 样本: 创建实验并返回 `experiment_id`、`sample_fund_codes`、`parameters`。
+- 无 ready 样本: 返回 `needs_review`，不创建实验。
+
+## 8. P2H 新报告期抓取尝试
+
+日期: 2026-06-14
+
+目标: 尝试补或抓一个 `2026-05-29` 之后报告期的真实基金持仓样本，然后用 `create-dynamic-attribution-experiment` 创建实验并跑真实动态归因闭环。
+
+### 执行记录
+
+先用 AKShare 按 2026 年重新抓取样本基金持仓:
+
+```powershell
+.venv\Scripts\fund-research.exe update `
+  --domains fund-holdings `
+  --report-date 2026-06-01 `
+  --db-path data\fund_research.duckdb
+```
+
+结果:
+
+| entity | requested | inserted | updated | skipped |
+|---|---:|---:|---:|---:|
+| `fund_holdings` | 30 | 329 | 68 | 0 |
+
+实际报告期分布:
+
+| report_date | fund_count | row_count |
+|---|---:|---:|
+| `2026-03-31` | 30 | 397 |
+
+结论: 截至 `2026-06-14`，当前 AKShare 持仓接口仍只返回 `2026Q1 / 2026-03-31` 披露持仓；没有 `2026-05-29` 之后的正式基金披露报告期。不能人为把 Q1 持仓改标为 2026-06 报告期。
+
+随后补齐 Q1 样本池的行业和行情:
+
+```powershell
+.venv\Scripts\fund-research.exe update `
+  --domains holding-industry-backfill `
+  --report-date 2026-03-31 `
+  --db-path data\fund_research.duckdb
+```
+
+结果:
+
+| entity | requested | updated | skipped |
+|---|---:|---:|---:|
+| `fund_holding_industry_backfill` | 397 | 306 | 91 |
+
+```powershell
+.venv\Scripts\fund-research.exe update `
+  --domains stock-daily `
+  --start 2026-03-31 `
+  --end 2026-06-14 `
+  --db-path data\fund_research.duckdb
+```
+
+结果:
+
+| entity | requested | inserted | updated | skipped |
+|---|---:|---:|---:|---:|
+| `stock_daily` | 266 | 12240 | 410 | 13 |
+
+### Readiness 汇总
+
+对 `2026-03-31`、`sh000300` 运行 readiness:
+
+| 指标 | 值 |
+|---|---:|
+| 样本基金报告期 | 30 |
+| ready 样本 | 0 |
+| 缺少不晚于报告期的基准行业权重 | 30 |
+| 存在持仓行业缺失 | 21 |
+| 股票行情覆盖不足 | 3 |
+
+已有 9 个样本的持仓行业、股票行情、基准行情都满足，唯一阻塞是 `sh000300` 基准行业权重快照:
+
+| fund_code | report_date | holding_count | missing_industry | stock_coverage | benchmark_obs | blocking_issue |
+|---|---|---:|---:|---:|---:|---|
+| `000001` | `2026-03-31` | 10 | 0 | 100.0% | 41 | 缺少不晚于报告期的 `sh000300` 基准行业权重 |
+| `000978` | `2026-03-31` | 10 | 0 | 100.0% | 41 | 同上 |
+| `110022` | `2026-03-31` | 13 | 0 | 100.0% | 41 | 同上 |
+| `260108` | `2026-03-31` | 14 | 0 | 100.0% | 41 | 同上 |
+| `340007` | `2026-03-31` | 10 | 0 | 100.0% | 41 | 同上 |
+| `450002` | `2026-03-31` | 10 | 0 | 100.0% | 41 | 同上 |
+| `519068` | `2026-03-31` | 10 | 0 | 100.0% | 41 | 同上 |
+| `519712` | `2026-03-31` | 10 | 0 | 100.0% | 41 | 同上 |
+| `519736` | `2026-03-31` | 11 | 0 | 100.0% | 41 | 同上 |
+
+创建实验门禁:
+
+```powershell
+.venv\Scripts\fund-research.exe create-dynamic-attribution-experiment `
+  --report-date 2026-03-31 `
+  --benchmark-symbol sh000300 `
+  --db-path data\fund_research.duckdb
+```
+
+结果:
+
+```text
+未找到满足动态归因运行条件的样本，未创建实验
+```
+
+### 结论
+
+- `2026-05-29` 之后报告期的真实基金披露持仓当前不可得，不能完成这一路径的真实动态归因闭环。
+- Q1 真实样本池已扩到 30 只基金，并补齐了大部分行业和行情数据。
+- 当前真实闭环唯一关键阻塞仍是历史基准行业权重: 需要 `2026-03-31` 或更早且不超过 180 天的 `sh000300` 成分权重快照。
+- 不能把 `2026-05-29` 最新快照倒填为 `2026-03-31`，否则会引入 look-ahead，违反当前 gating。
+
+下一步应二选一:
+
+1. 获取并本地导入 `2026-03-31` 可用的中证 `sh000300` 历史成分权重文件，再聚合 `benchmark_industry_weight`。
+2. 等待 `2026-06-30` 后正式披露的基金持仓数据出现，再走 `2026-05-29` 快照之后的新报告期闭环。
+
+## 9. P2I 历史成分权重文件检索
+
+日期: 2026-06-14
+
+目标: 获取 `2026-03-31` 或更早且不超过 180 天的真实中证 `sh000300` 成分权重文件，用于 Q1 动态归因真实闭环。
+
+### 官方公开文件与归档
+
+当前中证公开 `closeweight` URL 是覆盖式最新文件:
+
+```text
+https://oss-ch.csindex.com.cn/static/html/csindex/public/uploads/file/autofile/closeweight/000300closeweight.xls
+```
+
+该路径当前本地已有 `2026-05-29` 快照，晚于 `2026-03-31` 报告期，不能用于 Q1。
+
+查询 Internet Archive CDX:
+
+```powershell
+curl.exe -L "https://web.archive.org/cdx?url=https://oss-ch.csindex.com.cn/static/html/csindex/public/uploads/file/autofile/closeweight/000300closeweight.xls&output=json&fl=timestamp,original,statuscode,mimetype,digest&filter=statuscode:200&from=202501&to=202604"
+```
+
+返回可用归档:
+
+| archive_timestamp | source_url | status | mime | digest |
+|---|---|---:|---|---|
+| `20250109075310` | 中证 `000300closeweight.xls` | 200 | `application/vnd.ms-excel` | `IUIV7TNMYMP5BT6G5SM72YS3DYRRB3XW` |
+| `20250622134710` | 中证 `000300closeweight.xls` | 200 | `application/vnd.ms-excel` | `N5A3475ZJAI3GXMZWVYHJOH6ROR3TI6P` |
+
+继续查询 `2025-10` 到 `2026-03`:
+
+```powershell
+curl.exe -L "https://web.archive.org/cdx?url=https://oss-ch.csindex.com.cn/static/html/csindex/public/uploads/file/autofile/closeweight/000300closeweight.xls&output=json&fl=timestamp,original,statuscode,mimetype,digest&filter=statuscode:200&from=202510&to=202604"
+```
+
+结果:
+
+```json
+[]
+```
+
+### 下载并核验最近早于报告期的归档文件
+
+下载:
+
+```powershell
+curl.exe -L "https://web.archive.org/web/20250622134710id_/https://oss-ch.csindex.com.cn/static/html/csindex/public/uploads/file/autofile/closeweight/000300closeweight.xls" `
+  --output data\local\000300closeweight_20250622_webarchive.xls
+```
+
+本地文件:
+
+```text
+data/local/000300closeweight_20250622_webarchive.xls
+```
+
+该目录已在 `.gitignore`，不会提交第三方原始数据。
+
+Excel 核验:
+
+| 字段 | 值 |
+|---|---|
+| rows | 300 |
+| columns | 10 |
+| 文件内 `日期Date` | `20250530` |
+| 指数代码 | `300` |
+| 指数名称 | `沪深300` |
+| 权重列 | `权重(%)weight` |
+
+结论:
+
+- 归档文件是真实中证 `sh000300` 成分权重文件。
+- 但文件内日期是 `2025-05-30`，距离 `2026-03-31` 为 305 天。
+- 当前动态归因 gate 的最大快照年龄是 180 天，因此该文件不能用于默认真实闭环。
+- 未导入主库，避免把过旧权重误标为可用。
+
+### Tushare 可能路径
+
+Tushare Pro 的 `index_weight` 通常可以获取历史指数权重，但当前本地没有配置:
+
+```text
+FUND_TUSHARE_TOKEN=NOT_SET
+TUSHARE_TOKEN=NOT_SET
+.env=NOT_FOUND
+```
+
+若后续提供 Tushare token，可以新增或临时使用 `index_weight(index_code='000300.SH', start_date='20250331', end_date='20250331')` 一类接口抓取历史权重，再按当前 `benchmark-members -> stock-industry -> benchmark-industry` 链路入库验收。
+
+### 当前结论
+
+截至本轮检索，未拿到满足 gate 的 `2026-03-31` 前后 `sh000300` 历史成分权重文件。真实动态归因闭环仍不能通过。下一步需要:
+
+1. 用户提供官方/行情软件/Tushare 导出的 `2026-03-31` 附近 `sh000300` 成分权重文件；或
+2. 配置 Tushare token 后抓取历史 `index_weight`；或
+3. 等待 `2026-06-30` 基金持仓披露后，用已入库 `2026-05-29` 中证权重快照走新报告期闭环。

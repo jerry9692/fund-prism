@@ -136,4 +136,12 @@ def test_check_dynamic_attribution_help_is_available() -> None:
 
     assert result.exit_code == 0
     assert "--benchmark-symbol" in result.output
+    assert "--ready-only" in result.output
+    assert "--min-report-date" in result.output
+    assert "--limit" in result.output
     assert "--require-ready" in result.output
+
+    create_result = CliRunner().invoke(app, ["create-dynamic-attribution-experiment", "--help"])
+    assert create_result.exit_code == 0
+    assert "--report-date" in create_result.output
+    assert "--experiment-name" in create_result.output
