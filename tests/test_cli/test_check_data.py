@@ -162,3 +162,5 @@ def test_check_simulated_holding_backtest_help_is_available() -> None:
     assert create_result.exit_code == 0
     assert "--experiment-name" in create_result.output
     assert "--min-report-date" in create_result.output
+    assert "--simulation-method" in create_result.output
+    assert "--max-positions" in create_result.output

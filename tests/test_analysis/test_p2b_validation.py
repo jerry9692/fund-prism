@@ -404,6 +404,91 @@ class TestRunExperimentPipeline:
         assert persisted.input_coverage == 1.0
         assert persisted.conclusion_status == "estimated"
 
+    def test_simulated_holding_disclosure_period_backtest_can_use_optimized_tracking(
+        self,
+        test_client: TestClient,
+        test_session: Session,
+    ):
+        """optimized_tracking 应复用披露期回测框架，并显式记录方法与优化诊断。"""
+        previous_report = date(2024, 1, 1)
+        validation_report = date(2024, 2, 1)
+        stock_returns = {
+            "000010": [0.010, -0.004, 0.006, 0.002, 0.007, -0.001, 0.004, 0.005],
+            "000011": [0.001, 0.003, -0.002, 0.004, 0.002, 0.006, -0.001, 0.003],
+            "000012": [-0.002, 0.002, 0.001, -0.001, 0.003, 0.002, 0.004, -0.002],
+        }
+        for day in range(8):
+            fund_return = sum(series[day] / 3.0 for series in stock_returns.values())
+            test_session.add(FundNAV(
+                fund_code="000099",
+                trade_date=previous_report + timedelta(days=day),
+                unit_nav=1.0 + day * 0.01,
+                daily_return=fund_return,
+                data_source_level="LOCAL",
+            ))
+        for report_date in (previous_report, validation_report):
+            for rank, (stock_code, industry) in enumerate(
+                zip(stock_returns, ("tech", "finance", "consumer"), strict=False),
+                start=1,
+            ):
+                test_session.add(FundDisclosedHoldings(
+                    fund_code="000099",
+                    report_date=report_date,
+                    security_code=stock_code,
+                    asset_type="股票",
+                    weight_pct=33.33,
+                    industry=industry,
+                    rank_in_holdings=rank,
+                    data_source_level="LOCAL",
+                ))
+        for stock_code, returns in stock_returns.items():
+            for day, daily_return in enumerate(returns):
+                test_session.add(StockDaily(
+                    stock_code=stock_code,
+                    trade_date=previous_report + timedelta(days=day),
+                    close_price=100.0 + day,
+                    daily_return=daily_return,
+                    data_source_level="LOCAL",
+                ))
+        test_session.commit()
+
+        create_resp = test_client.post("/api/v2/experiments", json={
+            "experiment_name": "optimized-disclosure-backtest",
+            "algorithm_name": "simulated_holding",
+            "parameters": {
+                "validation_mode": "disclosure_period",
+                "simulation_method": "optimized_tracking",
+                "min_return_observations": 5,
+                "min_top10_recall": 0.5,
+                "max_positions": 3,
+                "max_single_weight": 0.8,
+                "use_cvxpy": False,
+            },
+            "sample_fund_codes": ["000099"],
+        })
+        exp_id = create_resp.json()["data"]["id"]
+
+        run_resp = test_client.post(f"/api/v2/experiments/{exp_id}/run")
+        assert run_resp.status_code == 200
+        assert run_resp.json()["data"]["status"] == "completed"
+
+        result = test_session.scalars(
+            sa_select(ExperimentResult).where(ExperimentResult.experiment_id == int(exp_id))
+        ).one()
+        metrics = result.metrics or {}
+        detail = metrics["backtest_detail"][0]
+        assert result.is_success
+        assert metrics["simulation_method"] == "optimized_tracking"
+        assert detail["simulation_method"] == "optimized_tracking"
+        assert detail["optimization_candidate_count"] == 3
+        assert detail["optimization_objective_value"] is not None
+
+        persisted = test_session.scalars(
+            sa_select(SimulatedHoldingResult).where(SimulatedHoldingResult.fund_code == "000099")
+        ).one()
+        assert persisted.conclusion_status == "estimated"
+        assert persisted.holdings_detail
+
     def test_run_experiment_unknown_algorithm_returns_failure(
         self,
         test_client: TestClient,

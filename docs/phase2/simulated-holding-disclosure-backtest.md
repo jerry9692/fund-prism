@@ -266,10 +266,93 @@ Interpretation:
   actual validation failure showing that previous disclosed holdings did not
   represent the next report's Top10 well.
 
+## Optimized Tracking Comparison
+
+Implementation date: 2026-06-14
+
+The same readiness / experiment / result framework now supports two simulation
+methods:
+
+- `lagged_disclosure_baseline`: carry forward the previous disclosed stock
+  weights and validate against the next disclosure.
+- `optimized_tracking`: use the previous disclosure as the candidate universe,
+  fit weights to fund NAV returns during the disclosure period, and validate the
+  estimated weights against the next disclosure.
+
+The optimized path writes only estimated outputs:
+
+- experiment parameter: `simulation_method=optimized_tracking`
+- result metric: `simulation_method`
+- per-pair diagnostics:
+  - `optimization_candidate_count`
+  - `optimization_objective_value`
+  - `optimization_max_single_weight`
+  - `optimization_use_cvxpy_requested`
+- persisted `simulated_holding_result.conclusion_status`: `estimated`
+
+Command used for the 9-fund comparison:
+
+```powershell
+.venv\Scripts\fund-research.exe create-simulated-holding-backtest-experiment `
+  --db-path data\fund_research.duckdb `
+  --experiment-name "P2 optimized tracking disclosure backtest 9 ready funds" `
+  --simulation-method optimized_tracking `
+  --min-report-date 2026-03-31 `
+  --max-report-date 2026-03-31 `
+  --min-return-observations 20 `
+  --min-stock-weight-coverage 0.8 `
+  --limit 9 `
+  --max-positions 30 `
+  --max-single-weight 0.10 `
+  --turnover-penalty 0.0 `
+  --industry-penalty 0.0 `
+  --no-use-cvxpy
+```
+
+Experiment:
+
+- baseline experiment id: `1879425248026321507`
+- optimized experiment id: `3681569292414866793`
+- optimized status: `completed_with_failures`
+- optimized pass rate: 8 / 9
+- failed fund: `519712`, Top10 recall = 0.2
+
+Aggregate comparison:
+
+| method | success | mean TE | mean Top10 recall | mean industry corr |
+| --- | ---: | ---: | ---: | ---: |
+| lagged_disclosure_baseline | 8 / 9 | 0.004463 | 0.8444 | 0.8209 |
+| optimized_tracking | 8 / 9 | 0.003796 | 0.7889 | 0.7732 |
+
+Per-fund comparison:
+
+| fund | baseline TE | optimized TE | baseline recall | optimized recall | result |
+| --- | ---: | ---: | ---: | ---: | --- |
+| 000001 | 0.004139 | 0.001913 | 1.0 | 0.8 | TE improved, recall lower |
+| 001480 | 0.004573 | 0.004525 | 0.7 | 0.7 | slight TE improvement |
+| 005267 | 0.003847 | 0.003001 | 1.0 | 0.8 | TE improved, recall lower |
+| 110022 | 0.002215 | 0.002217 | 1.0 | 0.9 | TE flat, recall lower |
+| 260108 | 0.001133 | 0.000987 | 1.0 | 1.0 | improved |
+| 519712 | 0.011214 | 0.011496 | 0.2 | 0.2 | still fails |
+| 519772 | 0.006447 | 0.005212 | 0.7 | 0.7 | improved |
+| 540003 | 0.002354 | 0.001670 | 1.0 | 1.0 | improved |
+| 570001 | 0.004247 | 0.003147 | 1.0 | 1.0 | improved |
+
+Interpretation:
+
+- `optimized_tracking` reduced tracking error on 7 / 9 funds and lowered mean TE
+  by about 0.000667.
+- Top10 recall and industry correlation declined slightly, which is expected:
+  fitting NAV returns is not the same objective as reproducing the next
+  disclosed portfolio.
+- The method should remain an experimental estimated signal. It is useful for
+  comparing tracking fit, but it is not yet strong enough to replace the lagged
+  disclosure baseline as a product-facing default conclusion.
+
 Next implementation step:
 
-- keep this same readiness/experiment/result framework
-- add the CVXPY/SciPy estimated-holding path behind a new parameter, for example
-  `simulation_method=optimized_tracking`
-- compare `lagged_disclosure_baseline` versus `optimized_tracking` on the same
-  9-fund sample before expanding further
+- add a small comparison/report command for two simulated-holding experiments
+  so future runs do not require ad-hoc SQL/Python snippets
+- then test non-zero `turnover_penalty` / `industry_penalty` settings on the
+  same 9-fund sample to see whether recall and industry correlation recover
+  without losing too much tracking fit

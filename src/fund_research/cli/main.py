@@ -731,6 +731,36 @@ def create_simulated_holding_backtest_experiment(
         "--min-stock-weight-coverage",
         help="上一期估计持仓股票收益权重覆盖率下限",
     ),
+    simulation_method: str = typer.Option(
+        "lagged_disclosure_baseline",
+        "--simulation-method",
+        help="模拟方法：lagged_disclosure_baseline 或 optimized_tracking",
+    ),
+    max_positions: int = typer.Option(
+        30,
+        "--max-positions",
+        help="optimized_tracking 最大持仓数量",
+    ),
+    max_single_weight: float = typer.Option(
+        0.10,
+        "--max-single-weight",
+        help="optimized_tracking 单只股票权重上限",
+    ),
+    turnover_penalty: float = typer.Option(
+        0.0,
+        "--turnover-penalty",
+        help="optimized_tracking 相对上一期披露权重的换手惩罚",
+    ),
+    industry_penalty: float = typer.Option(
+        0.0,
+        "--industry-penalty",
+        help="optimized_tracking 相对上一期披露行业权重的偏离惩罚",
+    ),
+    use_cvxpy: bool = typer.Option(
+        True,
+        "--use-cvxpy/--no-use-cvxpy",
+        help="optimized_tracking 是否优先使用 CVXPY，关闭后使用 scipy fallback",
+    ),
     require_industry: bool = typer.Option(
         False,
         "--require-industry",
@@ -753,6 +783,9 @@ def create_simulated_holding_backtest_experiment(
 
     parsed_min_report_date = date.fromisoformat(min_report_date) if min_report_date else None
     parsed_max_report_date = date.fromisoformat(max_report_date) if max_report_date else None
+    if simulation_method not in {"lagged_disclosure_baseline", "optimized_tracking"}:
+        console.print(f"[red]不支持的 simulation_method: {simulation_method}[/]")
+        raise typer.Exit(code=1)
     engine = create_engine_from_path(db_path)
     session_factory = sessionmaker(bind=engine)
     with session_factory() as session:
@@ -775,10 +808,16 @@ def create_simulated_holding_backtest_experiment(
 
         parameters = {
             "validation_mode": "disclosure_period",
+            "simulation_method": simulation_method,
             "min_validation_pairs": min_validation_pairs,
             "min_return_observations": min_return_observations,
             "min_stock_weight_coverage": min_stock_weight_coverage,
             "require_industry": require_industry,
+            "max_positions": max_positions,
+            "max_single_weight": max_single_weight,
+            "turnover_penalty": turnover_penalty,
+            "industry_penalty": industry_penalty,
+            "use_cvxpy": use_cvxpy,
         }
         if min_report_date:
             parameters["min_report_date"] = min_report_date

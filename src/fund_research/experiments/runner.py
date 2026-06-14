@@ -10,7 +10,7 @@ from sqlalchemy.orm import Session
 from fund_research.analysis.dynamic_attribution import run_attribution
 from fund_research.analysis.nav_metrics import calculate_nav_metrics
 from fund_research.analysis.scoring import score_funds
-from fund_research.analysis.simulated_holding import backtest_disclosure
+from fund_research.analysis.simulated_holding import backtest_disclosure, optimize_weights
 from fund_research.db.models import (
     AlgorithmExperiment,
     BenchmarkIndustryWeight,
@@ -31,6 +31,12 @@ from fund_research.db.models import (
 from fund_research.experiments.manager import record_result
 
 DEFAULT_ATTRIBUTION_BENCHMARK_SYMBOL = "sh000300"
+SIMULATION_METHOD_LAGGED_DISCLOSURE = "lagged_disclosure_baseline"
+SIMULATION_METHOD_OPTIMIZED_TRACKING = "optimized_tracking"
+SIMULATION_METHODS = {
+    SIMULATION_METHOD_LAGGED_DISCLOSURE,
+    SIMULATION_METHOD_OPTIMIZED_TRACKING,
+}
 BENCHMARK_TEXT_SYMBOL_MAP = (
     ("沪深300", "sh000300"),
     ("中证500", "sh000905"),
@@ -340,8 +346,22 @@ def _run_simulated_holding_disclosure_backtest_batch(
     min_stock_weight_coverage = float(params.get("min_stock_weight_coverage") or 0.8)
     max_tracking_error = float(params.get("max_tracking_error") or 0.10)
     min_top10_recall = float(params.get("min_top10_recall") or 0.30)
-    exact_report_dates, min_report_date, max_report_date = _resolve_report_date_filters(params)
     results: list[dict] = []
+    simulation_method = str(
+        params.get("simulation_method") or SIMULATION_METHOD_LAGGED_DISCLOSURE
+    )
+    if simulation_method not in SIMULATION_METHODS:
+        for fund_code in fund_codes:
+            error = f"不支持的 simulation_method: {simulation_method}"
+            _record_failure(db, exp.id, fund_code, error)
+            results.append(_failure_result(fund_code, error))
+        return results
+    max_positions = int(params.get("max_positions") or 30)
+    max_single_weight = float(params.get("max_single_weight") or 0.10)
+    turnover_penalty = float(params.get("turnover_penalty") or 0.0)
+    industry_penalty = float(params.get("industry_penalty") or 0.0)
+    use_cvxpy = bool(params.get("use_cvxpy", True))
+    exact_report_dates, min_report_date, max_report_date = _resolve_report_date_filters(params)
 
     for fund_code in fund_codes:
         try:
@@ -418,6 +438,13 @@ def _run_simulated_holding_disclosure_backtest_batch(
                     nav_df=nav_df,
                     stock_df=stock_df,
                     estimated_weights=estimated_weights,
+                    simulation_method=simulation_method,
+                    min_return_observations=min_return_observations,
+                    max_positions=max_positions,
+                    max_single_weight=max_single_weight,
+                    turnover_penalty=turnover_penalty,
+                    industry_penalty=industry_penalty,
+                    use_cvxpy=use_cvxpy,
                 )
                 periods.append(period_result)
                 tracking_errors.append(period_result.tracking_error)
@@ -463,6 +490,7 @@ def _run_simulated_holding_disclosure_backtest_batch(
             )
             metrics = {
                 "validation_mode": "disclosure_period",
+                "simulation_method": simulation_method,
                 "estimated_overall_tracking_error": sim_result.overall_tracking_error,
                 "estimated_overall_top10_recall": backtest.get("top10_recall"),
                 "estimated_overall_industry_correlation": backtest.get("industry_correlation"),
@@ -581,6 +609,13 @@ def _build_disclosure_backtest_period(
     nav_df: pd.DataFrame,
     stock_df: pd.DataFrame,
     estimated_weights: dict[str, float],
+    simulation_method: str = SIMULATION_METHOD_LAGGED_DISCLOSURE,
+    min_return_observations: int = 20,
+    max_positions: int = 30,
+    max_single_weight: float = 0.10,
+    turnover_penalty: float = 0.0,
+    industry_penalty: float = 0.0,
+    use_cvxpy: bool = True,
 ):
     del fund_code
     industry_map = {
@@ -593,20 +628,6 @@ def _build_disclosure_backtest_period(
         for row in validation_holdings
         if row.security_code
     }
-    holding_list = [
-        {
-            "stock_code": stock_code,
-            "stock_name": stock_code,
-            "estimated_weight": float(weight),
-            "industry": industry_map.get(stock_code),
-            "confidence": "low",
-        }
-        for stock_code, weight in sorted(
-            estimated_weights.items(),
-            key=lambda item: item[1],
-            reverse=True,
-        )
-    ]
     window_stock_df = stock_df[
         (stock_df["trade_date"] >= pd.Timestamp(previous_report))
         & (stock_df["trade_date"] < pd.Timestamp(validation_report))
@@ -621,36 +642,64 @@ def _build_disclosure_backtest_period(
         values="daily_return",
         aggfunc="last",
     )
-    common_codes = [stock_code for stock_code in estimated_weights if stock_code in stock_pivot.columns]
-    available_weight = sum(estimated_weights[stock_code] for stock_code in common_codes)
-    sample_count = 0
-    tracking_error = 0.0
-    if common_codes and available_weight > 0 and not window_nav_df.empty:
-        weight_vector = pd.Series(
-            {stock_code: estimated_weights[stock_code] / available_weight for stock_code in common_codes},
-            dtype=float,
+    if simulation_method == SIMULATION_METHOD_OPTIMIZED_TRACKING:
+        (
+            modeled_weights,
+            available_weight,
+            sample_count,
+            tracking_error,
+            objective_value,
+            method_stats,
+        ) = _optimize_tracking_disclosure_weights(
+            stock_pivot=stock_pivot,
+            window_nav_df=window_nav_df,
+            estimated_weights=estimated_weights,
+            industry_map=industry_map,
+            min_return_observations=min_return_observations,
+            max_positions=max_positions,
+            max_single_weight=max_single_weight,
+            turnover_penalty=turnover_penalty,
+            industry_penalty=industry_penalty,
+            use_cvxpy=use_cvxpy,
         )
-        portfolio_returns = (stock_pivot[common_codes] * weight_vector).sum(axis=1)
-        nav_returns = window_nav_df.set_index("trade_date")["daily_return"]
-        merged_returns = pd.DataFrame({
-            "port": portfolio_returns,
-            "fund": nav_returns,
-        }).dropna()
-        sample_count = len(merged_returns)
-        if sample_count > 0:
-            tracking_error = float(
-                np.sqrt(np.mean((merged_returns["port"] - merged_returns["fund"]) ** 2))
-            )
+        confidence = "medium"
+    else:
+        modeled_weights = estimated_weights
+        available_weight, sample_count, tracking_error = _tracking_error_for_weights(
+            stock_pivot=stock_pivot,
+            window_nav_df=window_nav_df,
+            weights=modeled_weights,
+        )
+        objective_value = 0.0
+        method_stats = {}
+        confidence = "low"
+
+    holding_list = [
+        {
+            "stock_code": stock_code,
+            "stock_name": stock_code,
+            "estimated_weight": float(weight),
+            "industry": industry_map.get(stock_code),
+            "confidence": confidence,
+        }
+        for stock_code, weight in sorted(
+            modeled_weights.items(),
+            key=lambda item: item[1],
+            reverse=True,
+        )
+    ]
 
     pair_stats = {
         "previous_report_date": str(previous_report),
         "validation_report_date": str(validation_report),
-        "estimated_holding_count": len(estimated_weights),
+        "simulation_method": simulation_method,
+        "estimated_holding_count": len(modeled_weights),
         "validation_holding_count": len(validation_codes),
-        "common_holding_count": len(set(estimated_weights) & validation_codes),
+        "common_holding_count": len(set(modeled_weights) & validation_codes),
         "stock_return_weight_coverage": round(float(available_weight), 6),
         "return_sample_count": sample_count,
         "estimated_tracking_error": round(tracking_error, 6),
+        **method_stats,
     }
     period_result = type("_P", (), {
         "calc_date": validation_report,
@@ -659,10 +708,141 @@ def _build_disclosure_backtest_period(
         "bond_weight_pct": 0.0,
         "cash_weight_pct": 0.0,
         "tracking_error": tracking_error,
-        "objective_value": 0.0,
+        "objective_value": objective_value,
         "warnings": [],
     })()
     return period_result, pair_stats
+
+
+def _tracking_error_for_weights(
+    *,
+    stock_pivot: pd.DataFrame,
+    window_nav_df: pd.DataFrame,
+    weights: dict[str, float],
+) -> tuple[float, int, float]:
+    common_codes = [stock_code for stock_code in weights if stock_code in stock_pivot.columns]
+    available_weight = sum(weights[stock_code] for stock_code in common_codes)
+    if not common_codes or available_weight <= 0 or window_nav_df.empty:
+        return float(available_weight), 0, 0.0
+
+    weight_vector = pd.Series(
+        {stock_code: weights[stock_code] / available_weight for stock_code in common_codes},
+        dtype=float,
+    )
+    portfolio_returns = (stock_pivot[common_codes] * weight_vector).sum(axis=1)
+    nav_returns = window_nav_df.set_index("trade_date")["daily_return"]
+    merged_returns = pd.DataFrame({
+        "port": portfolio_returns,
+        "fund": nav_returns,
+    }).dropna()
+    sample_count = len(merged_returns)
+    if sample_count == 0:
+        return float(available_weight), 0, 0.0
+    tracking_error = float(
+        np.sqrt(np.mean((merged_returns["port"] - merged_returns["fund"]) ** 2))
+    )
+    return float(available_weight), sample_count, tracking_error
+
+
+def _optimize_tracking_disclosure_weights(
+    *,
+    stock_pivot: pd.DataFrame,
+    window_nav_df: pd.DataFrame,
+    estimated_weights: dict[str, float],
+    industry_map: dict[str, str],
+    min_return_observations: int,
+    max_positions: int,
+    max_single_weight: float,
+    turnover_penalty: float,
+    industry_penalty: float,
+    use_cvxpy: bool,
+) -> tuple[dict[str, float], float, int, float, float, dict]:
+    candidate_codes = [
+        stock_code for stock_code in estimated_weights if stock_code in stock_pivot.columns
+    ]
+    if len(candidate_codes) < 2 or window_nav_df.empty:
+        raise ValueError("优化模型候选股票或基金收益数据不足")
+
+    candidate_returns = stock_pivot[candidate_codes].copy()
+    candidate_returns = candidate_returns.dropna(axis=1, thresh=min_return_observations)
+    candidate_codes = list(candidate_returns.columns)
+    if len(candidate_codes) < 2:
+        raise ValueError("优化模型候选股票收益样本不足")
+
+    nav_returns = window_nav_df.set_index("trade_date")["daily_return"].rename("fund")
+    merged_returns = candidate_returns.join(nav_returns, how="inner").dropna(subset=["fund"])
+    candidate_returns = merged_returns[candidate_codes].dropna(axis=1, thresh=min_return_observations)
+    candidate_codes = list(candidate_returns.columns)
+    if len(candidate_codes) < 2:
+        raise ValueError("优化模型对齐后的候选股票收益样本不足")
+
+    merged_returns = pd.concat(
+        [candidate_returns, merged_returns["fund"]],
+        axis=1,
+    )
+    sample_count = len(merged_returns)
+    if sample_count < min_return_observations:
+        raise ValueError(f"优化模型收益样本不足: {sample_count}/{min_return_observations}")
+
+    available_weight = sum(estimated_weights[stock_code] for stock_code in candidate_codes)
+    if available_weight <= 0:
+        raise ValueError("优化模型候选股票上一期披露权重为 0")
+
+    position_count = max(1, min(max_positions, len(candidate_codes)))
+    effective_max_single_weight = max(max_single_weight, 1.0 / position_count)
+    prev_weights = np.array(
+        [estimated_weights[stock_code] / available_weight for stock_code in candidate_codes],
+        dtype=float,
+    )
+    industry_groups = None
+    disclosed_industry_weights = None
+    if industry_penalty > 0:
+        labels = [industry_map.get(stock_code) or "_unknown" for stock_code in candidate_codes]
+        label_to_id = {label: idx for idx, label in enumerate(sorted(set(labels)))}
+        industry_groups = [label_to_id[label] for label in labels]
+        disclosed_industry_weights = {}
+        for group, weight in zip(industry_groups, prev_weights, strict=False):
+            disclosed_industry_weights[group] = disclosed_industry_weights.get(group, 0.0) + float(weight)
+
+    optimized_array, objective_value = optimize_weights(
+        merged_returns[candidate_codes].fillna(0.0).to_numpy(dtype=float).T,
+        merged_returns["fund"].to_numpy(dtype=float),
+        max_positions=max_positions,
+        max_single_weight=effective_max_single_weight,
+        turnover_penalty=turnover_penalty,
+        prev_weights=prev_weights,
+        industry_groups=industry_groups,
+        disclosed_industry_weights=disclosed_industry_weights,
+        industry_penalty=industry_penalty,
+        use_cvxpy=use_cvxpy,
+    )
+    optimized_array = np.nan_to_num(np.maximum(optimized_array, 0.0), nan=0.0)
+    if optimized_array.sum() <= 0:
+        raise ValueError("优化模型未产出有效权重")
+    optimized_array = optimized_array / optimized_array.sum()
+    modeled_weights = {
+        stock_code: float(weight)
+        for stock_code, weight in zip(candidate_codes, optimized_array, strict=False)
+        if float(weight) > 1e-8
+    }
+    portfolio_returns = merged_returns[candidate_codes].fillna(0.0).to_numpy(dtype=float) @ optimized_array
+    tracking_error = float(
+        np.sqrt(np.mean((portfolio_returns - merged_returns["fund"].to_numpy(dtype=float)) ** 2))
+    )
+    method_stats = {
+        "optimization_candidate_count": len(candidate_codes),
+        "optimization_objective_value": round(float(objective_value), 10),
+        "optimization_max_single_weight": round(float(effective_max_single_weight), 6),
+        "optimization_use_cvxpy_requested": bool(use_cvxpy),
+    }
+    return (
+        modeled_weights,
+        float(available_weight),
+        sample_count,
+        tracking_error,
+        float(objective_value),
+        method_stats,
+    )
 
 
 def _run_dynamic_attribution_batch(
