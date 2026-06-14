@@ -27,6 +27,7 @@ from fund_research.data.update import (
     upsert_akshare_stock_daily,
     upsert_akshare_stock_industry_membership,
     upsert_benchmark_industry_weights,
+    upsert_local_benchmark_index_members,
     upsert_local_stock_industry_membership,
     upsert_sample_funds,
 )
@@ -980,6 +981,115 @@ def test_upsert_akshare_benchmark_index_members_writes_weight_snapshots(
     row_count = test_session.scalar(select(func.count()).select_from(BenchmarkIndexMember))
     assert second.updated == 2
     assert row_count == 2
+
+
+def test_upsert_local_benchmark_index_members_imports_csv_and_cleans_codes(
+    test_session: Session,
+    tmp_path: Path,
+) -> None:
+    """Local benchmark member files should import constituent weights."""
+    member_file = tmp_path / "000300closeweight.csv"
+    member_file.write_text(
+        "\n".join([
+            "日期,指数代码,指数名称,成分券代码,成分券名称,交易所,权重",
+            "2026-06-01,000300,沪深300,600519.SH,贵州茅台,上海证券交易所,5.25",
+            "2026-06-01,000300,沪深300,000001.SZ,平安银行,深圳证券交易所,1.50",
+        ]),
+        encoding="utf-8",
+    )
+
+    summary = upsert_local_benchmark_index_members(
+        test_session,
+        "sh000300",
+        member_file,
+    )
+    rows = test_session.scalars(
+        select(BenchmarkIndexMember).order_by(BenchmarkIndexMember.stock_code)
+    ).all()
+    snapshot = test_session.scalar(
+        select(DataSourceSnapshot).where(DataSourceSnapshot.entity_type == "benchmark_index_member")
+    )
+
+    assert summary.requested == 2
+    assert summary.inserted == 2
+    assert summary.warnings == []
+    assert [row.stock_code for row in rows] == ["000001", "600519"]
+    assert rows[0].source_name == "local_file:000300closeweight.csv"
+    assert rows[0].source_level == DataSourceLevel.LOCAL.value
+    assert rows[1].weight_pct == 5.25
+    assert snapshot is not None
+    assert snapshot.source_type == DataSourceType.LOCAL_FILE.value
+
+
+def test_upsert_local_benchmark_index_members_reimport_updates_existing_rows(
+    test_session: Session,
+    tmp_path: Path,
+) -> None:
+    """Re-importing a local benchmark member file should update existing rows."""
+    member_file = tmp_path / "000300closeweight.csv"
+    member_file.write_text(
+        "\n".join([
+            "snapshot_date,index_code,index_name,stock_code,stock_name,exchange,weight_pct",
+            "2026-06-01,000300,沪深300,600519,贵州茅台,SH,5.25",
+        ]),
+        encoding="utf-8",
+    )
+
+    first = upsert_local_benchmark_index_members(test_session, "sh000300", member_file)
+    second = upsert_local_benchmark_index_members(test_session, "sh000300", member_file)
+    row_count = test_session.scalar(select(func.count()).select_from(BenchmarkIndexMember))
+
+    assert first.inserted == 1
+    assert second.updated == 1
+    assert row_count == 1
+
+
+def test_upsert_local_benchmark_index_members_imports_xlsx(
+    test_session: Session,
+    tmp_path: Path,
+) -> None:
+    """Local benchmark member imports should also accept XLSX files."""
+    member_file = tmp_path / "000300closeweight.xlsx"
+    pd.DataFrame([{
+        "日期": "2026-06-01",
+        "指数代码": "000300",
+        "指数名称": "沪深300",
+        "成分券代码": "000001.SZ",
+        "成分券名称": "平安银行",
+        "交易所": "深圳证券交易所",
+        "权重": 1.5,
+    }]).to_excel(member_file, index=False)
+
+    summary = upsert_local_benchmark_index_members(test_session, "sh000300", member_file)
+    row = test_session.scalar(select(BenchmarkIndexMember))
+
+    assert summary.inserted == 1
+    assert row is not None
+    assert row.stock_code == "000001"
+    assert row.weight_pct == 1.5
+
+
+def test_upsert_local_benchmark_index_members_warns_for_missing_required_columns(
+    test_session: Session,
+    tmp_path: Path,
+) -> None:
+    """Rows without snapshot date, stock code, or weight should be skipped."""
+    member_file = tmp_path / "bad_closeweight.csv"
+    member_file.write_text(
+        "\n".join([
+            "日期,指数代码,成分券代码,成分券名称",
+            "2026-06-01,000300,600519,贵州茅台",
+        ]),
+        encoding="utf-8",
+    )
+
+    summary = upsert_local_benchmark_index_members(test_session, "sh000300", member_file)
+    row_count = test_session.scalar(select(func.count()).select_from(BenchmarkIndexMember))
+
+    assert summary.requested == 1
+    assert summary.skipped == 1
+    assert row_count == 0
+    assert any("缺少必要字段" in warning for warning in summary.warnings or [])
 
 
 def test_upsert_akshare_stock_industry_membership_writes_sw_level_one_rows(

@@ -72,11 +72,77 @@ def test_update_help_includes_stock_industry_stability_options() -> None:
     result = CliRunner().invoke(app, ["update", "--help"])
 
     assert result.exit_code == 0
+    assert "--benchmark-members-file" in result.output
     assert "--industry-symbol" in result.output
     assert "--request-interval" in result.output
     assert "--retry" in result.output
     assert "--industry-batch-size" in result.output
     assert "--industry-file" in result.output
+
+
+def test_update_benchmark_members_accepts_local_member_file(tmp_path: Path) -> None:
+    """benchmark-members should support a local constituent weight file."""
+    sample_path = tmp_path / "sample.csv"
+    db_path = tmp_path / "fund_research.sqlite"
+    member_path = tmp_path / "000300closeweight.csv"
+    _write_sample(sample_path)
+    member_path.write_text(
+        "\n".join([
+            "日期,指数代码,指数名称,成分券代码,成分券名称,交易所,权重",
+            "2026-06-01,000300,沪深300,600519.SH,贵州茅台,上海证券交易所,5.25",
+        ]),
+        encoding="utf-8",
+    )
+
+    result = CliRunner().invoke(
+        app,
+        [
+            "update",
+            "--domains",
+            "benchmark-members",
+            "--index-symbol",
+            "sh000300",
+            "--benchmark-members-file",
+            str(member_path),
+            "--sample",
+            str(sample_path),
+            "--db-path",
+            str(db_path),
+            "--dry-run",
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert "benchmark_index" in result.output
+    assert "DRY-RUN" in result.output
+
+
+def test_update_benchmark_members_file_requires_single_index_symbol(tmp_path: Path) -> None:
+    """A local benchmark member file must map to exactly one benchmark symbol."""
+    sample_path = tmp_path / "sample.csv"
+    db_path = tmp_path / "fund_research.sqlite"
+    member_path = tmp_path / "000300closeweight.csv"
+    _write_sample(sample_path)
+    member_path.write_text("日期,成分券代码,权重\n2026-06-01,600519,5.25", encoding="utf-8")
+
+    result = CliRunner().invoke(
+        app,
+        [
+            "update",
+            "--domains",
+            "benchmark-members",
+            "--benchmark-members-file",
+            str(member_path),
+            "--sample",
+            str(sample_path),
+            "--db-path",
+            str(db_path),
+            "--dry-run",
+        ],
+    )
+
+    assert result.exit_code == 1
+    assert "--benchmark-members-file" in result.output
 
 
 def test_update_stock_industry_accepts_local_industry_file(tmp_path: Path) -> None:

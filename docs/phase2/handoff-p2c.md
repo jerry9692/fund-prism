@@ -1,6 +1,6 @@
 # P2C Handoff — 真实行业/基准收益接入
 
-日期: 2026-06-10 (更新 2026-06-13)
+日期: 2026-06-10 (更新 2026-06-14)
 分支: 已合并到 `main`
 基线: `main` 已包含 P2B 修复
 
@@ -89,8 +89,36 @@
   - 动态归因 runner 从最近可用 `benchmark_industry_weight` 快照读取 `bench_weight`
   - 基准行业权重覆盖率低于 95% 或缺失时，实验失败并进入 review
 
-## 6. 下一步
+## 6. 已完成（2026-06-14）
 
-1. 扩展 `FundMain.benchmark` 解析映射，并增加用户 review 配置覆盖机制
-2. 把 `dynamic_attribution_result` 表也接入实验结果持久化，而不是只写 `experiment_result.metrics`
-3. 为真实基准行业权重数据源做小样本人工核验：选择 `sh000300`、`sh000905` 各 2 个日期，对照指数公司/行情软件行业分布，记录偏差
+- **stock-industry 稳定化**:
+  - 新增 `--industry-symbol`、`--request-interval`、`--retry`、`--industry-batch-size`
+  - 默认行业 symbol 列表从申万三级 `850xxx.SI` 修正为申万一级 `801xxx.SI`
+  - symbol 列表缓存改为 `data/cache/stock_industry/sw_level_one_symbols.json`
+  - `No tables found` 也会走直接读取乐咕页面 fallback
+- **本地行业映射 fallback**:
+  - CLI 新增 `--industry-file`
+  - 支持 CSV/XLS/XLSX 导入 `stock_industry_membership`
+  - 默认 `classification_type=SW`、`classification_version=2021`、`level=1`、`source_level=LOCAL`
+  - `data/local/` 已加入 `.gitignore`，本地数据不得提交
+- **真实行业权重验收**:
+  - 使用巨潮 `stock_industry_change_cninfo` 逐只查询 `sh000300`、`sh000905` 共 800 个成分股
+  - 筛选 `分类标准编码=008003`，生成 `data/local/stock_industry_sw.csv`
+  - 导入结果: `requested=800, inserted=722, updated=78, skipped=0`
+  - 重新聚合后:
+    - `sh000300`: 28 个行业，`coverage_pct=100.0%`，`unmapped_weight_pct=0.0%`
+    - `sh000905`: 31 个行业，`coverage_pct=100.0%`，`unmapped_weight_pct=0.0%`
+- **公开弱对照**:
+  - 用 Wikipedia CSI 300 宽行业表做 sanity check
+  - 只能证明没有明显全行业错位；正式 1pp 偏差验收仍需同日期、同申万口径的行情软件截图或指数公司行业分布表
+- **benchmark-members 本地文件 fallback**:
+  - CLI 新增 `--benchmark-members-file`
+  - 支持中证 `closeweight.xls` 或标准 CSV/XLSX 本地导入
+  - 需要配合且只配合一个 `--index-symbol`
+
+## 7. 下一步
+
+1. 手工补同日期、同申万口径的行情软件/指数公司行业分布截图，对照 `行业名 / 本地权重 / 对照权重 / 差值`
+2. 若需要历史日期验收，补中证历史成分权重，或继续明确拒绝晚于目标日期的权重快照
+3. 扩展 `FundMain.benchmark` 解析映射，并增加用户 review 配置覆盖机制
+4. 把 `dynamic_attribution_result` 表也接入实验结果持久化，而不是只写 `experiment_result.metrics`

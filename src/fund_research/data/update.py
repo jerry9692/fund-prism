@@ -1308,6 +1308,124 @@ def _apply_benchmark_index_member_row(
     return action
 
 
+def _read_tabular_file(path: Path) -> list[dict[str, Any]]:
+    suffix = path.suffix.lower()
+    if suffix == ".csv":
+        with path.open(encoding="utf-8-sig", newline="") as handle:
+            return list(csv.DictReader(handle))
+    if suffix in {".xls", ".xlsx"}:
+        import pandas as pd
+
+        return pd.read_excel(path).to_dict(orient="records")
+    raise ValueError(f"暂不支持的本地文件格式: {suffix or '<none>'}")
+
+
+def _normalize_local_benchmark_member_row(
+    row: dict[str, Any],
+    benchmark_symbol: str,
+) -> dict[str, Any]:
+    def pick(*names: str) -> Any:
+        for name in names:
+            value = row.get(name)
+            if value is not None and str(value).strip() != "":
+                return value
+        return None
+
+    stock_code = pick("stock_code", "成分券代码", "证券代码", "股票代码", "code")
+    return {
+        "benchmark_symbol": pick("benchmark_symbol", "指数symbol") or benchmark_symbol,
+        "index_code": pick("index_code", "指数代码") or benchmark_symbol_to_index_code(benchmark_symbol),
+        "index_name": pick("index_name", "指数名称"),
+        "snapshot_date": pick("snapshot_date", "日期", "权重日期", "trade_date"),
+        "stock_code": str(stock_code).split(".")[0] if stock_code is not None else None,
+        "stock_name": pick("stock_name", "成分券名称", "证券简称", "股票简称", "name"),
+        "exchange": pick("exchange", "交易所"),
+        "weight_pct": pick("weight_pct", "权重", "权重(%)", "weight"),
+        "raw_payload_hash": row.get("raw_payload_hash"),
+    }
+
+
+def upsert_local_benchmark_index_members(
+    session: Session,
+    benchmark_symbol: str,
+    member_file: Path,
+    *,
+    dry_run: bool = False,
+) -> UpdateSummary:
+    """Import benchmark index member weights from a local CSV/XLS/XLSX file."""
+    summary = UpdateSummary(
+        entity="benchmark_index_member",
+        source=str(member_file),
+        dry_run=dry_run,
+        warnings=[],
+    )
+    if not member_file.exists():
+        summary.skipped = 1
+        summary.warnings.append(f"指数成分权重文件不存在: {member_file}")
+        return summary
+    try:
+        raw_rows = _read_tabular_file(member_file)
+    except Exception as exc:
+        summary.skipped = 1
+        summary.warnings.append(str(exc))
+        return summary
+
+    normalized_rows = [
+        _normalize_local_benchmark_member_row(row, benchmark_symbol)
+        for row in raw_rows
+    ]
+    summary.requested = len(normalized_rows)
+    source_name = f"local_file:{member_file.name}"
+    missing_required = {
+        "snapshot_date": sum(1 for row in normalized_rows if not row.get("snapshot_date")),
+        "stock_code": sum(1 for row in normalized_rows if not row.get("stock_code")),
+        "weight_pct": sum(1 for row in normalized_rows if row.get("weight_pct") is None),
+    }
+    for index, row in enumerate(normalized_rows, start=1):
+        if not row.get("snapshot_date") or not row.get("stock_code") or row.get("weight_pct") is None:
+            summary.skipped += 1
+            summary.warnings.append(f"指数成分权重文件第 {index} 行缺少必要字段")
+            continue
+        action = _apply_benchmark_index_member_row(
+            session,
+            row,
+            benchmark_symbol,
+            DataSourceLevel.LOCAL,
+            source_name,
+            dry_run,
+        )
+        if action == "inserted":
+            summary.inserted += 1
+        elif action == "updated":
+            summary.updated += 1
+        else:
+            summary.skipped += 1
+            summary.warnings.append(f"指数成分权重文件第 {index} 行缺少必要字段")
+
+    if dry_run:
+        return summary
+
+    session.add(
+        DataSourceSnapshot(
+            source_name=source_name,
+            source_type=DataSourceType.LOCAL_FILE.value,
+            source_level=DataSourceLevel.LOCAL.value,
+            fetch_timestamp=datetime.now(),
+            entity_type="benchmark_index_member",
+            field_count=len(raw_rows[0]) if raw_rows else 0,
+            record_count=len(raw_rows),
+            coverage_rate=(summary.changed / summary.requested) if summary.requested else 0.0,
+            missing_fields=missing_required,
+            anomaly_count=summary.skipped,
+            is_success=summary.skipped == 0,
+            error_message=None if summary.skipped == 0 else "Some local benchmark member rows were skipped",
+        )
+    )
+    _log_update_task(session, "benchmark_index_member", summary)
+    session.commit()
+    return summary
+
+
 def upsert_akshare_benchmark_index_members(
     session: Session,
     benchmark_symbols: set[str],

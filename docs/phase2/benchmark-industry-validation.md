@@ -506,7 +506,7 @@ warnings=[]
 
 优先做数据源稳定性，不扩算法：
 
-1. 给 `benchmark-members` 增加本地文件导入 fallback，支持把中证官网下载的 `closeweight.xls` 手动放到 `data/cache/benchmark_members/{index_code}/` 后解析入库。
+1. `benchmark-members` 已支持本地文件导入 fallback；中证官网下载的 `closeweight.xls` 可通过 `--benchmark-members-file` 解析入库。
 2. 保留 `data/local/stock_industry_sw.csv` 作为本地验收输入，不提交仓库；换电脑时需要单独复制或重新生成。
 3. 手工对照一份行情软件或指数公司行业分布截图，记录 `行业名 / 本地权重 / 对照权重 / 差值`，差值超过 1pp 的行业逐项解释。
 4. 若需要历史日期验收，补中证历史成分权重或明确拒绝历史日期。
@@ -520,6 +520,16 @@ warnings=[]
   --request-interval 1 `
   --retry 1 `
   --industry-batch-size 1 `
+  --db-path data\benchmark_validation.sqlite
+```
+
+本地指数成分权重导入:
+
+```powershell
+.venv\Scripts\fund-research.exe update `
+  --domains benchmark-members `
+  --index-symbol sh000300 `
+  --benchmark-members-file data\local\000300closeweight.xls `
   --db-path data\benchmark_validation.sqlite
 ```
 

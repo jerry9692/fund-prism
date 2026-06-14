@@ -122,6 +122,10 @@ IndexSymbolOption = Annotated[
     list[str] | None,
     typer.Option("--index-symbol", help="只更新指定指数 symbol，可重复传入"),
 ]
+BenchmarkMembersFileOption = Annotated[
+    Path | None,
+    typer.Option("--benchmark-members-file", help="从本地 CSV/XLS/XLSX 导入指数成分权重，需配合单个 --index-symbol"),
+]
 IndustrySymbolOption = Annotated[
     list[str] | None,
     typer.Option("--industry-symbol", help="只更新指定行业 symbol，可重复传入，如 801120.SI"),
@@ -439,6 +443,7 @@ def update(
     fund_code: FundCodeOption = None,
     stock_code: StockCodeOption = None,
     index_symbol: IndexSymbolOption = None,
+    benchmark_members_file: BenchmarkMembersFileOption = None,
     industry_symbol: IndustrySymbolOption = None,
     industry_file: IndustryFileOption = None,
     sample: SamplePathOption = None,
@@ -477,6 +482,7 @@ def update(
         upsert_akshare_stock_daily,
         upsert_akshare_stock_industry_membership,
         upsert_benchmark_industry_weights,
+        upsert_local_benchmark_index_members,
         upsert_local_stock_industry_membership,
         upsert_sample_funds,
     )
@@ -626,13 +632,26 @@ def update(
                 "sh000905",
                 "sh000852",
             }
-            summaries.append(
-                upsert_akshare_benchmark_index_members(
-                    session,
-                    selected_index_symbols,
-                    dry_run=dry_run,
+            if benchmark_members_file is not None:
+                if len(selected_index_symbols) != 1:
+                    console.print("[red]--benchmark-members-file 需要配合且只配合一个 --index-symbol[/]")
+                    raise typer.Exit(code=1)
+                summaries.append(
+                    upsert_local_benchmark_index_members(
+                        session,
+                        next(iter(selected_index_symbols)),
+                        benchmark_members_file,
+                        dry_run=dry_run,
+                    )
                 )
-            )
+            else:
+                summaries.append(
+                    upsert_akshare_benchmark_index_members(
+                        session,
+                        selected_index_symbols,
+                        dry_run=dry_run,
+                    )
+                )
         if "stock-industry" in selected_entities:
             if industry_file is not None:
                 summaries.append(

@@ -235,6 +235,13 @@ fund-research update --domains stock-industry --classification SW
 fund-research update --domains benchmark-industry --index-symbol sh000300
 ```
 
+本地文件 fallback:
+
+```bash
+fund-research update --domains benchmark-members --index-symbol sh000300 --benchmark-members-file data/local/000300closeweight.xls
+fund-research update --domains stock-industry --industry-file data/local/stock_industry_sw.csv
+```
+
 逻辑顺序：
 
 1. `benchmark-members`: 拉取指数成分权重，写 `benchmark_index_member`。
