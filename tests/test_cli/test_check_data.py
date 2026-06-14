@@ -128,3 +128,12 @@ def test_check_data_uses_latest_source_snapshot_status(tmp_path: Path) -> None:
 
     assert result.exit_code == 0
     assert "failed=0" in result.output
+
+
+def test_check_dynamic_attribution_help_is_available() -> None:
+    """The dynamic attribution readiness command should be exposed in the CLI."""
+    result = CliRunner().invoke(app, ["check-dynamic-attribution", "--help"])
+
+    assert result.exit_code == 0
+    assert "--benchmark-symbol" in result.output
+    assert "--require-ready" in result.output

@@ -1,0 +1,253 @@
+"""Readiness checks for Phase 2 experiment inputs."""
+
+from datetime import date as date_type
+
+from sqlalchemy import func, or_, select
+from sqlalchemy.orm import Session
+
+from fund_research.db.models import (
+    BenchmarkIndustryWeight,
+    FundDisclosedHoldings,
+    FundMain,
+    StockDaily,
+)
+from fund_research.experiments.runner import (
+    BENCHMARK_TEXT_SYMBOL_MAP,
+    DEFAULT_ATTRIBUTION_BENCHMARK_SYMBOL,
+    MAX_ATTRIBUTION_BENCHMARK_WEIGHT_STALENESS_DAYS,
+    MIN_ATTRIBUTION_BENCHMARK_WEIGHT_COVERAGE,
+    MIN_ATTRIBUTION_RETURN_OBSERVATIONS,
+    MIN_ATTRIBUTION_STOCK_WEIGHT_COVERAGE,
+)
+
+
+def assess_dynamic_attribution_readiness(
+    session: Session,
+    fund_codes: set[str] | None = None,
+    *,
+    benchmark_symbol: str | None = None,
+    min_return_observations: int = MIN_ATTRIBUTION_RETURN_OBSERVATIONS,
+    max_snapshot_age_days: int = MAX_ATTRIBUTION_BENCHMARK_WEIGHT_STALENESS_DAYS,
+) -> list[dict]:
+    """Assess whether disclosed holdings can run dynamic attribution."""
+    report_stmt = (
+        select(FundDisclosedHoldings.fund_code, FundDisclosedHoldings.report_date)
+        .where(FundDisclosedHoldings.asset_type == "股票")
+        .group_by(FundDisclosedHoldings.fund_code, FundDisclosedHoldings.report_date)
+        .order_by(FundDisclosedHoldings.fund_code, FundDisclosedHoldings.report_date)
+    )
+    if fund_codes:
+        report_stmt = report_stmt.where(FundDisclosedHoldings.fund_code.in_(fund_codes))
+
+    rows = []
+    for fund_code, report_date in session.execute(report_stmt).all():
+        rows.append(
+            _assess_report(
+                session,
+                fund_code=fund_code,
+                report_date=report_date,
+                configured_benchmark_symbol=benchmark_symbol,
+                min_return_observations=min_return_observations,
+                max_snapshot_age_days=max_snapshot_age_days,
+            )
+        )
+    return rows
+
+
+def _assess_report(
+    session: Session,
+    *,
+    fund_code: str,
+    report_date: date_type,
+    configured_benchmark_symbol: str | None,
+    min_return_observations: int,
+    max_snapshot_age_days: int,
+) -> dict:
+    holdings = session.scalars(
+        select(FundDisclosedHoldings)
+        .where(FundDisclosedHoldings.fund_code == fund_code)
+        .where(FundDisclosedHoldings.report_date == report_date)
+        .where(FundDisclosedHoldings.asset_type == "股票")
+        .where(FundDisclosedHoldings.security_code.is_not(None))
+        .order_by(FundDisclosedHoldings.rank_in_holdings)
+    ).all()
+    benchmark_symbol, benchmark_source = _resolve_readiness_benchmark(
+        session,
+        fund_code,
+        configured_benchmark_symbol,
+    )
+    stock_codes = {str(row.security_code) for row in holdings if row.security_code}
+    total_weight = sum(float(row.weight_pct or 0.0) for row in holdings)
+    missing_industry_count = sum(1 for row in holdings if not row.industry)
+    stock_coverage = _stock_return_weight_coverage(
+        session,
+        holdings=holdings,
+        report_date=report_date,
+    )
+    benchmark_observations = _return_observation_count(
+        session,
+        benchmark_symbol,
+        report_date,
+    )
+    benchmark_weight = _benchmark_weight_status(
+        session,
+        benchmark_symbol=benchmark_symbol,
+        report_date=report_date,
+        max_snapshot_age_days=max_snapshot_age_days,
+    )
+
+    issues = []
+    if not holdings:
+        issues.append("无股票持仓")
+    if missing_industry_count:
+        issues.append(f"持仓行业缺失 {missing_industry_count}/{len(holdings)}")
+    if stock_coverage < MIN_ATTRIBUTION_STOCK_WEIGHT_COVERAGE:
+        issues.append(f"持仓股票行情覆盖不足 {stock_coverage:.1%}")
+    if benchmark_observations < min_return_observations:
+        issues.append(f"基准收益样本不足 {benchmark_observations}/{min_return_observations}")
+    if not benchmark_weight["is_benchmark_weight_ready"]:
+        issues.append(benchmark_weight["reason"])
+
+    return {
+        "fund_code": fund_code,
+        "report_date": str(report_date),
+        "benchmark_symbol": benchmark_symbol,
+        "benchmark_source": benchmark_source,
+        "holding_count": len(holdings),
+        "stock_count": len(stock_codes),
+        "stock_weight_sum_pct": round(total_weight, 6),
+        "missing_industry_count": missing_industry_count,
+        "stock_return_weight_coverage": round(stock_coverage, 6),
+        "benchmark_return_observations": benchmark_observations,
+        **benchmark_weight,
+        "is_ready": not issues,
+        "issues": issues,
+    }
+
+
+def _resolve_readiness_benchmark(
+    session: Session,
+    fund_code: str,
+    configured_benchmark_symbol: str | None,
+) -> tuple[str, str]:
+    if configured_benchmark_symbol:
+        return configured_benchmark_symbol, "parameter"
+    fund = session.scalar(select(FundMain).where(FundMain.fund_code == fund_code))
+    benchmark_text = fund.benchmark if fund and fund.benchmark else ""
+    for keyword, symbol in BENCHMARK_TEXT_SYMBOL_MAP:
+        if keyword in benchmark_text:
+            return symbol, f"fund_benchmark:{keyword}"
+    return DEFAULT_ATTRIBUTION_BENCHMARK_SYMBOL, "default"
+
+
+def _return_window(report_date: date_type) -> tuple[date_type, date_type]:
+    start = report_date
+    month = start.month + 3
+    year = start.year + (month - 1) // 12
+    month = (month - 1) % 12 + 1
+    day = min(start.day, 28)
+    return start, date_type(year, month, day)
+
+
+def _return_observation_count(
+    session: Session,
+    stock_code: str,
+    report_date: date_type,
+) -> int:
+    start, end = _return_window(report_date)
+    return int(session.scalar(
+        select(func.count())
+        .select_from(StockDaily)
+        .where(StockDaily.stock_code == stock_code)
+        .where(StockDaily.trade_date >= start)
+        .where(StockDaily.trade_date < end)
+        .where(or_(StockDaily.daily_return.is_not(None), StockDaily.close_price.is_not(None)))
+    ) or 0)
+
+
+def _stock_return_weight_coverage(
+    session: Session,
+    *,
+    holdings: list[FundDisclosedHoldings],
+    report_date: date_type,
+) -> float:
+    total_weight = sum(float(row.weight_pct or 0.0) for row in holdings)
+    if total_weight <= 0:
+        return 0.0
+    covered_weight = 0.0
+    for row in holdings:
+        if not row.security_code:
+            continue
+        if _return_observation_count(session, str(row.security_code), report_date) > 0:
+            covered_weight += float(row.weight_pct or 0.0)
+    return covered_weight / total_weight
+
+
+def _benchmark_weight_status(
+    session: Session,
+    *,
+    benchmark_symbol: str,
+    report_date: date_type,
+    max_snapshot_age_days: int,
+) -> dict:
+    snapshot_date = session.scalar(
+        select(BenchmarkIndustryWeight.snapshot_date)
+        .where(BenchmarkIndustryWeight.benchmark_symbol == benchmark_symbol)
+        .where(BenchmarkIndustryWeight.snapshot_date <= report_date)
+        .where(BenchmarkIndustryWeight.classification_type == "SW")
+        .where(BenchmarkIndustryWeight.classification_level == 1)
+        .order_by(BenchmarkIndustryWeight.snapshot_date.desc())
+        .limit(1)
+    )
+    future_snapshot_date = session.scalar(
+        select(BenchmarkIndustryWeight.snapshot_date)
+        .where(BenchmarkIndustryWeight.benchmark_symbol == benchmark_symbol)
+        .where(BenchmarkIndustryWeight.snapshot_date > report_date)
+        .where(BenchmarkIndustryWeight.classification_type == "SW")
+        .where(BenchmarkIndustryWeight.classification_level == 1)
+        .order_by(BenchmarkIndustryWeight.snapshot_date)
+        .limit(1)
+    )
+    if snapshot_date is None:
+        reason = f"缺少不晚于报告期的基准行业权重: {benchmark_symbol}"
+        if future_snapshot_date is not None:
+            reason += f"；最近未来快照 {future_snapshot_date}"
+        return {
+            "benchmark_weight_snapshot_date": None,
+            "benchmark_weight_future_snapshot_date": str(future_snapshot_date) if future_snapshot_date else None,
+            "benchmark_weight_snapshot_age_days": None,
+            "benchmark_weight_coverage_pct": None,
+            "benchmark_weight_unmapped_pct": None,
+            "is_benchmark_weight_ready": False,
+            "reason": reason,
+        }
+
+    weight_rows = session.scalars(
+        select(BenchmarkIndustryWeight)
+        .where(BenchmarkIndustryWeight.benchmark_symbol == benchmark_symbol)
+        .where(BenchmarkIndustryWeight.snapshot_date == snapshot_date)
+        .where(BenchmarkIndustryWeight.classification_type == "SW")
+        .where(BenchmarkIndustryWeight.classification_level == 1)
+    ).all()
+    coverage_pct = min((float(row.coverage_pct or 0.0) for row in weight_rows), default=0.0)
+    unmapped_pct = max((float(row.unmapped_weight_pct or 0.0) for row in weight_rows), default=0.0)
+    snapshot_age_days = (report_date - snapshot_date).days
+    is_ready = (
+        snapshot_age_days <= max_snapshot_age_days
+        and coverage_pct >= MIN_ATTRIBUTION_BENCHMARK_WEIGHT_COVERAGE
+    )
+    reason = ""
+    if snapshot_age_days > max_snapshot_age_days:
+        reason = f"基准行业权重快照过旧: {snapshot_age_days}d"
+    elif coverage_pct < MIN_ATTRIBUTION_BENCHMARK_WEIGHT_COVERAGE:
+        reason = f"基准行业权重覆盖不足: {coverage_pct:.2f}%"
+
+    return {
+        "benchmark_weight_snapshot_date": str(snapshot_date),
+        "benchmark_weight_future_snapshot_date": str(future_snapshot_date) if future_snapshot_date else None,
+        "benchmark_weight_snapshot_age_days": snapshot_age_days,
+        "benchmark_weight_coverage_pct": round(coverage_pct, 6),
+        "benchmark_weight_unmapped_pct": round(unmapped_pct, 6),
+        "is_benchmark_weight_ready": is_ready,
+        "reason": reason,
+    }

@@ -175,3 +175,48 @@ metrics = {}
 
 1. 获取 `2026-03-31` 或更早且不超过 180 天的新鲜 `sh000300` 历史行业权重快照。
 2. 改选报告期不早于 `2026-05-29` 的真实基金持仓样本。
+
+## 7. P2G 运行条件检查器
+
+日期: 2026-06-14
+
+新增 CLI:
+
+```powershell
+.venv\Scripts\fund-research.exe check-dynamic-attribution `
+  --fund-code 000001 `
+  --benchmark-symbol sh000300 `
+  --db-path data\fund_research.duckdb
+```
+
+检查范围:
+
+- 股票持仓是否存在。
+- 持仓行业是否已回填。
+- 持仓股票行情是否覆盖；与算法一致，`daily_return` 为空但 `close_price` 可用时也视为可推导收益。
+- 基准指数行情是否覆盖。
+- 基准行业权重是否存在不晚于报告期的可用快照。
+- 基准行业权重快照是否超过 180 天新鲜度上限。
+- 基准行业权重覆盖率是否达到算法 gate。
+
+当前主库检查结果:
+
+| 字段 | 值 |
+|---|---|
+| fund_code | `000001` |
+| report_date | `2026-03-31` |
+| benchmark_symbol | `sh000300` |
+| holding_count | `10` |
+| missing_industry_count | `0` |
+| stock_return_weight_coverage | `100.0%` |
+| benchmark_return_observations | `41` |
+| benchmark_weight_snapshot_date | `None` |
+| benchmark_weight_future_snapshot_date | `2026-05-29` |
+| is_ready | `False` |
+| issues | `缺少不晚于报告期的基准行业权重: sh000300；最近未来快照 2026-05-29` |
+
+结论:
+
+- 同库数据链路、持仓行业回填、持仓与基准行情覆盖已经满足本样本的动态归因运行条件。
+- 仍然不能继续把该样本当作通过样本，因为 `2026-05-29` 基准行业权重晚于 `2026-03-31` 报告期。
+- 后续在扩展动态归因样本前，先运行 `check-dynamic-attribution --require-ready`，避免实验运行后才发现基础数据不满足 gate。

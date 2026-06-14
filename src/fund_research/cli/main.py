@@ -453,6 +453,95 @@ def check_data(
         raise typer.Exit(code=1)
 
 
+@app.command("check-dynamic-attribution")
+def check_dynamic_attribution(
+    db_path: DbPathOption = None,
+    fund_code: FundCodeOption = None,
+    benchmark_symbol: str | None = typer.Option(
+        None,
+        "--benchmark-symbol",
+        "--index-symbol",
+        help="动态归因基准指数代码，如 sh000300；不传则按基金资料解析或默认 sh000300",
+    ),
+    min_return_observations: int = typer.Option(
+        3,
+        "--min-return-observations",
+        help="每个报告期最少基准收益观测数",
+    ),
+    max_snapshot_age_days: int = typer.Option(
+        180,
+        "--max-snapshot-age-days",
+        help="基准行业权重快照最大允许年龄",
+    ),
+    require_ready: bool = typer.Option(
+        False,
+        "--require-ready",
+        help="没有可运行样本时返回非零退出码",
+    ),
+) -> None:
+    """检查动态归因真实样本是否具备运行条件。"""
+    from sqlalchemy.orm import sessionmaker
+
+    from fund_research.db.session import create_engine_from_path
+    from fund_research.experiments.readiness import assess_dynamic_attribution_readiness
+
+    engine = create_engine_from_path(db_path)
+    session_factory = sessionmaker(bind=engine)
+    with session_factory() as session:
+        rows = assess_dynamic_attribution_readiness(
+            session,
+            set(fund_code) if fund_code else None,
+            benchmark_symbol=benchmark_symbol,
+            min_return_observations=min_return_observations,
+            max_snapshot_age_days=max_snapshot_age_days,
+        )
+
+    table = Table(title="动态归因运行条件检查")
+    table.add_column("ready")
+    table.add_column("fund")
+    table.add_column("report")
+    table.add_column("benchmark")
+    table.add_column("holdings")
+    table.add_column("industry_missing")
+    table.add_column("stock_cov")
+    table.add_column("bench_obs")
+    table.add_column("weight_snapshot")
+    table.add_column("age")
+    table.add_column("coverage")
+    table.add_column("issues")
+
+    for row in rows:
+        issues = "; ".join(row["issues"]) if row["issues"] else ""
+        table.add_row(
+            "[green]YES[/]" if row["is_ready"] else "[red]NO[/]",
+            row["fund_code"],
+            row["report_date"],
+            row["benchmark_symbol"],
+            str(row["holding_count"]),
+            str(row["missing_industry_count"]),
+            f"{row['stock_return_weight_coverage']:.1%}",
+            str(row["benchmark_return_observations"]),
+            str(row["benchmark_weight_snapshot_date"] or "-"),
+            (
+                "-"
+                if row["benchmark_weight_snapshot_age_days"] is None
+                else str(row["benchmark_weight_snapshot_age_days"])
+            ),
+            (
+                "-"
+                if row["benchmark_weight_coverage_pct"] is None
+                else f"{row['benchmark_weight_coverage_pct']:.1f}%"
+            ),
+            issues or "-",
+        )
+
+    console.print(table)
+    ready_count = sum(1 for row in rows if row["is_ready"])
+    console.print(f"ready={ready_count}/{len(rows)}")
+    if require_ready and ready_count == 0:
+        raise typer.Exit(code=1)
+
+
 @app.command()
 def update(
     entity: UpdateEntityArg = "sample-funds",
