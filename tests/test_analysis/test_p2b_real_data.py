@@ -82,10 +82,10 @@ def seed_realistic_data(test_session: Session) -> None:
                 data_source_level="LOCAL",
             ))
 
-    # Stock daily: one row per stock for the year (simplified)
+    # Stock daily: one row per stock for the year plus the final Q4 attribution window.
     for code, _name, _ind in STOCKS:
         price = float(rng.uniform(10, 500))
-        for i in range(0, 242, 5):  # every 5 days
+        for i in range(0, 455, 5):  # every 5 calendar days through early 2025
             ret = float(rng.normal(0.0002, 0.018))
             price *= 1.0 + ret
             test_session.add(StockDaily(
@@ -98,7 +98,7 @@ def seed_realistic_data(test_session: Session) -> None:
 
     # Benchmark index daily: stored in stock_daily with index symbol.
     benchmark_level = 4000.0
-    for i in range(0, 242, 5):
+    for i in range(0, 455, 5):
         ret = float(rng.normal(0.0001, 0.01))
         benchmark_level *= 1.0 + ret
         test_session.add(StockDaily(
@@ -110,7 +110,7 @@ def seed_realistic_data(test_session: Session) -> None:
         ))
 
     for rp_date in (date(2024, 3, 31), date(2024, 6, 30), date(2024, 9, 30), date(2024, 12, 31)):
-        for industry, weight_pct in (("电子", 45.0), ("国防军工", 35.0), ("通信", 20.0)):
+        for industry, weight_pct in (("电子", 42.0), ("国防军工", 33.0), ("通信", 20.0), ("银行", 5.0)):
             test_session.add(BenchmarkIndustryWeight(
                 benchmark_symbol="sh000300",
                 snapshot_date=rp_date,
@@ -211,7 +211,7 @@ class TestRealDataPipeline:
     def test_dynamic_attribution_with_real_structure(
         self, test_client: TestClient, test_session: Session,
     ):
-        """动态归因: 真实基金持仓结构。"""
+        """动态归因: 真实基金持仓结构 + 真实基准行业权重。"""
         seed_realistic_data(test_session)
 
         r = test_client.post("/api/v2/experiments", json={
@@ -222,17 +222,59 @@ class TestRealDataPipeline:
 
         r = test_client.post(f"/api/v2/experiments/{exp_id}/run")
         assert r.status_code == 200
+        payload = r.json()
+        assert payload["data"]["status"] == "completed"
 
         results = test_session.scalars(
             sa_select(ExperimentResult).where(ExperimentResult.experiment_id == int(exp_id))
         ).all()
         assert len(results) == 1
-        if results[0].is_success:
-            m = results[0].metrics or {}
-            assert "estimated_total_allocation_effect" in m
-            assert "estimated_total_selection_effect" in m
-            assert m.get("uses_real_benchmark_weights") is True
-            assert m.get("uses_proxy_benchmark_weights") is False
+        result = results[0]
+        assert result.is_success, result.error_message
+        m = result.metrics or {}
+        assert "estimated_total_allocation_effect" in m
+        assert "estimated_total_selection_effect" in m
+        assert m.get("uses_real_benchmark_returns") is True
+        assert m.get("uses_real_sector_returns") is True
+        assert m.get("uses_real_benchmark_weights") is True
+        assert m.get("uses_proxy_benchmark") is False
+        assert m.get("uses_proxy_sector_returns") is False
+        assert m.get("uses_proxy_benchmark_weights") is False
+        assert m.get("benchmark_symbol") == "sh000300"
+        assert m.get("normalized_weight_sum_by_report") == {
+            "2024-03-31": 1.0,
+            "2024-06-30": 1.0,
+            "2024-09-30": 1.0,
+            "2024-12-31": 1.0,
+        }
+        assert m.get("benchmark_weight_snapshot_by_report") == {
+            "2024-03-31": "2024-03-31",
+            "2024-06-30": "2024-06-30",
+            "2024-09-30": "2024-09-30",
+            "2024-12-31": "2024-12-31",
+        }
+        assert m.get("benchmark_weight_coverage_by_report") == {
+            "2024-03-31": 100.0,
+            "2024-06-30": 100.0,
+            "2024-09-30": 100.0,
+            "2024-12-31": 100.0,
+        }
+        assert m.get("benchmark_weight_unmapped_pct_by_report") == {
+            "2024-03-31": 0.0,
+            "2024-06-30": 0.0,
+            "2024-09-30": 0.0,
+            "2024-12-31": 0.0,
+        }
+        assert m.get("benchmark_only_sector_count_by_report") == {
+            "2024-03-31": 1,
+            "2024-06-30": 1,
+            "2024-09-30": 1,
+            "2024-12-31": 1,
+        }
+        assert m.get("period_count") == 4
+        assert m.get("min_stock_weight_coverage") >= 0.8
+        assert not any("P2B 近似" in warning for warning in (result.warnings or []))
+        assert not any("基准行业权重暂用" in warning for warning in (result.warnings or []))
 
     def test_scoring_with_real_structure(
         self, test_client: TestClient, test_session: Session,
