@@ -331,6 +331,79 @@ class TestRunExperimentPipeline:
         assert persisted.input_coverage == 1.0
         assert persisted.holdings_detail
 
+    def test_simulated_holding_disclosure_period_backtest_records_out_of_sample_metrics(
+        self,
+        test_client: TestClient,
+        test_session: Session,
+    ):
+        """披露期回测应使用上一期持仓验证下一期披露，而不是同日自我验证。"""
+        previous_report = date(2024, 1, 1)
+        validation_report = date(2024, 2, 1)
+        for day in range(45):
+            test_session.add(FundNAV(
+                fund_code="000001",
+                trade_date=previous_report + timedelta(days=day),
+                unit_nav=1.0 + day * 0.01,
+                daily_return=0.01 if day > 0 else None,
+                data_source_level="LOCAL",
+            ))
+        for report_date in (previous_report, validation_report):
+            for i, industry in enumerate(("tech", "finance")):
+                test_session.add(FundDisclosedHoldings(
+                    fund_code="000001",
+                    report_date=report_date,
+                    security_code=f"00000{i}",
+                    asset_type="股票",
+                    weight_pct=50.0,
+                    industry=industry,
+                    rank_in_holdings=i + 1,
+                    data_source_level="LOCAL",
+                ))
+        for i in range(2):
+            for day in range(45):
+                test_session.add(StockDaily(
+                    stock_code=f"00000{i}",
+                    trade_date=previous_report + timedelta(days=day),
+                    close_price=100.0 + day,
+                    daily_return=0.01 if day > 0 else None,
+                    data_source_level="LOCAL",
+                ))
+        test_session.commit()
+
+        create_resp = test_client.post("/api/v2/experiments", json={
+            "experiment_name": "disclosure-backtest",
+            "algorithm_name": "simulated_holding",
+            "parameters": {
+                "validation_mode": "disclosure_period",
+                "min_return_observations": 5,
+                "min_top10_recall": 0.5,
+            },
+            "sample_fund_codes": ["000001"],
+        })
+        exp_id = create_resp.json()["data"]["id"]
+
+        run_resp = test_client.post(f"/api/v2/experiments/{exp_id}/run")
+        assert run_resp.status_code == 200
+        payload = run_resp.json()
+        assert payload["data"]["status"] == "completed"
+
+        result = test_session.scalars(
+            sa_select(ExperimentResult).where(ExperimentResult.experiment_id == int(exp_id))
+        ).one()
+        metrics = result.metrics or {}
+        assert result.is_success
+        assert metrics["validation_mode"] == "disclosure_period"
+        assert metrics["validation_pair_count"] == 1
+        assert metrics["estimated_overall_top10_recall"] == 1.0
+        assert metrics["backtest_detail"][0]["previous_report_date"] == "2024-01-01"
+        assert metrics["backtest_detail"][0]["validation_report_date"] == "2024-02-01"
+
+        persisted = test_session.scalars(sa_select(SimulatedHoldingResult)).one()
+        assert persisted.calc_date == validation_report
+        assert persisted.backtest_report_date == validation_report
+        assert persisted.input_coverage == 1.0
+        assert persisted.conclusion_status == "estimated"
+
     def test_run_experiment_unknown_algorithm_returns_failure(
         self,
         test_client: TestClient,

@@ -7,9 +7,13 @@ from sqlalchemy.orm import Session
 from fund_research.db.models import (
     BenchmarkIndustryWeight,
     FundDisclosedHoldings,
+    FundNAV,
     StockDaily,
 )
-from fund_research.experiments.readiness import assess_dynamic_attribution_readiness
+from fund_research.experiments.readiness import (
+    assess_dynamic_attribution_readiness,
+    assess_simulated_holding_backtest_readiness,
+)
 
 
 def _seed_market_data(
@@ -58,6 +62,78 @@ def _seed_benchmark_weights(
                 warnings=[],
             )
         )
+
+
+def _seed_nav_data(
+    test_session: Session,
+    *,
+    fund_code: str,
+    start: date,
+    days: int = 35,
+) -> None:
+    for index in range(days):
+        test_session.add(
+            FundNAV(
+                fund_code=fund_code,
+                trade_date=start + timedelta(days=index),
+                unit_nav=1.0 + index * 0.01,
+                daily_return=0.01 if index > 0 else None,
+                data_source_level="LOCAL",
+            )
+        )
+
+
+def test_simulated_holding_backtest_readiness_accepts_two_disclosures(
+    test_session: Session,
+) -> None:
+    """Disclosure-period backtest readiness requires two reports plus NAV/stock coverage."""
+    previous_report = date(2024, 3, 31)
+    validation_report = date(2024, 6, 30)
+    for report_date in (previous_report, validation_report):
+        test_session.add_all([
+            FundDisclosedHoldings(
+                fund_code="000001",
+                report_date=report_date,
+                asset_type="股票",
+                security_code="000001",
+                weight_pct=60.0,
+                industry="银行",
+                data_source_level="LOCAL",
+            ),
+            FundDisclosedHoldings(
+                fund_code="000001",
+                report_date=report_date,
+                asset_type="股票",
+                security_code="000002",
+                weight_pct=40.0,
+                industry="地产",
+                data_source_level="LOCAL",
+            ),
+        ])
+    _seed_nav_data(test_session, fund_code="000001", start=previous_report)
+    _seed_market_data(
+        test_session,
+        report_date=previous_report,
+        stock_codes=["000001", "000002"],
+        benchmark_symbol="unused",
+        daily_return=0.01,
+    )
+    test_session.commit()
+
+    rows = assess_simulated_holding_backtest_readiness(
+        test_session,
+        {"000001"},
+        min_return_observations=5,
+    )
+
+    assert len(rows) == 1
+    row = rows[0]
+    assert row["is_ready"] is True
+    assert row["report_period_count"] == 2
+    assert row["ready_validation_pair_count"] == 1
+    assert row["min_stock_return_weight_coverage"] == 1.0
+    assert row["validation_pairs"][0]["previous_report_date"] == "2024-03-31"
+    assert row["validation_pairs"][0]["validation_report_date"] == "2024-06-30"
 
 
 def test_dynamic_attribution_readiness_rejects_future_benchmark_weight(

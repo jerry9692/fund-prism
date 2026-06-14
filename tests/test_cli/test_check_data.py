@@ -145,3 +145,20 @@ def test_check_dynamic_attribution_help_is_available() -> None:
     assert create_result.exit_code == 0
     assert "--report-date" in create_result.output
     assert "--experiment-name" in create_result.output
+
+
+def test_check_simulated_holding_backtest_help_is_available() -> None:
+    """The simulated holding disclosure-period backtest commands should be exposed."""
+    result = CliRunner().invoke(app, ["check-simulated-holding-backtest", "--help"])
+
+    assert result.exit_code == 0
+    assert "--min-validation-pairs" in result.output
+    assert "--min-stock-weight-coverage" in result.output
+    assert "--require-industry" in result.output
+    assert "--ready-only" in result.output
+    assert "--require-ready" in result.output
+
+    create_result = CliRunner().invoke(app, ["create-simulated-holding-backtest-experiment", "--help"])
+    assert create_result.exit_code == 0
+    assert "--experiment-name" in create_result.output
+    assert "--min-report-date" in create_result.output

@@ -82,6 +82,10 @@ def _run_simulated_holding_batch(
     fund_codes: list[str],
 ) -> list[dict]:
     """Run simulated-holding experiments and persist per-fund results."""
+    params = exp.parameters or {}
+    if params.get("validation_mode") == "disclosure_period":
+        return _run_simulated_holding_disclosure_backtest_batch(db, exp, fund_codes)
+
     results: list[dict] = []
 
     for fund_code in fund_codes:
@@ -322,6 +326,343 @@ def _run_simulated_holding_batch(
             results.append(_failure_result(fund_code, str(exc)[:500]))
 
     return results
+
+
+def _run_simulated_holding_disclosure_backtest_batch(
+    db: Session,
+    exp: AlgorithmExperiment,
+    fund_codes: list[str],
+) -> list[dict]:
+    """Run out-of-sample disclosure-period simulated holding backtests."""
+    params = exp.parameters or {}
+    min_return_observations = int(params.get("min_return_observations") or 20)
+    min_validation_pairs = int(params.get("min_validation_pairs") or 1)
+    min_stock_weight_coverage = float(params.get("min_stock_weight_coverage") or 0.8)
+    max_tracking_error = float(params.get("max_tracking_error") or 0.10)
+    min_top10_recall = float(params.get("min_top10_recall") or 0.30)
+    exact_report_dates, min_report_date, max_report_date = _resolve_report_date_filters(params)
+    results: list[dict] = []
+
+    for fund_code in fund_codes:
+        try:
+            nav_rows = db.scalars(
+                sa_select(FundNAV)
+                .where(FundNAV.fund_code == fund_code)
+                .order_by(FundNAV.trade_date)
+            ).all()
+            holdings_rows = db.scalars(
+                sa_select(FundDisclosedHoldings)
+                .where(FundDisclosedHoldings.fund_code == fund_code)
+                .where(FundDisclosedHoldings.asset_type == "股票")
+                .where(FundDisclosedHoldings.security_code.is_not(None))
+                .order_by(FundDisclosedHoldings.report_date, FundDisclosedHoldings.rank_in_holdings)
+            ).all()
+            if not nav_rows:
+                _record_failure(db, exp.id, fund_code, "无净值数据")
+                results.append(_failure_result(fund_code, "无净值数据"))
+                continue
+            if not holdings_rows:
+                _record_failure(db, exp.id, fund_code, "无股票持仓数据")
+                results.append(_failure_result(fund_code, "无股票持仓数据"))
+                continue
+
+            nav_df = _nav_rows_to_return_df(nav_rows)
+            report_dates = sorted({row.report_date for row in holdings_rows if row.report_date})
+            stock_codes = {str(row.security_code) for row in holdings_rows if row.security_code}
+            stock_rows = db.scalars(
+                sa_select(StockDaily)
+                .where(StockDaily.stock_code.in_(stock_codes))
+                .order_by(StockDaily.stock_code, StockDaily.trade_date)
+            ).all()
+            stock_df = _market_rows_to_return_df(stock_rows)
+            if stock_df.empty:
+                _record_failure(db, exp.id, fund_code, "无持仓股票行情数据")
+                results.append(_failure_result(fund_code, "无持仓股票行情数据"))
+                continue
+
+            periods = []
+            disclosed_dict: dict[str, dict[str, float]] = {}
+            industry_dict: dict[str, dict[str, str]] = {}
+            pair_details: list[dict] = []
+            warnings: list[str] = []
+            tracking_errors: list[float] = []
+
+            for previous_report, validation_report in zip(report_dates, report_dates[1:], strict=False):
+                if exact_report_dates and validation_report not in exact_report_dates:
+                    continue
+                if min_report_date is not None and validation_report < min_report_date:
+                    continue
+                if max_report_date is not None and validation_report > max_report_date:
+                    continue
+
+                previous_holdings = [
+                    row for row in holdings_rows if row.report_date == previous_report
+                ]
+                validation_holdings = [
+                    row for row in holdings_rows if row.report_date == validation_report
+                ]
+                if not previous_holdings or not validation_holdings:
+                    continue
+
+                estimated_weights = _normalized_holding_weights(previous_holdings)
+                validation_weights = _normalized_holding_weights(validation_holdings)
+                if not estimated_weights or not validation_weights:
+                    continue
+
+                period_result, pair_stats = _build_disclosure_backtest_period(
+                    fund_code=fund_code,
+                    previous_report=previous_report,
+                    validation_report=validation_report,
+                    previous_holdings=previous_holdings,
+                    validation_holdings=validation_holdings,
+                    nav_df=nav_df,
+                    stock_df=stock_df,
+                    estimated_weights=estimated_weights,
+                )
+                periods.append(period_result)
+                tracking_errors.append(period_result.tracking_error)
+                pair_details.append(pair_stats)
+                disclosed_dict[str(validation_report)] = {
+                    stock_code: weight * 100.0
+                    for stock_code, weight in validation_weights.items()
+                }
+                industry_dict[str(validation_report)] = {
+                    str(row.security_code): row.industry
+                    for row in validation_holdings
+                    if row.security_code and isinstance(row.industry, str)
+                }
+
+            sim_result = type("_R", (), {
+                "periods": periods,
+                "overall_tracking_error": float(np.mean(tracking_errors)) if tracking_errors else 0.0,
+                "warnings": warnings,
+                "confidence": "low",
+            })()
+            backtest = (
+                backtest_disclosure(periods, disclosed_dict, industry_dict)
+                if disclosed_dict
+                else {"detail": [], "top10_recall": None, "industry_correlation": None, "warnings": []}
+            )
+            detail_by_date = {
+                row.get("calc_date"): row
+                for row in backtest.get("detail", [])
+                if isinstance(row, dict)
+            }
+            enriched_detail = []
+            for pair in pair_details:
+                item = {**pair, **detail_by_date.get(pair["validation_report_date"], {})}
+                enriched_detail.append(item)
+
+            min_stock_coverage = min(
+                (pair["stock_return_weight_coverage"] for pair in pair_details),
+                default=0.0,
+            )
+            min_return_samples = min(
+                (pair["return_sample_count"] for pair in pair_details),
+                default=0,
+            )
+            metrics = {
+                "validation_mode": "disclosure_period",
+                "estimated_overall_tracking_error": sim_result.overall_tracking_error,
+                "estimated_overall_top10_recall": backtest.get("top10_recall"),
+                "estimated_overall_industry_correlation": backtest.get("industry_correlation"),
+                "period_count": len(periods),
+                "validation_pair_count": len(pair_details),
+                "min_stock_return_weight_coverage": round(min_stock_coverage, 6),
+                "min_return_sample_count": min_return_samples,
+                "backtest_detail": enriched_detail,
+                "report_date_filter": _report_date_filter_metadata(
+                    exact_report_dates,
+                    min_report_date,
+                    max_report_date,
+                ),
+            }
+
+            failure_reasons = []
+            if len(pair_details) < min_validation_pairs:
+                failure_reasons.append(f"可回测披露期不足: {len(pair_details)}/{min_validation_pairs}")
+            if min_stock_coverage < min_stock_weight_coverage:
+                failure_reasons.append(f"股票收益覆盖不足: {min_stock_coverage:.1%}")
+            if min_return_samples < min_return_observations:
+                failure_reasons.append(f"收益样本不足: {min_return_samples}/{min_return_observations}")
+            if sim_result.overall_tracking_error >= max_tracking_error:
+                failure_reasons.append(f"跟踪误差偏高 TE={sim_result.overall_tracking_error:.4f}")
+            recall = backtest.get("top10_recall")
+            if recall is None or float(recall) < min_top10_recall:
+                failure_reasons.append(f"重仓召回率不足: {recall}")
+
+            is_success = not failure_reasons
+            warning_messages = [
+                *warnings,
+                *backtest.get("warnings", []),
+                *failure_reasons,
+            ]
+            _persist_simulated_holding_result(
+                db,
+                exp,
+                fund_code=fund_code,
+                sim_result=sim_result,
+                metrics=metrics,
+                warning_messages=[] if is_success else warning_messages,
+                raw_holding_count=max(
+                    (pair["estimated_holding_count"] for pair in pair_details),
+                    default=0,
+                ),
+                is_success=is_success,
+            )
+            record_result(
+                db,
+                experiment_id=exp.id,
+                fund_code=fund_code,
+                calc_date=date_type.today(),
+                is_success=is_success,
+                metrics=metrics,
+                error_message="; ".join(failure_reasons) if failure_reasons else None,
+                warnings=[] if is_success else warning_messages,
+            )
+            results.append({
+                "fund_code": fund_code,
+                "is_success": is_success,
+                "error_message": "; ".join(failure_reasons) if failure_reasons else None,
+                "warnings": [] if is_success else warning_messages,
+            })
+
+        except Exception as exc:
+            _safe_record_exception(db, exp.id, fund_code, exc)
+            results.append(_failure_result(fund_code, str(exc)[:500]))
+
+    return results
+
+
+def _nav_rows_to_return_df(rows: list[FundNAV]) -> pd.DataFrame:
+    data = pd.DataFrame([
+        {
+            "trade_date": row.trade_date,
+            "unit_nav": row.unit_nav,
+            "daily_return": row.daily_return,
+        }
+        for row in rows
+    ])
+    if data.empty:
+        return pd.DataFrame(columns=["trade_date", "daily_return"])
+    data["trade_date"] = pd.to_datetime(data["trade_date"])
+    data = data.sort_values("trade_date")
+    if "daily_return" not in data.columns or data["daily_return"].isna().all():
+        data["daily_return"] = pd.to_numeric(data["unit_nav"], errors="coerce").pct_change()
+    else:
+        missing = data["daily_return"].isna()
+        if missing.any():
+            inferred = pd.to_numeric(data["unit_nav"], errors="coerce").pct_change()
+            data.loc[missing, "daily_return"] = inferred.loc[missing]
+    data["daily_return"] = pd.to_numeric(data["daily_return"], errors="coerce")
+    return data[["trade_date", "daily_return"]].dropna()
+
+
+def _normalized_holding_weights(rows: list[FundDisclosedHoldings]) -> dict[str, float]:
+    weights: dict[str, float] = {}
+    for row in rows:
+        if not row.security_code:
+            continue
+        stock_code = str(row.security_code)
+        weights[stock_code] = weights.get(stock_code, 0.0) + float(row.weight_pct or 0.0)
+    total = sum(weights.values())
+    if total <= 0:
+        return {}
+    return {stock_code: weight / total for stock_code, weight in weights.items()}
+
+
+def _build_disclosure_backtest_period(
+    *,
+    fund_code: str,
+    previous_report: date_type,
+    validation_report: date_type,
+    previous_holdings: list[FundDisclosedHoldings],
+    validation_holdings: list[FundDisclosedHoldings],
+    nav_df: pd.DataFrame,
+    stock_df: pd.DataFrame,
+    estimated_weights: dict[str, float],
+):
+    del fund_code
+    industry_map = {
+        str(row.security_code): row.industry
+        for row in previous_holdings
+        if row.security_code and isinstance(row.industry, str)
+    }
+    validation_codes = {
+        str(row.security_code)
+        for row in validation_holdings
+        if row.security_code
+    }
+    holding_list = [
+        {
+            "stock_code": stock_code,
+            "stock_name": stock_code,
+            "estimated_weight": float(weight),
+            "industry": industry_map.get(stock_code),
+            "confidence": "low",
+        }
+        for stock_code, weight in sorted(
+            estimated_weights.items(),
+            key=lambda item: item[1],
+            reverse=True,
+        )
+    ]
+    window_stock_df = stock_df[
+        (stock_df["trade_date"] >= pd.Timestamp(previous_report))
+        & (stock_df["trade_date"] < pd.Timestamp(validation_report))
+    ]
+    window_nav_df = nav_df[
+        (nav_df["trade_date"] >= pd.Timestamp(previous_report))
+        & (nav_df["trade_date"] < pd.Timestamp(validation_report))
+    ]
+    stock_pivot = window_stock_df.pivot_table(
+        index="trade_date",
+        columns="stock_code",
+        values="daily_return",
+        aggfunc="last",
+    )
+    common_codes = [stock_code for stock_code in estimated_weights if stock_code in stock_pivot.columns]
+    available_weight = sum(estimated_weights[stock_code] for stock_code in common_codes)
+    sample_count = 0
+    tracking_error = 0.0
+    if common_codes and available_weight > 0 and not window_nav_df.empty:
+        weight_vector = pd.Series(
+            {stock_code: estimated_weights[stock_code] / available_weight for stock_code in common_codes},
+            dtype=float,
+        )
+        portfolio_returns = (stock_pivot[common_codes] * weight_vector).sum(axis=1)
+        nav_returns = window_nav_df.set_index("trade_date")["daily_return"]
+        merged_returns = pd.DataFrame({
+            "port": portfolio_returns,
+            "fund": nav_returns,
+        }).dropna()
+        sample_count = len(merged_returns)
+        if sample_count > 0:
+            tracking_error = float(
+                np.sqrt(np.mean((merged_returns["port"] - merged_returns["fund"]) ** 2))
+            )
+
+    pair_stats = {
+        "previous_report_date": str(previous_report),
+        "validation_report_date": str(validation_report),
+        "estimated_holding_count": len(estimated_weights),
+        "validation_holding_count": len(validation_codes),
+        "common_holding_count": len(set(estimated_weights) & validation_codes),
+        "stock_return_weight_coverage": round(float(available_weight), 6),
+        "return_sample_count": sample_count,
+        "estimated_tracking_error": round(tracking_error, 6),
+    }
+    period_result = type("_P", (), {
+        "calc_date": validation_report,
+        "holdings": holding_list,
+        "stock_weight_pct": 100.0,
+        "bond_weight_pct": 0.0,
+        "cash_weight_pct": 0.0,
+        "tracking_error": tracking_error,
+        "objective_value": 0.0,
+        "warnings": [],
+    })()
+    return period_result, pair_stats
 
 
 def _run_dynamic_attribution_batch(
@@ -1017,9 +1358,18 @@ def _persist_simulated_holding_result(
     """Persist simulated holding periods into the Phase 2 result table."""
     matched_count = int(metrics.get("matched_stock_count") or 0)
     input_coverage = (
-        round(matched_count / raw_holding_count, 6)
-        if raw_holding_count > 0
+        metrics.get("min_stock_return_weight_coverage")
+        if metrics.get("validation_mode") == "disclosure_period"
         else None
+    )
+    input_coverage = (
+        round(float(input_coverage), 6)
+        if input_coverage is not None
+        else (
+            round(matched_count / raw_holding_count, 6)
+            if raw_holding_count > 0
+            else None
+        )
     )
     conclusion_status = "estimated" if is_success else "needs_review"
     for period in sim_result.periods:

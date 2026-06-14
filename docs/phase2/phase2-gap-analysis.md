@@ -40,6 +40,11 @@ Estimated Phase 2 completion: about 52%.
 - CLI/API creation of dynamic attribution experiments from ready candidates.
 - Report-date filtering in dynamic attribution runner.
 - Strict benchmark industry weight gating.
+- Simulated holding disclosure-period backtest baseline:
+  - readiness checker
+  - experiment creation CLI
+  - runner mode `validation_mode=disclosure_period`
+  - `simulated_holding_result` persistence
 - Phase 2 domain result persistence:
   - `simulated_holding_result`
   - `dynamic_attribution_result`
@@ -49,15 +54,17 @@ Estimated Phase 2 completion: about 52%.
 
 ### Simulated Holding
 
-Current runner still uses a naive disclosed-holding replication path for the
-experiment batch. This is useful as a baseline, but it is not yet the intended
-validation-grade simulation path.
+The runner now has a disclosure-period baseline path. It uses one disclosed
+period as the estimated portfolio and validates it against the next disclosed
+period. This is useful as a data-quality and acceptance-report baseline, but it
+is not yet the intended hidden-holding simulation path.
 
 Next acceptance target:
 
 - Select at least 30 funds with multiple disclosure periods.
-- Use earlier disclosure and stock/NAV windows to estimate holdings.
-- Validate against later disclosed holdings.
+- Run the disclosure-period baseline and record real failure taxonomy.
+- Then replace the lagged-disclosure baseline with the CVXPY/SciPy estimation
+  path for a smaller controlled sample.
 - Record top holding recall, industry correlation, tracking error, input
   coverage, and failure taxonomy.
 - Treat failed or low-quality samples as `needs_review`.
@@ -121,4 +128,3 @@ Next acceptance target:
 4. Add scoring backtest MVP and persist `scoring_backtest`.
 5. Add manual review API/UI.
 6. Improve frontend information architecture, then polish visuals.
-

@@ -577,6 +577,227 @@ def check_dynamic_attribution(
         raise typer.Exit(code=1)
 
 
+@app.command("check-simulated-holding-backtest")
+def check_simulated_holding_backtest(
+    db_path: DbPathOption = None,
+    fund_code: FundCodeOption = None,
+    min_report_date: str | None = typer.Option(
+        None,
+        "--min-report-date",
+        help="只检查验证期不早于该日期的披露期回测样本，格式 YYYY-MM-DD",
+    ),
+    max_report_date: str | None = typer.Option(
+        None,
+        "--max-report-date",
+        help="只检查验证期不晚于该日期的披露期回测样本，格式 YYYY-MM-DD",
+    ),
+    min_validation_pairs: int = typer.Option(
+        1,
+        "--min-validation-pairs",
+        help="每只基金最少可用披露期回测对数",
+    ),
+    min_return_observations: int = typer.Option(
+        20,
+        "--min-return-observations",
+        help="每个披露期最少 NAV/股票收益观测数",
+    ),
+    min_stock_weight_coverage: float = typer.Option(
+        0.8,
+        "--min-stock-weight-coverage",
+        help="上一期估计持仓股票收益权重覆盖率下限",
+    ),
+    require_industry: bool = typer.Option(
+        False,
+        "--require-industry",
+        help="要求上一期和验证期持仓都具备行业归属；默认只记录缺失不阻断",
+    ),
+    ready_only: bool = typer.Option(
+        False,
+        "--ready-only",
+        help="只显示已经满足披露期回测条件的基金",
+    ),
+    limit: int | None = typer.Option(
+        None,
+        "--limit",
+        help="最多显示多少只候选基金",
+    ),
+    output_json: bool = typer.Option(
+        False,
+        "--json",
+        help="以 JSON 输出检查结果，便于脚本读取",
+    ),
+    require_ready: bool = typer.Option(
+        False,
+        "--require-ready",
+        help="没有可运行样本时返回非零退出码",
+    ),
+) -> None:
+    """检查模拟持仓披露期回测是否具备运行条件。"""
+    from sqlalchemy.orm import sessionmaker
+
+    from fund_research.db.session import create_engine_from_path
+    from fund_research.experiments.readiness import (
+        assess_simulated_holding_backtest_readiness,
+    )
+
+    engine = create_engine_from_path(db_path)
+    session_factory = sessionmaker(bind=engine)
+    with session_factory() as session:
+        rows = assess_simulated_holding_backtest_readiness(
+            session,
+            set(fund_code) if fund_code else None,
+            min_report_date=date.fromisoformat(min_report_date) if min_report_date else None,
+            max_report_date=date.fromisoformat(max_report_date) if max_report_date else None,
+            min_validation_pairs=min_validation_pairs,
+            min_return_observations=min_return_observations,
+            min_stock_weight_coverage=min_stock_weight_coverage,
+            require_industry=require_industry,
+            ready_only=ready_only,
+            limit=limit,
+        )
+
+    ready_count = sum(1 for row in rows if row["is_ready"])
+    if output_json:
+        console.print_json(data={"ready": ready_count, "total": len(rows), "rows": rows})
+        if require_ready and ready_count == 0:
+            raise typer.Exit(code=1)
+        return
+
+    table = Table(title="模拟持仓披露期回测运行条件检查")
+    table.add_column("ready")
+    table.add_column("fund")
+    table.add_column("reports")
+    table.add_column("pairs")
+    table.add_column("ready_pairs")
+    table.add_column("stock_cov")
+    table.add_column("nav_obs")
+    table.add_column("issues")
+
+    for row in rows:
+        issues = "; ".join(row["issues"]) if row["issues"] else ""
+        table.add_row(
+            "[green]YES[/]" if row["is_ready"] else "[red]NO[/]",
+            row["fund_code"],
+            str(row["report_period_count"]),
+            str(row["validation_pair_count"]),
+            str(row["ready_validation_pair_count"]),
+            f"{row['min_stock_return_weight_coverage']:.1%}",
+            str(row["min_nav_return_observations"]),
+            issues or "-",
+        )
+
+    console.print(table)
+    console.print(f"ready={ready_count}/{len(rows)}")
+    if require_ready and ready_count == 0:
+        raise typer.Exit(code=1)
+
+
+@app.command("create-simulated-holding-backtest-experiment")
+def create_simulated_holding_backtest_experiment(
+    db_path: DbPathOption = None,
+    fund_code: FundCodeOption = None,
+    experiment_name: str = typer.Option(
+        "Simulated holding disclosure-period backtest",
+        "--experiment-name",
+        help="实验名称",
+    ),
+    algorithm_version: str = typer.Option(
+        "0.1.0",
+        "--algorithm-version",
+        help="算法版本",
+    ),
+    min_report_date: str | None = typer.Option(
+        None,
+        "--min-report-date",
+        help="只纳入验证期不早于该日期的披露期回测样本，格式 YYYY-MM-DD",
+    ),
+    max_report_date: str | None = typer.Option(
+        None,
+        "--max-report-date",
+        help="只纳入验证期不晚于该日期的披露期回测样本，格式 YYYY-MM-DD",
+    ),
+    min_validation_pairs: int = typer.Option(
+        1,
+        "--min-validation-pairs",
+        help="每只基金最少可用披露期回测对数",
+    ),
+    min_return_observations: int = typer.Option(
+        20,
+        "--min-return-observations",
+        help="每个披露期最少 NAV/股票收益观测数",
+    ),
+    min_stock_weight_coverage: float = typer.Option(
+        0.8,
+        "--min-stock-weight-coverage",
+        help="上一期估计持仓股票收益权重覆盖率下限",
+    ),
+    require_industry: bool = typer.Option(
+        False,
+        "--require-industry",
+        help="要求上一期和验证期持仓都具备行业归属；默认只记录缺失不阻断",
+    ),
+    limit: int | None = typer.Option(
+        None,
+        "--limit",
+        help="最多纳入多少只 ready 基金",
+    ),
+) -> None:
+    """从 ready 样本创建模拟持仓披露期回测实验。"""
+    from sqlalchemy.orm import sessionmaker
+
+    from fund_research.db.session import create_engine_from_path
+    from fund_research.experiments.manager import create_experiment
+    from fund_research.experiments.readiness import (
+        assess_simulated_holding_backtest_readiness,
+    )
+
+    parsed_min_report_date = date.fromisoformat(min_report_date) if min_report_date else None
+    parsed_max_report_date = date.fromisoformat(max_report_date) if max_report_date else None
+    engine = create_engine_from_path(db_path)
+    session_factory = sessionmaker(bind=engine)
+    with session_factory() as session:
+        rows = assess_simulated_holding_backtest_readiness(
+            session,
+            set(fund_code) if fund_code else None,
+            min_report_date=parsed_min_report_date,
+            max_report_date=parsed_max_report_date,
+            min_validation_pairs=min_validation_pairs,
+            min_return_observations=min_return_observations,
+            min_stock_weight_coverage=min_stock_weight_coverage,
+            require_industry=require_industry,
+            ready_only=True,
+            limit=limit,
+        )
+        sample_fund_codes = sorted({row["fund_code"] for row in rows})
+        if not sample_fund_codes:
+            console.print("[red]未找到满足模拟持仓披露期回测条件的样本，未创建实验[/]")
+            raise typer.Exit(code=1)
+
+        parameters = {
+            "validation_mode": "disclosure_period",
+            "min_validation_pairs": min_validation_pairs,
+            "min_return_observations": min_return_observations,
+            "min_stock_weight_coverage": min_stock_weight_coverage,
+            "require_industry": require_industry,
+        }
+        if min_report_date:
+            parameters["min_report_date"] = min_report_date
+        if max_report_date:
+            parameters["max_report_date"] = max_report_date
+        exp = create_experiment(
+            session,
+            experiment_name=experiment_name,
+            algorithm_name="simulated_holding",
+            algorithm_version=algorithm_version,
+            parameters=parameters,
+            sample_fund_codes=sample_fund_codes,
+        )
+
+    console.print(f"[green]OK[/] 已创建模拟持仓披露期回测实验: id={exp.id}")
+    console.print(f"funds={len(sample_fund_codes)}")
+    console.print(f"parameters={json.dumps(parameters, ensure_ascii=False)}")
+
+
 @app.command("create-dynamic-attribution-experiment")
 def create_dynamic_attribution_experiment(
     db_path: DbPathOption = None,

@@ -9,6 +9,7 @@ from fund_research.db.models import (
     BenchmarkIndustryWeight,
     FundDisclosedHoldings,
     FundMain,
+    FundNAV,
     StockDaily,
 )
 from fund_research.experiments.runner import (
@@ -19,6 +20,153 @@ from fund_research.experiments.runner import (
     MIN_ATTRIBUTION_RETURN_OBSERVATIONS,
     MIN_ATTRIBUTION_STOCK_WEIGHT_COVERAGE,
 )
+
+MIN_SIMULATED_HOLDING_VALIDATION_PAIRS = 1
+MIN_SIMULATED_HOLDING_RETURN_OBSERVATIONS = 20
+MIN_SIMULATED_HOLDING_STOCK_WEIGHT_COVERAGE = 0.8
+
+
+def assess_simulated_holding_backtest_readiness(
+    session: Session,
+    fund_codes: set[str] | None = None,
+    *,
+    min_report_date: date_type | None = None,
+    max_report_date: date_type | None = None,
+    min_validation_pairs: int = MIN_SIMULATED_HOLDING_VALIDATION_PAIRS,
+    min_return_observations: int = MIN_SIMULATED_HOLDING_RETURN_OBSERVATIONS,
+    min_stock_weight_coverage: float = MIN_SIMULATED_HOLDING_STOCK_WEIGHT_COVERAGE,
+    require_industry: bool = False,
+    ready_only: bool = False,
+    limit: int | None = None,
+) -> list[dict]:
+    """Assess whether funds can run disclosure-period simulated-holding backtests."""
+    fund_stmt = (
+        select(FundDisclosedHoldings.fund_code)
+        .where(FundDisclosedHoldings.asset_type == "股票")
+        .where(FundDisclosedHoldings.security_code.is_not(None))
+        .group_by(FundDisclosedHoldings.fund_code)
+        .order_by(FundDisclosedHoldings.fund_code)
+    )
+    if fund_codes:
+        fund_stmt = fund_stmt.where(FundDisclosedHoldings.fund_code.in_(fund_codes))
+
+    rows = [
+        _assess_simulated_holding_fund(
+            session,
+            fund_code=fund_code,
+            min_report_date=min_report_date,
+            max_report_date=max_report_date,
+            min_validation_pairs=min_validation_pairs,
+            min_return_observations=min_return_observations,
+            min_stock_weight_coverage=min_stock_weight_coverage,
+            require_industry=require_industry,
+        )
+        for (fund_code,) in session.execute(fund_stmt).all()
+    ]
+    rows.sort(key=lambda row: (0 if row["is_ready"] else 1, row["fund_code"]))
+    if ready_only:
+        rows = [row for row in rows if row["is_ready"]]
+    if limit is not None and limit >= 0:
+        rows = rows[:limit]
+    return rows
+
+
+def _assess_simulated_holding_fund(
+    session: Session,
+    *,
+    fund_code: str,
+    min_report_date: date_type | None,
+    max_report_date: date_type | None,
+    min_validation_pairs: int,
+    min_return_observations: int,
+    min_stock_weight_coverage: float,
+    require_industry: bool,
+) -> dict:
+    report_dates = list(session.scalars(
+        select(FundDisclosedHoldings.report_date)
+        .where(FundDisclosedHoldings.fund_code == fund_code)
+        .where(FundDisclosedHoldings.asset_type == "股票")
+        .where(FundDisclosedHoldings.security_code.is_not(None))
+        .group_by(FundDisclosedHoldings.report_date)
+        .order_by(FundDisclosedHoldings.report_date)
+    ).all())
+    pairs = []
+    issues = []
+    for previous_report, validation_report in zip(report_dates, report_dates[1:], strict=False):
+        if min_report_date is not None and validation_report < min_report_date:
+            continue
+        if max_report_date is not None and validation_report > max_report_date:
+            continue
+        previous_holdings = _stock_holdings_for_report(session, fund_code, previous_report)
+        validation_holdings = _stock_holdings_for_report(session, fund_code, validation_report)
+        stock_coverage = _stock_return_weight_coverage_between(
+            session,
+            holdings=previous_holdings,
+            start_date=previous_report,
+            end_date=validation_report,
+        )
+        nav_observations = _nav_observation_count(
+            session,
+            fund_code=fund_code,
+            start_date=previous_report,
+            end_date=validation_report,
+        )
+        missing_industry_count = sum(
+            1 for row in [*previous_holdings, *validation_holdings] if not row.industry
+        )
+        pair_issues = []
+        if len(previous_holdings) == 0:
+            pair_issues.append("上一期无股票持仓")
+        if len(validation_holdings) == 0:
+            pair_issues.append("验证期无股票持仓")
+        if require_industry and missing_industry_count:
+            pair_issues.append(f"行业缺失 {missing_industry_count}")
+        if stock_coverage < min_stock_weight_coverage:
+            pair_issues.append(f"股票收益覆盖不足 {stock_coverage:.1%}")
+        if nav_observations < min_return_observations:
+            pair_issues.append(f"NAV收益样本不足 {nav_observations}/{min_return_observations}")
+        pairs.append({
+            "previous_report_date": str(previous_report),
+            "validation_report_date": str(validation_report),
+            "previous_holding_count": len(previous_holdings),
+            "validation_holding_count": len(validation_holdings),
+            "missing_industry_count": missing_industry_count,
+            "stock_return_weight_coverage": round(stock_coverage, 6),
+            "nav_return_observations": nav_observations,
+            "is_ready": not pair_issues,
+            "issues": pair_issues,
+        })
+
+    ready_pairs = [pair for pair in pairs if pair["is_ready"]]
+    if len(report_dates) < 2:
+        issues.append("少于两期股票持仓披露")
+    if len(ready_pairs) < min_validation_pairs:
+        issues.append(f"可回测披露期不足 {len(ready_pairs)}/{min_validation_pairs}")
+    for pair in pairs:
+        issues.extend(
+            f"{pair['previous_report_date']}->{pair['validation_report_date']}: {issue}"
+            for issue in pair["issues"]
+        )
+
+    min_stock_coverage = min(
+        (pair["stock_return_weight_coverage"] for pair in pairs),
+        default=0.0,
+    )
+    min_nav_observations = min(
+        (pair["nav_return_observations"] for pair in pairs),
+        default=0,
+    )
+    return {
+        "fund_code": fund_code,
+        "report_period_count": len(report_dates),
+        "validation_pair_count": len(pairs),
+        "ready_validation_pair_count": len(ready_pairs),
+        "min_stock_return_weight_coverage": round(min_stock_coverage, 6),
+        "min_nav_return_observations": min_nav_observations,
+        "validation_pairs": pairs,
+        "is_ready": not issues,
+        "issues": issues,
+    }
 
 
 def assess_dynamic_attribution_readiness(
@@ -194,6 +342,78 @@ def _stock_return_weight_coverage(
         if _return_observation_count(session, str(row.security_code), report_date) > 0:
             covered_weight += float(row.weight_pct or 0.0)
     return covered_weight / total_weight
+
+
+def _stock_holdings_for_report(
+    session: Session,
+    fund_code: str,
+    report_date: date_type,
+) -> list[FundDisclosedHoldings]:
+    return list(session.scalars(
+        select(FundDisclosedHoldings)
+        .where(FundDisclosedHoldings.fund_code == fund_code)
+        .where(FundDisclosedHoldings.report_date == report_date)
+        .where(FundDisclosedHoldings.asset_type == "股票")
+        .where(FundDisclosedHoldings.security_code.is_not(None))
+        .order_by(FundDisclosedHoldings.rank_in_holdings)
+    ).all())
+
+
+def _stock_return_weight_coverage_between(
+    session: Session,
+    *,
+    holdings: list[FundDisclosedHoldings],
+    start_date: date_type,
+    end_date: date_type,
+) -> float:
+    total_weight = sum(float(row.weight_pct or 0.0) for row in holdings)
+    if total_weight <= 0:
+        return 0.0
+    covered_weight = 0.0
+    for row in holdings:
+        if not row.security_code:
+            continue
+        if _return_observation_count_between(
+            session,
+            str(row.security_code),
+            start_date,
+            end_date,
+        ) > 0:
+            covered_weight += float(row.weight_pct or 0.0)
+    return covered_weight / total_weight
+
+
+def _return_observation_count_between(
+    session: Session,
+    stock_code: str,
+    start_date: date_type,
+    end_date: date_type,
+) -> int:
+    return int(session.scalar(
+        select(func.count())
+        .select_from(StockDaily)
+        .where(StockDaily.stock_code == stock_code)
+        .where(StockDaily.trade_date >= start_date)
+        .where(StockDaily.trade_date < end_date)
+        .where(or_(StockDaily.daily_return.is_not(None), StockDaily.close_price.is_not(None)))
+    ) or 0)
+
+
+def _nav_observation_count(
+    session: Session,
+    *,
+    fund_code: str,
+    start_date: date_type,
+    end_date: date_type,
+) -> int:
+    return int(session.scalar(
+        select(func.count())
+        .select_from(FundNAV)
+        .where(FundNAV.fund_code == fund_code)
+        .where(FundNAV.trade_date >= start_date)
+        .where(FundNAV.trade_date < end_date)
+        .where(or_(FundNAV.daily_return.is_not(None), FundNAV.unit_nav.is_not(None)))
+    ) or 0)
 
 
 def _benchmark_weight_status(
