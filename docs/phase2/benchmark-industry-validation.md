@@ -259,6 +259,51 @@ sh000905 coverage_pct=38.53%, unmapped_weight_pct=61.48%
 
 结论: 覆盖率相对 2026-06-13 小样本有所提升，但仍远低于 95% 验收线。真实基准行业权重数据验收仍未通过，不能进入高置信默认结论。
 
+### 3.2.2 本地行业映射 fallback 验收
+
+2026-06-14 使用巨潮“上市公司行业归属变动”接口逐只查询 `sh000300`、`sh000905`
+共 800 只成分股，筛选 `分类标准编码=008003`（申银万国行业分类标准），生成本地文件：
+
+公开输入来源:
+
+- 指数成分权重：中证指数 `closeweight.xls`，经 AKShare `index_stock_cons_weight_csindex` 获取。
+- 股票行业归属：巨潮资讯 `p_stock2110` 上市公司行业归属变动接口，经 AKShare `stock_industry_change_cninfo` 获取。
+
+```text
+data/local/stock_industry_sw.csv
+data/local/stock_industry_sw.failures.csv
+```
+
+生成结果:
+
+```text
+input=800
+records=800
+failures=0
+```
+
+导入命令:
+
+```powershell
+.venv\Scripts\fund-research.exe update `
+  --domains stock-industry `
+  --industry-file data\local\stock_industry_sw.csv `
+  --db-path data\benchmark_validation.sqlite
+```
+
+导入结果:
+
+```text
+requested=800
+inserted=722
+updated=78
+skipped=0
+warnings=[]
+stock_industry_membership: 2165 rows, 31 industries
+```
+
+本地映射文件只保留在 `data/local/`，不得提交到仓库。
+
 ### 3.3 聚合后的 benchmark_industry_weight
 
 命令一:
@@ -313,11 +358,71 @@ benchmark_industry_weight: 6
 
 说明: 上表的 `normalized_weight_pct` 只是在已映射成分内归一化后的比例，不代表完整指数行业分布，不能用于默认动态归因。
 
+`2026-06-14` 本地行业映射 fallback 后重新聚合:
+
+```powershell
+.venv\Scripts\fund-research.exe update `
+  --domains benchmark-industry `
+  --index-symbol sh000300 `
+  --index-symbol sh000905 `
+  --db-path data\benchmark_validation.sqlite `
+  --end 2026-06-14
+```
+
+结果:
+
+```text
+requested=2
+inserted=43
+updated=16
+skipped=0
+warnings=[]
+```
+
+覆盖率:
+
+| benchmark_symbol | industries | weight_sum | coverage_pct | unmapped_weight_pct |
+|---|---:|---:|---:|---:|
+| `sh000300` | 28 | 100.0 | 100.0 | 0.0 |
+| `sh000905` | 31 | 100.0 | 100.0 | 0.0 |
+
+`sh000300` 前十大行业:
+
+| industry_name | weight_pct | member_count |
+|---|---:|---:|
+| 电子 | 18.861 | 35 |
+| 银行 | 10.544 | 24 |
+| 通信 | 10.396 | 10 |
+| 电力设备 | 8.717 | 19 |
+| 非银金融 | 8.030 | 28 |
+| 有色金属 | 5.679 | 15 |
+| 食品饮料 | 5.638 | 12 |
+| 医药生物 | 4.045 | 22 |
+| 汽车 | 3.335 | 12 |
+| 计算机 | 3.191 | 16 |
+
+`sh000905` 前十大行业:
+
+| industry_name | weight_pct | member_count |
+|---|---:|---:|
+| 电子 | 21.448 | 64 |
+| 电力设备 | 10.246 | 41 |
+| 机械设备 | 7.308 | 27 |
+| 有色金属 | 7.304 | 21 |
+| 医药生物 | 6.517 | 50 |
+| 国防军工 | 5.417 | 27 |
+| 非银金融 | 4.781 | 32 |
+| 基础化工 | 4.401 | 25 |
+| 通信 | 4.282 | 11 |
+| 计算机 | 4.128 | 24 |
+
+结论: 本地行业映射 fallback 后，`benchmark_industry_weight` 达到 `coverage_pct >= 95%` 验收门槛。
+
 ## 4. 偏差记录
 
 ### 4.1 可计算偏差
 
-本轮可以计算行业归属页面的小样本行数偏差，以及低覆盖率的样本聚合结果；不能计算完整基准行业权重偏差。
+本轮可以计算行业归属页面的小样本行数偏差、低覆盖率样本聚合结果，以及本地行业映射 fallback 后的完整覆盖率结果。
 
 | 数据项 | 结论 |
 |---|---|
@@ -326,19 +431,21 @@ benchmark_industry_weight: 6
 | 电子行业归属行数 | 本地 484，公开页面 476，偏差 +8 |
 | `sh000300` 行业权重 | 可生成三行业低覆盖率样本，覆盖率 35.04%，不能验收 |
 | `sh000905` 行业权重 | 可生成三行业低覆盖率样本，覆盖率 23.99%，不能验收 |
+| `sh000300` 本地 fallback 后覆盖率 | 28 个行业，权重合计 100.0%，coverage 100.0%，unmapped 0.0%，通过覆盖率验收 |
+| `sh000905` 本地 fallback 后覆盖率 | 31 个行业，权重合计 100.0%，coverage 100.0%，unmapped 0.0%，通过覆盖率验收 |
 
 ### 4.2 不能计算的偏差
 
-以下完整偏差本轮不能计算：
+以下独立对照偏差本轮仍不能完全计算：
 
-- `sh000300` 在 `2026-06-13` 与公开行业分布的权重偏差。
+- `sh000300` 在 `2026-06-14` 与行情软件/指数公司行业分布截图的权重偏差。
 - `sh000300` 在 `2026-03-31` 与公开行业分布的权重偏差。
-- `sh000905` 在 `2026-06-13` 与公开行业分布的权重偏差。
+- `sh000905` 在 `2026-06-14` 与行情软件/指数公司行业分布截图的权重偏差。
 - `sh000905` 在 `2026-03-31` 与公开行业分布的权重偏差。
 
 原因:
 
-- `2026-06-13`: 有权重快照，但行业归属只覆盖三个行业，映射覆盖率不足。
+- `2026-06-14`: 本地计算覆盖率已通过，但本轮没有拿到第三方行情软件行业分布截图或指数公司按申万一级发布的行业分布表。
 - `2026-03-31`: 中证权重快照日期为 `2026-05-29`，晚于目标日期，不能用于过去日期。
 
 ## 5. 对代码质量的影响判断
@@ -355,13 +462,14 @@ benchmark_industry_weight: 6
 - `sw_index_third_cons` 页面列数变动时，adapter 会直接从页面读取并只取所需字段。
 - 新增测试覆盖 18 列页面和 `.SH/.SZ` 股票代码后缀清洗。
 - `stock-industry` 已支持 `--industry-symbol`、`--request-interval`、`--retry`、`--industry-batch-size`，便于分批、限速、重试和断点续跑。
+- `stock-industry --industry-file` 已支持本地 CSV/XLSX 导入，能绕开乐咕页面源不稳定问题。
 - 2026-06-14 修复默认全量 symbol 列表口径：从三级 `850xxx.SI` 改为一级 `801xxx.SI`。
 
 仍需修复或增强：
 
 1. 中证权重文件在全局代理/TUN 下会 TLS/SSL EOF，需要文档提醒“关代理/直连”或增加本地文件导入 fallback。
-2. 申万行业全量拉取不能只依赖当前乐咕页面源；2026-06-14 慢速重试后仍有大量 `No tables found`，需要换源或增加本地行业映射文件导入 fallback。
-3. 行业归属数据源为 C 级，后续最好补一个更权威的申万/中信来源或人工小样本复核流程。
+2. 申万行业全量拉取不能只依赖当前乐咕页面源；本地映射 fallback 已可用，后续应优先使用可审计本地文件。
+3. 本次本地映射来自巨潮公开接口的申银万国分类标准，仍建议补一份人工/行情软件抽样复核记录。
 4. 中证权重接口只有最新快照时，历史日期不能标为真实历史权重，只能标为“最近快照近似”或直接拒绝。
 
 ## 6. 下一步建议
@@ -369,9 +477,9 @@ benchmark_industry_weight: 6
 优先做数据源稳定性，不扩算法：
 
 1. 给 `benchmark-members` 增加本地文件导入 fallback，支持把中证官网下载的 `closeweight.xls` 手动放到 `data/cache/benchmark_members/{index_code}/` 后解析入库。
-2. 使用 `stock-industry --industry-file` 本地行业映射导入 fallback，例如 CSV/XLSX: `stock_code, stock_name, industry_name, effective_date, source_name`。
-3. 用本地 fallback 补齐行业归属后，再重新跑两个指数的行业权重聚合，目标是 `coverage_pct >= 95%`。
-4. 手工对照一份行情软件或指数公司行业分布截图，记录 `行业名 / 本地权重 / 对照权重 / 差值`，差值超过 1pp 的行业逐项解释。
+2. 保留 `data/local/stock_industry_sw.csv` 作为本地验收输入，不提交仓库；换电脑时需要单独复制或重新生成。
+3. 手工对照一份行情软件或指数公司行业分布截图，记录 `行业名 / 本地权重 / 对照权重 / 差值`，差值超过 1pp 的行业逐项解释。
+4. 若需要历史日期验收，补中证历史成分权重或明确拒绝历史日期。
 
 当前不建议继续反复撞乐咕全量页面。若只是验证 CLI 链路，可用单行业 smoke:
 
