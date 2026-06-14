@@ -265,6 +265,12 @@ class TestRealDataPipeline:
             "2024-09-30": 0.0,
             "2024-12-31": 0.0,
         }
+        assert m.get("benchmark_weight_snapshot_age_days_by_report") == {
+            "2024-03-31": 0,
+            "2024-06-30": 0,
+            "2024-09-30": 0,
+            "2024-12-31": 0,
+        }
         assert m.get("benchmark_only_sector_count_by_report") == {
             "2024-03-31": 1,
             "2024-06-30": 1,

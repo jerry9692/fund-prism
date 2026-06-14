@@ -10,6 +10,7 @@ from typing import Any
 
 from sqlalchemy import (
     JSON,
+    BigInteger,
     Boolean,
     Date,
     DateTime,
@@ -147,7 +148,11 @@ class ExperimentResult(Base):
     __tablename__ = "experiment_result"
 
     id: Mapped[int] = id_column()
-    experiment_id: Mapped[int] = mapped_column(ForeignKey("algorithm_experiment.id"), index=True)
+    experiment_id: Mapped[int] = mapped_column(
+        BigInteger,
+        ForeignKey("algorithm_experiment.id"),
+        index=True,
+    )
     fund_code: Mapped[str] = mapped_column(String(20))
     calc_date: Mapped[date] = mapped_column(Date)
     is_success: Mapped[bool] = mapped_column(Boolean, default=True)

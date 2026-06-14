@@ -61,7 +61,7 @@ class FundMain(Base):
     short_name: Mapped[str] = mapped_column(String(100), comment="基金简称")
     full_name: Mapped[str] = mapped_column(String(200), comment="基金全称")
     fund_company_id: Mapped[int | None] = mapped_column(
-        ForeignKey("fund_company.id"), comment="基金公司 ID"
+        BigInteger, ForeignKey("fund_company.id"), comment="基金公司 ID"
     )
     custodian_bank: Mapped[str | None] = mapped_column(String(100), comment="托管行")
     inception_date: Mapped[date | None] = mapped_column(Date, comment="成立日")

@@ -444,6 +444,7 @@ class TestRunExperimentPipeline:
         assert m.get("normalized_weight_sum_by_report") == {"2024-01-01": 1.0}
         assert m.get("benchmark_weight_snapshot_by_report") == {"2024-01-01": "2024-01-01"}
         assert m.get("benchmark_weight_coverage_by_report") == {"2024-01-01": 100.0}
+        assert m.get("benchmark_weight_snapshot_age_days_by_report") == {"2024-01-01": 0}
         assert m.get("benchmark_only_sector_count_by_report") == {"2024-01-01": 1}
         assert m["estimated_total_portfolio_return"] < 0.2
         assert not any("P2B 近似" in warning for warning in (results[0].warnings or []))
@@ -626,6 +627,78 @@ class TestRunExperimentPipeline:
         ).one()
         assert not result.is_success
         assert result.error_message == "缺少可用基准行业权重: sh000300"
+
+    def test_run_dynamic_attribution_rejects_stale_benchmark_weights(
+        self,
+        test_client: TestClient,
+        test_session: Session,
+    ):
+        """基准行业权重快照太旧时，动态归因必须失败而不是误用旧快照。"""
+        report_date = date(2024, 7, 1)
+        stale_snapshot = date(2024, 1, 1)
+        for i in range(2):
+            test_session.add(FundDisclosedHoldings(
+                fund_code="000001", report_date=report_date,
+                security_code=f"{i:06d}", asset_type="股票",
+                weight_pct=50.0, industry="tech",
+                rank_in_holdings=i + 1, data_source_level="LOCAL",
+            ))
+            for day in range(5):
+                test_session.add(StockDaily(
+                    stock_code=f"{i:06d}",
+                    trade_date=report_date + timedelta(days=day),
+                    close_price=100.0 + day,
+                    daily_return=0.01,
+                    data_source_level="LOCAL",
+                ))
+        for day in range(5):
+            test_session.add(StockDaily(
+                stock_code="sh000300",
+                trade_date=report_date + timedelta(days=day),
+                close_price=4000.0 + day,
+                daily_return=0.005,
+                data_source_level="LOCAL",
+            ))
+        for industry, weight_pct in (("finance", 45.0), ("tech", 55.0)):
+            test_session.add(BenchmarkIndustryWeight(
+                benchmark_symbol="sh000300",
+                snapshot_date=stale_snapshot,
+                classification_type="SW",
+                classification_level=1,
+                industry_code=None,
+                industry_name=industry,
+                weight_pct=weight_pct,
+                member_count=10,
+                unmapped_weight_pct=0.0,
+                coverage_pct=100.0,
+                source_member_snapshot=stale_snapshot,
+                source_industry_snapshot=stale_snapshot,
+                algorithm_version="test",
+                warnings=[],
+            ))
+        test_session.commit()
+
+        create_resp = test_client.post("/api/v2/experiments", json={
+            "experiment_name": "attr-stale-benchmark-weights",
+            "algorithm_name": "dynamic_attribution",
+            "parameters": {"benchmark_symbol": "sh000300"},
+            "sample_fund_codes": ["000001"],
+        })
+        exp_id = create_resp.json()["data"]["id"]
+
+        run_resp = test_client.post(f"/api/v2/experiments/{exp_id}/run")
+        assert run_resp.status_code == 200
+        payload = run_resp.json()
+        assert payload["conclusion_status"] == "needs_review"
+        assert payload["data"]["status"] == "failed"
+
+        from sqlalchemy import select as sa_select
+        result = test_session.scalars(
+            sa_select(ExperimentResult).where(ExperimentResult.experiment_id == int(exp_id))
+        ).one()
+        assert not result.is_success
+        assert result.error_message == "缺少可用基准行业权重: sh000300"
+        assert any("基准行业权重快照过旧" in warning for warning in (result.warnings or []))
 
     def test_run_scoring_excludes_unverified_estimated_dims(
         self,

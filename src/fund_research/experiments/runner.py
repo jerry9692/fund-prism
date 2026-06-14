@@ -30,6 +30,8 @@ BENCHMARK_TEXT_SYMBOL_MAP = (
 MIN_ATTRIBUTION_RETURN_OBSERVATIONS = 3
 MIN_ATTRIBUTION_STOCK_WEIGHT_COVERAGE = 0.8
 MIN_ATTRIBUTION_BENCHMARK_WEIGHT_COVERAGE = 95.0
+WARN_ATTRIBUTION_BENCHMARK_WEIGHT_STALENESS_DAYS = 120
+MAX_ATTRIBUTION_BENCHMARK_WEIGHT_STALENESS_DAYS = 180
 
 
 def dispatch_run(db: Session, exp: AlgorithmExperiment) -> list[dict]:
@@ -313,6 +315,14 @@ def _run_dynamic_attribution_batch(
     min_observations = int(
         params.get("min_return_observations") or MIN_ATTRIBUTION_RETURN_OBSERVATIONS
     )
+    max_snapshot_age_days = int(
+        params.get("max_benchmark_weight_snapshot_age_days")
+        or MAX_ATTRIBUTION_BENCHMARK_WEIGHT_STALENESS_DAYS
+    )
+    warn_snapshot_age_days = int(
+        params.get("warn_benchmark_weight_snapshot_age_days")
+        or WARN_ATTRIBUTION_BENCHMARK_WEIGHT_STALENESS_DAYS
+    )
     results: list[dict] = []
 
     for fund_code in fund_codes:
@@ -417,6 +427,8 @@ def _run_dynamic_attribution_batch(
                     report_dates=sorted(
                         pd.to_datetime(holding_stock_df["report_date"]).dt.date.unique()
                     ),
+                    max_snapshot_age_days=max_snapshot_age_days,
+                    warn_snapshot_age_days=warn_snapshot_age_days,
                 )
             )
             if benchmark_weight_df.empty:
@@ -480,6 +492,10 @@ def _run_dynamic_attribution_batch(
                     report_date: stats.get("unmapped_weight_pct")
                     for report_date, stats in benchmark_weight_stats.items()
                 },
+                "benchmark_weight_snapshot_age_days_by_report": {
+                    report_date: stats.get("snapshot_age_days")
+                    for report_date, stats in benchmark_weight_stats.items()
+                },
                 "benchmark_only_sector_count_by_report": benchmark_only_sector_counts,
             }
             is_success = len(attr_result.periods) > 0 and abs(attr_result.total_residual) < 0.05
@@ -519,6 +535,8 @@ def _build_benchmark_industry_weight_df(
     *,
     benchmark_symbol: str,
     report_dates: list[date_type],
+    max_snapshot_age_days: int = MAX_ATTRIBUTION_BENCHMARK_WEIGHT_STALENESS_DAYS,
+    warn_snapshot_age_days: int = WARN_ATTRIBUTION_BENCHMARK_WEIGHT_STALENESS_DAYS,
 ) -> tuple[pd.DataFrame, dict[str, dict], list[str]]:
     """Build benchmark industry weights from latest available snapshots."""
     rows: list[dict] = []
@@ -538,6 +556,18 @@ def _build_benchmark_industry_weight_df(
         if snapshot_date is None:
             warnings.append(f"{report_date} 缺少基准行业权重: {benchmark_symbol}")
             continue
+        snapshot_age_days = (report_date - snapshot_date).days
+        if snapshot_age_days > max_snapshot_age_days:
+            warnings.append(
+                f"{report_date} 基准行业权重快照过旧: {benchmark_symbol} "
+                f"{snapshot_date} age={snapshot_age_days}d > {max_snapshot_age_days}d"
+            )
+            continue
+        if snapshot_age_days > warn_snapshot_age_days:
+            warnings.append(
+                f"{report_date} 基准行业权重快照偏旧: {benchmark_symbol} "
+                f"{snapshot_date} age={snapshot_age_days}d > {warn_snapshot_age_days}d"
+            )
 
         weight_rows = db.scalars(
             sa_select(BenchmarkIndustryWeight)
@@ -575,6 +605,7 @@ def _build_benchmark_industry_weight_df(
         report_key = str(report_date)
         stats_by_report[report_key] = {
             "snapshot_date": str(snapshot_date),
+            "snapshot_age_days": snapshot_age_days,
             "coverage_pct": round(coverage_pct, 6),
             "unmapped_weight_pct": round(unmapped_weight_pct, 6),
             "raw_weight_sum_pct": round(total_weight, 6),

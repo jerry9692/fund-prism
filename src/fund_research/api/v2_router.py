@@ -220,6 +220,7 @@ def get_experiment_endpoint(
                         "is_success": result.is_success,
                         "metrics": result.metrics,
                         "error_message": result.error_message,
+                        "warnings": result.warnings,
                     }
                     for result in results
                 ],

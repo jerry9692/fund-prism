@@ -27,6 +27,7 @@ interface ResultItem {
   is_success: boolean;
   metrics: Record<string, unknown> | null;
   error_message: string | null;
+  warnings?: string[] | null;
 }
 
 const STATUS_LABELS: Record<string, string> = {
@@ -45,6 +46,69 @@ function getApiError(body: any, fallback: string) {
     return body.warnings.join("; ");
   }
   return body?.detail ?? fallback;
+}
+
+function renderMetricValue(value: unknown) {
+  if (typeof value === "number") return Number(value).toFixed(4);
+  if (typeof value === "boolean") return value ? "是" : "否";
+  if (value && typeof value === "object") return JSON.stringify(value);
+  return String(value).slice(0, 80);
+}
+
+function renderMetricMap(metrics: Record<string, unknown>, key: string, suffix = "") {
+  const value = metrics[key];
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  return Object.entries(value as Record<string, unknown>).map(([dateKey, item]) => (
+    <div className="quality-map-row" key={`${key}-${dateKey}`}>
+      <span>{dateKey}</span>
+      <strong>{renderMetricValue(item)}{suffix}</strong>
+    </div>
+  ));
+}
+
+function renderDynamicQuality(metrics: Record<string, unknown>) {
+  const boolItems: Array<[string, boolean]> = [
+    ["真实基准收益", metrics.uses_real_benchmark_returns === true],
+    ["真实行业收益", metrics.uses_real_sector_returns === true],
+    ["真实基准权重", metrics.uses_real_benchmark_weights === true],
+    ["无代理权重", metrics.uses_proxy_benchmark_weights === false],
+  ];
+  return (
+    <div className="quality-panel">
+      <div className="quality-badges">
+        {boolItems.map(([label, value]) => (
+          <span
+            className={`badge badge-${value ? "computed" : "needs_review"}`}
+            key={String(label)}
+          >
+            {label}
+          </span>
+        ))}
+      </div>
+      <div className="quality-grid">
+        <div>
+          <span className="quality-title">快照日期</span>
+          {renderMetricMap(metrics, "benchmark_weight_snapshot_by_report") ?? "—"}
+        </div>
+        <div>
+          <span className="quality-title">快照年龄</span>
+          {renderMetricMap(metrics, "benchmark_weight_snapshot_age_days_by_report", "d") ?? "—"}
+        </div>
+        <div>
+          <span className="quality-title">覆盖率</span>
+          {renderMetricMap(metrics, "benchmark_weight_coverage_by_report", "%") ?? "—"}
+        </div>
+        <div>
+          <span className="quality-title">未映射</span>
+          {renderMetricMap(metrics, "benchmark_weight_unmapped_pct_by_report", "%") ?? "—"}
+        </div>
+        <div>
+          <span className="quality-title">基准独有行业</span>
+          {renderMetricMap(metrics, "benchmark_only_sector_count_by_report") ?? "—"}
+        </div>
+      </div>
+    </div>
+  );
 }
 
 export default function ExperimentsPage() {
@@ -312,16 +376,18 @@ export default function ExperimentsPage() {
                     {detail.results.map((r, i) => {
                       const m = r.metrics || {};
                       const keys = Object.keys(m).filter((k) => m[k] != null);
+                      const isDynamicAttribution = detail.algorithm_name === "dynamic_attribution";
                       return (
                         <tr key={i}>
                           <td className="mono-cell">{r.fund_code}</td>
                           <td><span className={`badge badge-${r.is_success ? "computed" : "needs_review"}`}>{r.is_success ? "是" : "否"}</span></td>
                           <td style={{ fontSize: 12 }}>
+                            {isDynamicAttribution && renderDynamicQuality(m)}
                             {keys.length > 0
                               ? keys.slice(0, 6).map((k) => (
                                   <div key={k} style={{ marginBottom: 2 }}>
                                     <span style={{ color: "var(--color-text-secondary)" }}>{k}: </span>
-                                    {typeof m[k] === "number" ? Number(m[k]).toFixed(4) : String(m[k]).slice(0, 60)}
+                                    {renderMetricValue(m[k])}
                                   </div>
                                 ))
                               : "—"}
@@ -329,6 +395,13 @@ export default function ExperimentsPage() {
                           </td>
                           <td style={{ color: r.error_message ? "var(--color-danger)" : undefined, fontSize: 12, maxWidth: 250 }}>
                             {r.error_message ?? "—"}
+                            {r.warnings && r.warnings.length > 0 && (
+                              <div className="warning-list">
+                                {r.warnings.map((warning) => (
+                                  <div key={warning}>{warning}</div>
+                                ))}
+                              </div>
+                            )}
                           </td>
                         </tr>
                       );
