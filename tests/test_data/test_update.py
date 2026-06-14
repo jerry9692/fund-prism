@@ -1,5 +1,6 @@
 """Data update workflow tests."""
 
+import sqlite3
 from datetime import date
 from pathlib import Path
 
@@ -11,6 +12,8 @@ from sqlalchemy.orm import Session
 from fund_research.core.enums import DataSourceLevel, DataSourceType
 from fund_research.data.adapters.base import FetchResult
 from fund_research.data.update import (
+    backfill_fund_holding_industries,
+    import_benchmark_validation_database,
     upsert_akshare_benchmark_index_members,
     upsert_akshare_fund_dividends,
     upsert_akshare_fund_fees,
@@ -1450,6 +1453,165 @@ def test_upsert_benchmark_industry_weights_warns_on_low_mapping_coverage(
     assert row.unmapped_weight_pct == 20.0
     assert row.warnings is not None
     assert "行业映射覆盖率低于门槛" in row.warnings["items"][0]
+
+
+def test_import_benchmark_validation_database_copies_three_tables(
+    test_session: Session,
+    tmp_path: Path,
+) -> None:
+    """A validated SQLite snapshot should be importable into the active DB."""
+    source_db = tmp_path / "benchmark_validation.sqlite"
+    connection = sqlite3.connect(source_db)
+    try:
+        connection.executescript(
+            """
+            CREATE TABLE benchmark_index_member (
+                benchmark_symbol TEXT,
+                index_code TEXT,
+                index_name TEXT,
+                snapshot_date TEXT,
+                stock_code TEXT,
+                stock_name TEXT,
+                exchange TEXT,
+                weight_pct REAL,
+                source_name TEXT,
+                source_level TEXT,
+                raw_payload_hash TEXT
+            );
+            CREATE TABLE stock_industry_membership (
+                stock_code TEXT,
+                stock_name TEXT,
+                classification_type TEXT,
+                classification_version TEXT,
+                level INTEGER,
+                industry_code TEXT,
+                industry_name TEXT,
+                parent_industry_code TEXT,
+                effective_date TEXT,
+                source_name TEXT,
+                source_level TEXT
+            );
+            CREATE TABLE benchmark_industry_weight (
+                benchmark_symbol TEXT,
+                snapshot_date TEXT,
+                classification_type TEXT,
+                classification_level INTEGER,
+                industry_code TEXT,
+                industry_name TEXT,
+                weight_pct REAL,
+                member_count INTEGER,
+                unmapped_weight_pct REAL,
+                coverage_pct REAL,
+                source_member_snapshot TEXT,
+                source_industry_snapshot TEXT,
+                algorithm_version TEXT,
+                warnings TEXT
+            );
+            """
+        )
+        connection.execute(
+            "INSERT INTO benchmark_index_member VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                "sh000300",
+                "000300",
+                "沪深300",
+                "2026-05-29",
+                "600519",
+                "贵州茅台",
+                "SH",
+                5.25,
+                "validation",
+                "B",
+                "abc",
+            ),
+        )
+        connection.execute(
+            "INSERT INTO stock_industry_membership VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                "600519",
+                "贵州茅台",
+                "SW",
+                "2021",
+                1,
+                "801120",
+                "食品饮料",
+                None,
+                "2021-07-30",
+                "validation",
+                "B",
+            ),
+        )
+        connection.execute(
+            "INSERT INTO benchmark_industry_weight VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                "sh000300",
+                "2026-05-29",
+                "SW",
+                1,
+                "801120",
+                "食品饮料",
+                100.0,
+                1,
+                0.0,
+                100.0,
+                "2026-05-29",
+                "2021-07-30",
+                "benchmark_industry_weight:0.1.0",
+                None,
+            ),
+        )
+        connection.commit()
+    finally:
+        connection.close()
+
+    summaries = import_benchmark_validation_database(test_session, source_db)
+
+    assert [summary.inserted for summary in summaries] == [1, 1, 1]
+    assert test_session.scalar(select(func.count()).select_from(BenchmarkIndexMember)) == 1
+    assert test_session.scalar(select(func.count()).select_from(StockIndustryMembership)) == 1
+    assert test_session.scalar(select(func.count()).select_from(BenchmarkIndustryWeight)) == 1
+
+    second = import_benchmark_validation_database(test_session, source_db)
+    assert [summary.updated for summary in second] == [1, 1, 1]
+
+
+def test_backfill_fund_holding_industries_from_membership(
+    test_session: Session,
+) -> None:
+    """Disclosed holdings should get industry names from stock industry membership."""
+    test_session.add_all([
+        FundDisclosedHoldings(
+            fund_code="000001",
+            report_date=date(2026, 3, 31),
+            asset_type="股票",
+            security_code="600519",
+            security_name="贵州茅台",
+            weight_pct=5.0,
+            data_source_level="LOCAL",
+        ),
+        StockIndustryMembership(
+            stock_code="600519",
+            stock_name="贵州茅台",
+            classification_type="SW",
+            classification_version="2021",
+            level=1,
+            industry_code="801120",
+            industry_name="食品饮料",
+            effective_date=date(2021, 7, 30),
+            source_name="validation",
+            source_level=DataSourceLevel.B.value,
+        ),
+    ])
+    test_session.commit()
+
+    summary = backfill_fund_holding_industries(test_session, {"000001"})
+    holding = test_session.scalar(select(FundDisclosedHoldings))
+
+    assert summary.requested == 1
+    assert summary.updated == 1
+    assert summary.skipped == 0
+    assert holding is not None
+    assert holding.industry == "食品饮料"
 
 
 def test_upsert_akshare_official_pdf_evidence_writes_evidence(

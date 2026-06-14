@@ -61,10 +61,16 @@ def test_update_domains_include_benchmark_industry_sources() -> None:
     """New benchmark industry data domains should resolve in update order."""
     selected = _selected_update_entities(
         "sample-funds",
-        "benchmark-members,stock-industry,benchmark-industry",
+        "benchmark-members,stock-industry,benchmark-industry,benchmark-validation,holding-industry",
     )
 
-    assert selected == ["benchmark-members", "stock-industry", "benchmark-industry"]
+    assert selected == [
+        "benchmark-members",
+        "stock-industry",
+        "benchmark-industry",
+        "benchmark-validation-import",
+        "holding-industry-backfill",
+    ]
 
 
 def test_update_help_includes_stock_industry_stability_options() -> None:
@@ -78,6 +84,8 @@ def test_update_help_includes_stock_industry_stability_options() -> None:
     assert "--retry" in result.output
     assert "--industry-batch-size" in result.output
     assert "--industry-file" in result.output
+    assert "--benchmark-validation-db" in result.output
+    assert "--overwrite-holding-industry" in result.output
 
 
 def test_update_benchmark_members_accepts_local_member_file(tmp_path: Path) -> None:

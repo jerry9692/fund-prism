@@ -48,6 +48,8 @@ UPDATE_ENTITY_ORDER = [
     "benchmark-members",
     "stock-industry",
     "benchmark-industry",
+    "benchmark-validation-import",
+    "holding-industry-backfill",
     "official-pdf",
 ]
 UPDATE_DOMAIN_ALIASES = {
@@ -91,8 +93,14 @@ UPDATE_DOMAIN_ALIASES = {
     "benchmark-industry": "benchmark-industry",
     "benchmark-industry-weight": "benchmark-industry",
     "benchmark-industry-weights": "benchmark-industry",
+    "benchmark-validation": "benchmark-validation-import",
+    "benchmark-validation-import": "benchmark-validation-import",
+    "validation-import": "benchmark-validation-import",
     "stock-industry": "stock-industry",
     "industry-membership": "stock-industry",
+    "holding-industry": "holding-industry-backfill",
+    "holding-industry-backfill": "holding-industry-backfill",
+    "fund-holding-industry": "holding-industry-backfill",
     "official-pdf": "official-pdf",
     "pdf": "official-pdf",
     "all": "all",
@@ -133,6 +141,14 @@ IndustrySymbolOption = Annotated[
 IndustryFileOption = Annotated[
     Path | None,
     typer.Option("--industry-file", help="从本地 CSV/XLSX 导入股票行业归属，传入后 stock-industry 不走网络抓取"),
+]
+BenchmarkValidationDbOption = Annotated[
+    Path,
+    typer.Option("--benchmark-validation-db", help="从本地 SQLite 验证库同步基准行业相关三张表"),
+]
+OverwriteHoldingIndustryOption = Annotated[
+    bool,
+    typer.Option("--overwrite-holding-industry", help="回填持仓行业时覆盖已有 industry 字段"),
 ]
 SamplePathOption = Annotated[
     Path | None,
@@ -457,6 +473,8 @@ def update(
     request_interval: RequestIntervalOption = 0.0,
     retry: RetryOption = 0,
     industry_batch_size: IndustryBatchSizeOption = 20,
+    benchmark_validation_db: BenchmarkValidationDbOption = Path("data/benchmark_validation.sqlite"),
+    overwrite_holding_industry: OverwriteHoldingIndustryOption = False,
 ) -> None:
     """更新本地数据。"""
     from sqlalchemy.orm import sessionmaker
@@ -464,6 +482,8 @@ def update(
     from fund_research.config.settings import get_settings
     from fund_research.data.update import (
         UpdateSummary,
+        backfill_fund_holding_industries,
+        import_benchmark_validation_database,
         latest_holding_stock_codes,
         load_sample_funds,
         upsert_akshare_benchmark_index_members,
@@ -684,6 +704,24 @@ def update(
                     session,
                     selected_index_symbols,
                     target_date=end_date,
+                    dry_run=dry_run,
+                )
+            )
+        if "benchmark-validation-import" in selected_entities:
+            summaries.extend(
+                import_benchmark_validation_database(
+                    session,
+                    benchmark_validation_db,
+                    dry_run=dry_run,
+                )
+            )
+        if "holding-industry-backfill" in selected_entities:
+            summaries.append(
+                backfill_fund_holding_industries(
+                    session,
+                    set(fund_code) if fund_code else selected_codes,
+                    report_date=holding_report_date,
+                    overwrite=overwrite_holding_industry,
                     dry_run=dry_run,
                 )
             )

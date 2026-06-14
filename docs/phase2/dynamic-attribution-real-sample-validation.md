@@ -93,3 +93,85 @@ algorithm_experiment.id BIGINT
 3. 获取不晚于 `2026-03-31` 的 `sh000300` 基准行业权重快照；如果数据源只能提供 `2026-05-29` 最新权重，则不能用于该报告期验收。
 4. 或者选择报告期不早于 `2026-05-29` 的真实基金披露持仓做下一轮样本。
 5. 再运行 `dynamic_attribution`，要求至少看到 `uses_real_* = true`、coverage >= 95%、unmapped <= 5%、snapshot age <= 180d。
+
+## 6. P2F 执行记录
+
+日期: 2026-06-14
+
+本轮完成了两项同库数据准备:
+
+```powershell
+.venv\Scripts\fund-research.exe update `
+  --domains benchmark-validation-import `
+  --benchmark-validation-db data\benchmark_validation.sqlite `
+  --db-path data\fund_research.duckdb
+```
+
+结果:
+
+| entity | requested | inserted | updated | skipped |
+|---|---:|---:|---:|---:|
+| `benchmark_index_member` | 800 | 800 | 0 | 0 |
+| `stock_industry_membership` | 2165 | 2165 | 0 | 0 |
+| `benchmark_industry_weight` | 59 | 59 | 0 | 0 |
+
+```powershell
+.venv\Scripts\fund-research.exe update `
+  --domains holding-industry-backfill `
+  --fund-code 000001 `
+  --report-date 2026-03-31 `
+  --db-path data\fund_research.duckdb
+```
+
+结果:
+
+| entity | requested | updated | skipped |
+|---|---:|---:|---:|
+| `fund_holding_industry_backfill` | 10 | 10 | 0 |
+
+回填后的 `000001` 2026Q1 持仓行业:
+
+| stock_code | industry |
+|---|---|
+| `300308` | 通信 |
+| `688012` | 电子 |
+| `688347` | 电子 |
+| `002371` | 电子 |
+| `688019` | 电子 |
+| `688041` | 电子 |
+| `688120` | 电子 |
+| `688256` | 电子 |
+| `688072` | 电子 |
+| `688361` | 电子 |
+
+重跑真实动态归因:
+
+```text
+experiment_name = p2f-real-sample-000001-after-data-sync
+algorithm_name = dynamic_attribution
+parameters = {"benchmark_symbol": "sh000300"}
+sample_fund_codes = ["000001"]
+```
+
+结果:
+
+```text
+status = failed
+fund_code = 000001
+is_success = false
+error_message = 缺少可用基准行业权重: sh000300
+warnings = ["2026-03-31 缺少基准行业权重: sh000300"]
+metrics = {}
+```
+
+结论:
+
+- 同库数据导入链路通过。
+- 基金持仓行业回填链路通过。
+- 动态归因仍未通过，剩余阻塞是 **缺少不晚于 `2026-03-31` 的 `sh000300` 基准行业权重快照**。
+- 当前 `benchmark_industry_weight` 只有 `2026-05-29` 快照；按 look-ahead gate，不能用于 2026Q1 报告期。
+
+下一步只剩两个合理选择:
+
+1. 获取 `2026-03-31` 或更早且不超过 180 天的新鲜 `sh000300` 历史行业权重快照。
+2. 改选报告期不早于 `2026-05-29` 的真实基金持仓样本。

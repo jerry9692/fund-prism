@@ -4,6 +4,7 @@ import csv
 import hashlib
 import json
 import re
+import sqlite3
 import uuid
 from dataclasses import dataclass
 from datetime import date, datetime
@@ -1994,6 +1995,252 @@ def upsert_benchmark_industry_weights(
 
     if not dry_run:
         _log_update_task(session, "benchmark_industry_weight", summary)
+        session.commit()
+    return summary
+
+
+def _sqlite_rows(source_db: Path, table_name: str) -> list[dict[str, Any]]:
+    connection = sqlite3.connect(source_db)
+    connection.row_factory = sqlite3.Row
+    try:
+        rows = connection.execute(f"SELECT * FROM {table_name}").fetchall()
+    finally:
+        connection.close()
+    return [dict(row) for row in rows]
+
+
+def _source_level_from_value(value: Any) -> DataSourceLevel:
+    if value is None or str(value).strip() == "":
+        return DataSourceLevel.LOCAL
+    try:
+        return DataSourceLevel(str(value).strip().upper())
+    except ValueError:
+        return DataSourceLevel.LOCAL
+
+
+def _json_value(value: Any) -> Any:
+    if value is None or not isinstance(value, str):
+        return value
+    try:
+        return json.loads(value)
+    except ValueError:
+        return value
+
+
+def import_benchmark_validation_database(
+    session: Session,
+    source_db: Path,
+    *,
+    dry_run: bool = False,
+) -> list[UpdateSummary]:
+    """Import benchmark validation tables from a local SQLite database."""
+    if not source_db.exists():
+        return [
+            UpdateSummary(
+                entity="benchmark_validation_import",
+                source=str(source_db),
+                skipped=1,
+                dry_run=dry_run,
+                warnings=[f"基准验证库不存在: {source_db}"],
+            )
+        ]
+
+    summaries = [
+        UpdateSummary(
+            entity="benchmark_index_member",
+            source=str(source_db),
+            dry_run=dry_run,
+            warnings=[],
+        ),
+        UpdateSummary(
+            entity="stock_industry_membership",
+            source=str(source_db),
+            dry_run=dry_run,
+            warnings=[],
+        ),
+        UpdateSummary(
+            entity="benchmark_industry_weight",
+            source=str(source_db),
+            dry_run=dry_run,
+            warnings=[],
+        ),
+    ]
+
+    try:
+        member_rows = _sqlite_rows(source_db, "benchmark_index_member")
+        industry_rows = _sqlite_rows(source_db, "stock_industry_membership")
+        weight_rows = _sqlite_rows(source_db, "benchmark_industry_weight")
+    except sqlite3.Error as exc:
+        return [
+            UpdateSummary(
+                entity="benchmark_validation_import",
+                source=str(source_db),
+                skipped=1,
+                dry_run=dry_run,
+                warnings=[str(exc)],
+            )
+        ]
+
+    member_summary, industry_summary, weight_summary = summaries
+    member_summary.requested = len(member_rows)
+    for row in member_rows:
+        normalized = {
+            "index_code": row.get("index_code"),
+            "index_name": row.get("index_name"),
+            "snapshot_date": _parse_date(row.get("snapshot_date")),
+            "stock_code": row.get("stock_code"),
+            "stock_name": row.get("stock_name"),
+            "exchange": row.get("exchange"),
+            "weight_pct": _parse_float(row.get("weight_pct")),
+            "raw_payload_hash": row.get("raw_payload_hash"),
+        }
+        action = _apply_benchmark_index_member_row(
+            session,
+            normalized,
+            str(row.get("benchmark_symbol") or ""),
+            _source_level_from_value(row.get("source_level")),
+            str(row.get("source_name") or f"sqlite_import:{source_db.name}"),
+            dry_run,
+        )
+        if action == "inserted":
+            member_summary.inserted += 1
+        elif action == "updated":
+            member_summary.updated += 1
+        else:
+            member_summary.skipped += 1
+
+    industry_summary.requested = len(industry_rows)
+    for row in industry_rows:
+        normalized = {
+            "stock_code": row.get("stock_code"),
+            "stock_name": row.get("stock_name"),
+            "classification_type": row.get("classification_type"),
+            "classification_version": row.get("classification_version"),
+            "level": row.get("level"),
+            "industry_code": row.get("industry_code"),
+            "industry_name": row.get("industry_name"),
+            "parent_industry_code": row.get("parent_industry_code"),
+            "effective_date": _parse_date(row.get("effective_date")) or date.today(),
+        }
+        action = _apply_stock_industry_membership_row(
+            session,
+            normalized,
+            _source_level_from_value(row.get("source_level")),
+            str(row.get("source_name") or f"sqlite_import:{source_db.name}"),
+            dry_run,
+        )
+        if action == "inserted":
+            industry_summary.inserted += 1
+        elif action == "updated":
+            industry_summary.updated += 1
+        else:
+            industry_summary.skipped += 1
+
+    weight_summary.requested = len(weight_rows)
+    for row in weight_rows:
+        benchmark_symbol = str(row.get("benchmark_symbol") or "").strip()
+        snapshot_date = _parse_date(row.get("snapshot_date"))
+        industry_name = str(row.get("industry_name") or "").strip()
+        if not benchmark_symbol or snapshot_date is None or not industry_name:
+            weight_summary.skipped += 1
+            continue
+        action = _upsert_benchmark_industry_weight_row(
+            session,
+            benchmark_symbol=benchmark_symbol,
+            snapshot_date=snapshot_date,
+            classification_type=str(row.get("classification_type") or "SW"),
+            classification_level=int(row.get("classification_level") or 1),
+            industry_code=row.get("industry_code"),
+            industry_name=industry_name,
+            weight_pct=float(row.get("weight_pct") or 0.0),
+            member_count=int(row.get("member_count") or 0),
+            unmapped_weight_pct=float(row.get("unmapped_weight_pct") or 0.0),
+            coverage_pct=float(row.get("coverage_pct") or 0.0),
+            source_member_snapshot=_parse_date(row.get("source_member_snapshot")) or snapshot_date,
+            source_industry_snapshot=_parse_date(row.get("source_industry_snapshot")),
+            algorithm_version=str(row.get("algorithm_version") or "benchmark_industry_weight:0.1.0"),
+            warnings=_json_value(row.get("warnings")),
+            dry_run=dry_run,
+        )
+        if action == "inserted":
+            weight_summary.inserted += 1
+        elif action == "updated":
+            weight_summary.updated += 1
+        else:
+            weight_summary.skipped += 1
+
+    if not dry_run:
+        for summary in summaries:
+            _log_update_task(session, summary.entity, summary)
+        session.commit()
+    return summaries
+
+
+def backfill_fund_holding_industries(
+    session: Session,
+    fund_codes: set[str] | None = None,
+    *,
+    report_date: date | None = None,
+    classification_type: str = "SW",
+    classification_level: int = 1,
+    overwrite: bool = False,
+    dry_run: bool = False,
+) -> UpdateSummary:
+    """Backfill disclosed holding industry names from stock industry memberships."""
+    stmt = (
+        select(FundDisclosedHoldings)
+        .where(FundDisclosedHoldings.asset_type == "股票")
+        .where(FundDisclosedHoldings.security_code.is_not(None))
+    )
+    if fund_codes:
+        stmt = stmt.where(FundDisclosedHoldings.fund_code.in_(fund_codes))
+    if report_date is not None:
+        stmt = stmt.where(FundDisclosedHoldings.report_date == report_date)
+    if not overwrite:
+        stmt = stmt.where(FundDisclosedHoldings.industry.is_(None))
+
+    holdings = list(session.scalars(stmt.order_by(
+        FundDisclosedHoldings.fund_code,
+        FundDisclosedHoldings.report_date,
+        FundDisclosedHoldings.rank_in_holdings,
+    )).all())
+    summary = UpdateSummary(
+        entity="fund_holding_industry_backfill",
+        source="stock_industry_membership",
+        requested=len(holdings),
+        dry_run=dry_run,
+        warnings=[],
+    )
+
+    missing_examples: list[str] = []
+    for holding in holdings:
+        membership = session.scalar(
+            select(StockIndustryMembership)
+            .where(StockIndustryMembership.stock_code == str(holding.security_code).strip())
+            .where(StockIndustryMembership.classification_type == classification_type)
+            .where(StockIndustryMembership.level == classification_level)
+            .where(StockIndustryMembership.effective_date <= holding.report_date)
+            .order_by(StockIndustryMembership.effective_date.desc())
+            .limit(1)
+        )
+        if membership is None:
+            summary.skipped += 1
+            if len(missing_examples) < 10:
+                missing_examples.append(
+                    f"{holding.fund_code}/{holding.report_date}/{holding.security_code}"
+                )
+            continue
+        if holding.industry == membership.industry_name:
+            summary.skipped += 1
+            continue
+        summary.updated += 1
+        if not dry_run:
+            holding.industry = membership.industry_name
+
+    if missing_examples:
+        summary.warnings.append("缺少行业归属: " + ", ".join(missing_examples))
+    if not dry_run:
+        _log_update_task(session, "fund_holding_industry_backfill", summary)
         session.commit()
     return summary
 
