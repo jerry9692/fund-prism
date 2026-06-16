@@ -271,3 +271,96 @@ class TestScoring:
 
         assert "return 数据缺失" in by_code["B"].deduction_reasons
         assert by_code["B"].total_score <= 50 - 2.5
+
+    def test_compute_ic_random(self):
+        """Random scores show near-zero IC."""
+        from fund_research.analysis.scoring import compute_ic
+
+        rng = np.random.default_rng(42)
+        n_funds = 30
+        n_dates = 4
+        rows = []
+        for d in range(n_dates):
+            for f in range(n_funds):
+                rows.append({
+                    "fund_code": f"{f:06d}",
+                    "calc_date": date(2024, (d * 3 + 3), 30),
+                    "score": rng.uniform(0, 100),
+                })
+        scores = pd.DataFrame(rows)
+        future = pd.DataFrame([
+            {"fund_code": row["fund_code"], "calc_date": row["calc_date"],
+             "future_return": rng.normal(0, 0.05)}
+            for _, row in scores.iterrows()
+        ])
+        result = compute_ic(scores, future)
+        assert result["ic_count"] == n_dates
+        assert result["ic_mean"] is not None
+        assert abs(result["ic_mean"]) < 0.5  # random → low IC
+
+    def test_compute_ic_perfect_predictor(self):
+        """Perfect monotonic scores → positive IC and monotonicity."""
+        from fund_research.analysis.scoring import compute_ic
+
+        rng = np.random.default_rng(99)
+        n_funds = 20
+        rows = []
+        for d in range(3):
+            # Create scores that perfectly rank future returns
+            base_returns = rng.normal(0.05, 0.10, n_funds)
+            for f in range(n_funds):
+                rows.append({
+                    "fund_code": f"{f:06d}",
+                    "calc_date": date(2024, (d * 3 + 3), 30),
+                    "score": float(base_returns[f]),
+                })
+        scores = pd.DataFrame(rows)
+        future = pd.DataFrame([
+            {"fund_code": row["fund_code"], "calc_date": row["calc_date"],
+             "future_return": row["score"] + rng.normal(0, 0.001)}  # tiny noise
+            for _, row in scores.iterrows()
+        ])
+        result = compute_ic(scores, future)
+        assert result["ic_count"] == 3
+        assert result["ic_mean"] is not None and result["ic_mean"] > 0.5
+        assert result["monotonicity"] is True
+
+    def test_compute_ic_insufficient_data(self):
+        """Less than 10 merged rows → null results with warning."""
+        from fund_research.analysis.scoring import compute_ic
+
+        scores = pd.DataFrame([
+            {"fund_code": "A", "calc_date": date(2024, 3, 31), "score": 50},
+        ])
+        future = pd.DataFrame([
+            {"fund_code": "A", "calc_date": date(2024, 3, 31), "future_return": 0.05},
+        ])
+        result = compute_ic(scores, future)
+        assert result["ic_mean"] is None
+        assert any("样本不足" in w for w in result["warnings"])
+
+    def test_compute_ic_empty(self):
+        """Empty inputs return null results."""
+        from fund_research.analysis.scoring import compute_ic
+
+        result = compute_ic(pd.DataFrame(), pd.DataFrame())
+        assert result["ic_mean"] is None
+        assert any("数据不足" in w for w in result["warnings"])
+
+    def test_quarterly_dates(self):
+        """Quarterly date generation covers expected range."""
+        from fund_research.experiments.runner import _quarterly_dates
+
+        dates = _quarterly_dates(date(2023, 1, 1), date(2024, 12, 31))
+        assert len(dates) == 8
+        assert dates[0] == date(2023, 3, 31)
+        assert dates[-1] == date(2024, 12, 31)
+        assert all(d.month in {3, 6, 9, 12} for d in dates)
+        assert all(d.day in {30, 31} for d in dates)
+
+    def test_quarterly_dates_partial_range(self):
+        """Partial year range gives correct subset."""
+        from fund_research.experiments.runner import _quarterly_dates
+
+        dates = _quarterly_dates(date(2023, 5, 1), date(2023, 10, 31))
+        assert dates == [date(2023, 6, 30), date(2023, 9, 30)]

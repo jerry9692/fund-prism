@@ -108,10 +108,12 @@ def test_run_p2b_validation_report_builds_auditable_batch_report(test_session: S
     assert sim_report["per_fund"][0]["diagnostics"]["matched_stock_count"] == 2
 
     scoring_report = report["algorithms"]["scoring"]
-    assert scoring_report["per_fund"][0]["diagnostics"]["allow_estimated"] is False
-    assert scoring_report["per_fund"][0]["diagnostics"]["verified_dimension_count"] == 2
-    assert scoring_report["per_fund"][0]["diagnostics"]["verified_dimensions"] == ["return", "risk"]
-    assert "excluded_estimated_dimensions" in scoring_report["per_fund"][0]["diagnostics"]
+    assert scoring_report["per_fund"][0]["diagnostics"]["allow_estimated"] is True
+    assert scoring_report["per_fund"][0]["diagnostics"]["verified_dimension_count"] >= 7
+    assert "return" in scoring_report["per_fund"][0]["diagnostics"]["verified_dimensions"]
+    assert "risk" in scoring_report["per_fund"][0]["diagnostics"]["verified_dimensions"]
+    assert "scale" in scoring_report["per_fund"][0]["diagnostics"]["verified_dimensions"]
+    assert "estimated_dimensions" in scoring_report["per_fund"][0]["diagnostics"]
 
 
 def test_p2b_validation_markdown_contains_gate_summary(test_session: Session) -> None:

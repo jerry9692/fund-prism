@@ -286,6 +286,46 @@ export interface P2BValidationTask {
   warnings?: string[];
 }
 
+export interface FundScoreItem {
+  fund_code: string;
+  total_score: number;
+  sub_scores: Record<string, number>;
+  percentile_rank: number;
+  deduction_reasons: string[];
+  contains_estimated: boolean;
+  calc_date?: string | null;
+}
+
+export interface ScoringData {
+  score_version: string;
+  fund_count: number;
+  success_count: number;
+  fund_scores: FundScoreItem[];
+  experiment_id?: string;
+}
+
+export interface ScoringVersionData {
+  score_version: string;
+  fund_count: number;
+  fund_scores: FundScoreItem[];
+}
+
+export interface ScoringBacktestItem {
+  id: number;
+  score_version: string;
+  backtest_date: string | null;
+  group_count: number;
+  ic_mean: number | null;
+  ic_ir: number | null;
+  monotonicity_check: boolean | null;
+  created_at: string | null;
+}
+
+export interface ScoringBacktestDetail extends ScoringBacktestItem {
+  group_results: Record<string, number> | null;
+  detail: Record<string, unknown> | null;
+}
+
 // ---- Generic fetch wrapper ----
 
 async function request<T>(
@@ -430,4 +470,45 @@ export const api = {
 
   getP2BValidationTask: (taskId: string) =>
     request<P2BValidationTask>(`/api/v2/validation/p2b/tasks/${taskId}`),
+
+  // ---- Scoring ----
+
+  runScoring: (body: {
+    fund_codes: string[];
+    preset?: string;
+    category?: string;
+    weights?: Record<string, number>;
+  }) =>
+    request<ScoringData>("/api/v2/analysis/scoring", {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+
+  getScoring: (scoreVersion: string) =>
+    request<ScoringVersionData>(`/api/v2/analysis/scoring/${scoreVersion}`),
+
+  runScoringBacktest: (body: {
+    fund_codes: string[];
+    backtest_start: string;
+    backtest_end: string;
+    preset?: string;
+    category?: string;
+  }) =>
+    request<ScoringData & {
+      ic_mean: number | null;
+      ic_ir: number | null;
+      monotonicity: boolean | null;
+      group_results: Record<string, number> | null;
+    }>("/api/v2/analysis/scoring/backtest", {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+
+  listScoringBacktests: () =>
+    request<{ backtests: ScoringBacktestItem[]; total: number }>(
+      "/api/v2/analysis/scoring/backtest"
+    ),
+
+  getScoringBacktest: (id: number) =>
+    request<ScoringBacktestDetail>(`/api/v2/analysis/scoring/backtest/${id}`),
 };
