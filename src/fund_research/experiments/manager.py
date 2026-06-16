@@ -232,6 +232,8 @@ def build_validation_report(db: Session, experiment_id: int) -> dict:
             "estimated_tracking_error": round(float(te), 6) if te is not None else None,
             "estimated_top10_recall": round(float(rec), 4) if rec is not None else None,
             "estimated_industry_correlation": round(float(ic), 4) if ic is not None else None,
+            "diagnostics": _diagnostics_for_algorithm(exp.algorithm_name, m),
+            "metrics": _compact_metrics(m),
             "error_message": r.error_message,
             "warnings": w,
         })
@@ -274,3 +276,52 @@ def build_validation_report(db: Session, experiment_id: int) -> dict:
         "warnings": all_warns,
         "conclusion_status": cs,
     }
+
+
+def _compact_metrics(metrics: dict) -> dict:
+    """Keep report metrics useful without embedding large period-level payloads."""
+    compact = {}
+    for key, value in metrics.items():
+        if key == "backtest_detail" and isinstance(value, list):
+            compact["backtest_detail_count"] = len(value)
+            compact["backtest_detail_sample"] = value[:2]
+        else:
+            compact[key] = value
+    return compact
+
+
+def _diagnostics_for_algorithm(algorithm_name: str, metrics: dict) -> dict:
+    """Return algorithm-specific diagnostics for report readers."""
+    if algorithm_name == "simulated_holding":
+        return {
+            "method": metrics.get("method"),
+            "uses_disclosed_holdings": metrics.get("uses_disclosed_holdings"),
+            "period_count": metrics.get("period_count"),
+            "matched_stock_count": metrics.get("matched_stock_count"),
+            "return_sample_count": metrics.get("return_sample_count"),
+            "estimated_tracking_error": metrics.get("estimated_overall_tracking_error"),
+            "estimated_top10_recall": metrics.get("estimated_overall_top10_recall"),
+            "estimated_industry_correlation": metrics.get("estimated_overall_industry_correlation"),
+        }
+    if algorithm_name == "dynamic_attribution":
+        return {
+            "method": metrics.get("method"),
+            "period_count": metrics.get("period_count"),
+            "uses_proxy_benchmark": metrics.get("uses_proxy_benchmark"),
+            "uses_proxy_sector_returns": metrics.get("uses_proxy_sector_returns"),
+            "estimated_total_portfolio_return": metrics.get("estimated_total_portfolio_return"),
+            "estimated_total_benchmark_return": metrics.get("estimated_total_benchmark_return"),
+            "estimated_total_residual": metrics.get("estimated_total_residual"),
+            "normalized_report_count": len(metrics.get("normalized_weight_sum_by_report") or {}),
+        }
+    if algorithm_name == "scoring":
+        return {
+            "estimated_total_score": metrics.get("estimated_total_score"),
+            "estimated_percentile_rank": metrics.get("estimated_percentile_rank"),
+            "verified_dimension_count": metrics.get("verified_dimension_count"),
+            "verified_dimensions": metrics.get("verified_dimensions"),
+            "allow_estimated": metrics.get("allow_estimated"),
+            "excluded_estimated_dimensions": metrics.get("excluded_estimated_dimensions"),
+            "estimated_deduction_reasons": metrics.get("estimated_deduction_reasons"),
+        }
+    return {}

@@ -1,6 +1,8 @@
 """Phase 2 v2 Tool API tests."""
 
+import json
 from datetime import date, timedelta
+from pathlib import Path
 
 from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session
@@ -12,6 +14,219 @@ from fund_research.db.models import (
     FundDisclosedHoldings,
     StockDaily,
 )
+
+
+def _minimal_p2b_report(
+    report_id: str,
+    generated_at: str,
+    *,
+    sample_size_passed: bool,
+    success_rate: float,
+) -> dict:
+    return {
+        "report_type": "p2b_validation",
+        "report_id": report_id,
+        "generated_at": generated_at,
+        "expected_fund_count": 30,
+        "sample_fund_count": 30,
+        "pipeline_gate": {"status": "pass" if sample_size_passed else "partial"},
+        "productization_gate": {"status": "needs_review"},
+        "conclusion_status": "needs_review",
+        "gate_checks": [
+            {
+                "name": "sample_size",
+                "passed": sample_size_passed,
+                "detail": "30/30 funds" if sample_size_passed else "20/30 funds",
+            },
+        ],
+        "readiness_summary": {
+            "simulated_holding": {
+                "level": "candidate",
+                "productization_allowed": False,
+                "reason": "estimated",
+            },
+        },
+        "algorithms": {
+            "simulated_holding": {
+                "experiment_summary": {
+                    "fund_count": 30,
+                    "success_count": int(success_rate * 30),
+                    "failure_count": 30 - int(success_rate * 30),
+                },
+                "aggregate_stats": {"success_rate": success_rate},
+                "per_fund": [],
+                "overall_conclusion": "pass" if sample_size_passed else "partial",
+                "conclusion_status": "estimated",
+                "warnings": [],
+            },
+        },
+        "warnings": [],
+    }
+
+
+def test_get_latest_p2b_validation_report_reads_report_file(
+    test_client: TestClient,
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    from fund_research.api import v2_router
+
+    report_dir = tmp_path / "docs" / "phase2"
+    report_dir.mkdir(parents=True)
+    report_dir.joinpath("p2b_validation_report.json").write_text(
+        json.dumps({
+            "report_type": "p2b_validation",
+            "pipeline_gate": {"status": "pass"},
+            "productization_gate": {"status": "needs_review"},
+            "conclusion_status": "needs_review",
+            "warnings": ["产品化门禁未通过"],
+        }, ensure_ascii=False),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(v2_router, "_project_root", lambda: tmp_path)
+
+    response = test_client.get("/api/v2/validation/p2b/latest")
+
+    payload = response.json()
+    assert response.status_code == 200
+    assert payload["conclusion_status"] == "needs_review"
+    assert payload["data"]["pipeline_gate"]["status"] == "pass"
+    assert payload["data"]["productization_gate"]["status"] == "needs_review"
+
+
+def test_list_p2b_validation_reports_includes_latest_and_history(
+    test_client: TestClient,
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    from fund_research.api import v2_router
+
+    report_dir = tmp_path / "docs" / "phase2"
+    history_dir = report_dir / "p2b_validation_reports"
+    history_dir.mkdir(parents=True)
+    report_dir.joinpath("p2b_validation_report.json").write_text(
+        json.dumps(
+            _minimal_p2b_report("new", "2026-06-16T12:00:00", sample_size_passed=True, success_rate=1.0),
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    history_dir.joinpath("old.json").write_text(
+        json.dumps(
+            _minimal_p2b_report("old", "2026-06-15T12:00:00", sample_size_passed=False, success_rate=0.8),
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(v2_router, "_project_root", lambda: tmp_path)
+
+    response = test_client.get("/api/v2/validation/p2b/reports")
+
+    payload = response.json()
+    assert response.status_code == 200
+    assert payload["conclusion_status"] == "computed"
+    assert payload["data"]["total"] == 2
+    assert [item["report_id"] for item in payload["data"]["reports"]] == ["new", "old"]
+    assert payload["data"]["reports"][0]["is_latest"] is True
+
+
+def test_compare_p2b_validation_reports_returns_gate_and_metric_deltas(
+    test_client: TestClient,
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    from fund_research.api import v2_router
+
+    report_dir = tmp_path / "docs" / "phase2"
+    history_dir = report_dir / "p2b_validation_reports"
+    history_dir.mkdir(parents=True)
+    report_dir.joinpath("p2b_validation_report.json").write_text(
+        json.dumps(
+            _minimal_p2b_report("new", "2026-06-16T12:00:00", sample_size_passed=True, success_rate=1.0),
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    history_dir.joinpath("old.json").write_text(
+        json.dumps(
+            _minimal_p2b_report("old", "2026-06-15T12:00:00", sample_size_passed=False, success_rate=0.8),
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(v2_router, "_project_root", lambda: tmp_path)
+
+    response = test_client.get(
+        "/api/v2/validation/p2b/compare",
+        params={"base_report_id": "old", "target_report_id": "latest"},
+    )
+
+    payload = response.json()
+    assert response.status_code == 200
+    assert payload["conclusion_status"] == "observation"
+    assert payload["data"]["changed"] is True
+    assert payload["data"]["gate_changes"][0]["changed"] is True
+    delta = payload["data"]["algorithm_changes"][0]["metric_deltas"]["success_rate"]["delta"]
+    assert round(delta, 4) == 0.2
+
+
+def test_rerun_p2b_validation_report_starts_task_and_status_endpoint(
+    test_client: TestClient,
+    monkeypatch,
+) -> None:
+    from fund_research.api import v2_router
+
+    class ImmediateThread:
+        def __init__(self, target, kwargs, daemon):  # noqa: ANN001
+            self.target = target
+            self.kwargs = kwargs
+            self.daemon = daemon
+
+        def start(self) -> None:
+            self.target(**self.kwargs)
+
+    def fake_run_task(task_id: str, *, algorithms: list[str], limit: int | None) -> None:
+        v2_router._update_p2b_task(
+            task_id,
+            status="completed",
+            stage="completed",
+            message="done",
+            percent=100,
+            algorithms=algorithms,
+            limit=limit,
+            report_id="fake-report",
+        )
+
+    v2_router._P2B_TASKS.clear()
+    monkeypatch.setattr(v2_router.threading, "Thread", ImmediateThread)
+    monkeypatch.setattr(v2_router, "_run_p2b_validation_task", fake_run_task)
+
+    response = test_client.post(
+        "/api/v2/validation/p2b/rerun",
+        json={"algorithms": ["simulated_holding"], "limit": 1},
+    )
+
+    payload = response.json()
+    assert response.status_code == 200
+    assert payload["conclusion_status"] == "observation"
+    task_id = payload["data"]["task_id"]
+    assert payload["data"]["status"] == "completed"
+    assert payload["data"]["report_id"] == "fake-report"
+
+    status_response = test_client.get(f"/api/v2/validation/p2b/tasks/{task_id}")
+    status_payload = status_response.json()
+    assert status_payload["conclusion_status"] == "computed"
+    assert status_payload["data"]["status"] == "completed"
+
+
+def test_get_p2b_validation_task_returns_needs_review_for_missing_task(
+    test_client: TestClient,
+) -> None:
+    response = test_client.get("/api/v2/validation/p2b/tasks/missing")
+
+    payload = response.json()
+    assert response.status_code == 200
+    assert payload["conclusion_status"] == "needs_review"
 
 
 def test_create_experiment_accepts_json_dates(

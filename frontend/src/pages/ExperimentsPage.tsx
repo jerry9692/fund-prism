@@ -1,34 +1,5 @@
 import { useEffect, useState } from "react";
-
-interface Experiment {
-  id: string;
-  name: string;
-  algorithm: string;
-  version: string;
-  status: string;
-  fund_count: number;
-  success_count: number;
-  failure_count: number;
-  created_at: string;
-}
-
-interface ExperimentDetail {
-  id: string;
-  experiment_name: string;
-  algorithm_name: string;
-  algorithm_version: string;
-  status: string;
-  results: ResultItem[];
-  summary?: string;
-}
-
-interface ResultItem {
-  fund_code: string;
-  is_success: boolean;
-  metrics: Record<string, unknown> | null;
-  error_message: string | null;
-  warnings?: string[] | null;
-}
+import { api, type Experiment, type ExperimentDetail } from "../api/client";
 
 const STATUS_LABELS: Record<string, string> = {
   pending: "就绪", running: "运行中", completed: "已完成",
@@ -40,13 +11,6 @@ const ALGO_LABELS: Record<string, string> = {
   dynamic_attribution: "动态归因",
   scoring: "综合评分",
 };
-
-function getApiError(body: any, fallback: string) {
-  if (Array.isArray(body?.warnings) && body.warnings.length > 0) {
-    return body.warnings.join("; ");
-  }
-  return body?.detail ?? fallback;
-}
 
 function renderMetricValue(value: unknown) {
   if (typeof value === "number") return Number(value).toFixed(4);
@@ -134,10 +98,9 @@ export default function ExperimentsPage() {
   async function load() {
     setLoading(true);
     try {
-      const response = await fetch("/api/v2/experiments");
-      const body = await response.json();
-      if (!response.ok || body.data === null) {
-        setErrorMessage(getApiError(body, `加载失败: ${response.status}`));
+      const body = await api.listExperiments();
+      if (body.data === null) {
+        setErrorMessage(body.warnings.join("; ") || "加载失败");
         setExperiments([]);
         return;
       }
@@ -155,10 +118,9 @@ export default function ExperimentsPage() {
     setSelectedId(id);
     setDetailLoading(true);
     try {
-      const response = await fetch(`/api/v2/experiments/${id}`);
-      const body = await response.json();
-      if (!response.ok || body.data === null) {
-        setErrorMessage(getApiError(body, `加载详情失败: ${response.status}`));
+      const body = await api.getExperiment(id);
+      if (body.data === null) {
+        setErrorMessage(body.warnings.join("; ") || "加载详情失败");
         setDetail(null);
         return;
       }
@@ -174,22 +136,17 @@ export default function ExperimentsPage() {
   async function create() {
     const experimentName = name.trim() || `${ALGO_LABELS[algo] ?? algo} 实验`;
     try {
-      const res = await fetch("/api/v2/experiments", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          experiment_name: experimentName,
-          algorithm_name: algo,
-          algorithm_version: "0.1.0",
-          parameters: algo === "dynamic_attribution"
-            ? { benchmark_symbol: benchmarkSymbol, min_return_observations: Number(minReturnObs) }
-            : {},
-          sample_fund_codes: fundCodes.split(",").map((s) => s.trim()).filter(Boolean),
-        }),
+      const body = await api.createExperiment({
+        experiment_name: experimentName,
+        algorithm_name: algo,
+        algorithm_version: "0.1.0",
+        parameters: algo === "dynamic_attribution"
+          ? { benchmark_symbol: benchmarkSymbol, min_return_observations: Number(minReturnObs) }
+          : {},
+        sample_fund_codes: fundCodes.split(",").map((s) => s.trim()).filter(Boolean),
       });
-      const body = await res.json();
-      if (!res.ok || body.data === null) {
-        setErrorMessage(`创建失败: ${getApiError(body, String(res.status))}`);
+      if (body.data === null) {
+        setErrorMessage(`创建失败: ${body.warnings.join("; ") || "未知错误"}`);
         return;
       }
       setErrorMessage(null);
@@ -204,10 +161,9 @@ export default function ExperimentsPage() {
   async function run(id: string) {
     setExperiments((prev) => prev.map((e) => (e.id === id ? { ...e, status: "running" } : e)));
     try {
-      const response = await fetch(`/api/v2/experiments/${id}/run`, { method: "POST" });
-      const body = await response.json();
-      if (!response.ok || body.data === null) {
-        setErrorMessage(`运行失败: ${getApiError(body, String(response.status))}`);
+      const body = await api.runExperiment(id);
+      if (body.data === null) {
+        setErrorMessage(`运行失败: ${body.warnings.join("; ") || "未知错误"}`);
       } else {
         setErrorMessage(null);
       }
@@ -221,10 +177,9 @@ export default function ExperimentsPage() {
 
   async function rerun(id: string) {
     try {
-      const response = await fetch(`/api/v2/experiments/${id}/rerun`, { method: "POST" });
-      const body = await response.json();
-      if (!response.ok || body.data === null) {
-        setErrorMessage(`重跑失败: ${getApiError(body, String(response.status))}`);
+      const body = await api.rerunExperiment(id);
+      if (body.data === null) {
+        setErrorMessage(`重跑失败: ${body.warnings.join("; ") || "未知错误"}`);
         return;
       }
       setErrorMessage(null);
@@ -242,10 +197,9 @@ export default function ExperimentsPage() {
       return;
     }
     try {
-      const res = await fetch(`/api/v2/experiments/${id}`, { method: "DELETE" });
-      const body = await res.json();
-      if (!res.ok || !body.data?.deleted) {
-        setErrorMessage(`删除失败: ${getApiError(body, String(res.status))}`);
+      const body = await api.deleteExperiment(id);
+      if (!body.data?.deleted) {
+        setErrorMessage(`删除失败: ${body.warnings.join("; ") || "未知错误"}`);
         return;
       }
       setErrorMessage(null);

@@ -1,7 +1,7 @@
 # P2C+ Benchmark Industry Weight Design
 
-日期: 2026-06-13  
-状态: Implemented in P2C+  
+日期: 2026-06-13
+状态: Implemented in P2C+
 范围: 真实基准行业权重接入设计与实现记录
 
 ## 1. 背景与目标

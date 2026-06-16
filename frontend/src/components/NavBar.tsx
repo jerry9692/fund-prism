@@ -4,6 +4,7 @@ const links = [
   { to: "/", label: "首页" },
   { to: "/funds", label: "基金筛选" },
   { to: "/experiments", label: "实验管理" },
+  { to: "/experiments/p2b-report", label: "验收报告" },
   { to: "/data-quality", label: "数据质量" },
 ];
 
