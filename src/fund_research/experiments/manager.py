@@ -321,7 +321,8 @@ def _diagnostics_for_algorithm(algorithm_name: str, metrics: dict) -> dict:
             "verified_dimension_count": metrics.get("verified_dimension_count"),
             "verified_dimensions": metrics.get("verified_dimensions"),
             "allow_estimated": metrics.get("allow_estimated"),
-            "excluded_estimated_dimensions": metrics.get("excluded_estimated_dimensions"),
+            "estimated_dimensions": metrics.get("estimated_dimensions"),
+            "excluded_estimated_dimensions": metrics.get("estimated_dimensions"),
             "estimated_deduction_reasons": metrics.get("estimated_deduction_reasons"),
         }
     return {}

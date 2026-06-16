@@ -11,6 +11,8 @@ import PacketDiffPage from "./pages/PacketDiffPage";
 import DataQualityPage from "./pages/DataQualityPage";
 import ExperimentsPage from "./pages/ExperimentsPage";
 import P2BValidationPage from "./pages/P2BValidationPage";
+import ScoringBacktestPage from "./pages/ScoringBacktestPage";
+import FundScoringPage from "./pages/FundScoringPage";
 
 export default function App() {
   return (
@@ -28,6 +30,8 @@ export default function App() {
           <Route path="/data-quality" element={<DataQualityPage />} />
           <Route path="/experiments" element={<ExperimentsPage />} />
           <Route path="/experiments/p2b-report" element={<P2BValidationPage />} />
+          <Route path="/scoring/backtest" element={<ScoringBacktestPage />} />
+          <Route path="/funds/:code/scoring" element={<FundScoringPage />} />
         </Routes>
       </main>
       <DisclaimerFooter />

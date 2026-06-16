@@ -286,7 +286,8 @@ def compute_ic(
         return {"ic_mean": None, "ic_ir": None, "monotonicity": None, "warnings": ["回测样本不足"]}
 
     ics = merged.groupby("calc_date").apply(
-        lambda g: g["score"].corr(g["future_return"], method="spearman")
+        lambda g: g["score"].corr(g["future_return"], method="spearman"),
+        include_groups=False,
     ).dropna()
 
     ic_mean = float(ics.mean()) if len(ics) > 0 else None
@@ -303,7 +304,7 @@ def compute_ic(
             duplicates="drop",
         )
 
-    merged["group"] = merged.groupby("calc_date", group_keys=False).apply(_bucket)
+    merged["group"] = merged.groupby("calc_date", group_keys=False).apply(_bucket, include_groups=False)
     grouped = merged.dropna(subset=["group"]).copy()
     group_returns = grouped.groupby("group")["future_return"].mean()
     monotonic = (
