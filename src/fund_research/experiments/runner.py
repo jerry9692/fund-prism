@@ -1,6 +1,8 @@
 """Experiment execution runners for Phase 2."""
 
+import sys
 from datetime import date as date_type
+from typing import Any, TypeVar
 
 import numpy as np
 import pandas as pd
@@ -19,6 +21,20 @@ from fund_research.db.models import (
 )
 from fund_research.experiments.manager import record_result
 
+T = TypeVar("T")
+
+
+def _progress_iter(items: list[T], description: str) -> list[T] | Any:
+    """Render progress when experiment runners are invoked from an interactive CLI."""
+    if not sys.stderr.isatty():
+        return items
+    try:
+        from rich.progress import track
+
+        return track(items, description=description)
+    except Exception:
+        return items
+
 
 def dispatch_run(db: Session, exp: AlgorithmExperiment) -> list[dict]:
     """Dispatch an experiment to the matching algorithm runner."""
@@ -33,7 +49,7 @@ def dispatch_run(db: Session, exp: AlgorithmExperiment) -> list[dict]:
         return _run_scoring_batch(db, exp, sample_codes)
 
     results = []
-    for code in sample_codes:
+    for code in _progress_iter(sample_codes, f"运行 {algo}"):
         error = f"未知算法: {algo}"
         record_result(
             db,
@@ -61,7 +77,7 @@ def _run_simulated_holding_batch(
     """Run simulated-holding experiments and persist per-fund results."""
     results: list[dict] = []
 
-    for fund_code in fund_codes:
+    for fund_code in _progress_iter(fund_codes, "运行 simulated_holding"):
         try:
             nav_rows = db.scalars(
                 sa_select(FundNAV)
@@ -78,8 +94,16 @@ def _run_simulated_holding_batch(
                 .where(FundDisclosedHoldings.fund_code == fund_code)
                 .order_by(FundDisclosedHoldings.report_date)
             ).all()
+            holding_stock_codes = {
+                row.security_code
+                for row in holdings_rows
+                if row.security_code
+            }
+            stock_stmt = sa_select(StockDaily).order_by(StockDaily.stock_code, StockDaily.trade_date)
+            if holding_stock_codes:
+                stock_stmt = stock_stmt.where(StockDaily.stock_code.in_(holding_stock_codes))
             stock_rows = db.scalars(
-                sa_select(StockDaily).order_by(StockDaily.stock_code, StockDaily.trade_date)
+                stock_stmt
             ).all()
 
             nav_df = pd.DataFrame([
@@ -251,6 +275,8 @@ def _run_simulated_holding_batch(
                 "estimated_overall_tracking_error": sim_result.overall_tracking_error,
                 "estimated_overall_top10_recall": backtest.get("top10_recall"),
                 "estimated_overall_industry_correlation": backtest.get("industry_correlation"),
+                "method": "naive_replication",
+                "uses_disclosed_holdings": True,
                 "period_count": len(sim_result.periods),
                 "matched_stock_count": len(common_codes),
                 "return_sample_count": sample_count,
@@ -300,7 +326,7 @@ def _run_dynamic_attribution_batch(
     proxy_warning = "P2B 近似：行业收益和基准收益使用基金收益代理，不能作为正式归因结论"
     results: list[dict] = []
 
-    for fund_code in fund_codes:
+    for fund_code in _progress_iter(fund_codes, "运行 dynamic_attribution"):
         try:
             holdings_rows = db.scalars(
                 sa_select(FundDisclosedHoldings)
@@ -432,7 +458,7 @@ def _run_scoring_batch(
     results: list[dict] = []
     metrics_rows = []
 
-    for fund_code in fund_codes:
+    for fund_code in _progress_iter(fund_codes, "准备 scoring"):
         try:
             nav_rows = db.scalars(
                 sa_select(FundNAV)
@@ -496,6 +522,17 @@ def _run_scoring_batch(
                         "estimated_sub_scores": fund_score.sub_scores,
                         "estimated_percentile_rank": fund_score.percentile_rank,
                         "estimated_deduction_reasons": fund_score.deduction_reasons,
+                        "verified_dimension_count": 2,
+                        "verified_dimensions": ["return", "risk"],
+                        "allow_estimated": False,
+                        "excluded_estimated_dimensions": [
+                            "alpha",
+                            "trading",
+                            "style_stability",
+                            "scale",
+                            "team",
+                            "holder",
+                        ],
                     },
                     warnings=warnings,
                 )

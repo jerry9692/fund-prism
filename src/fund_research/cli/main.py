@@ -141,6 +141,10 @@ YearOption = Annotated[
     int | None,
     typer.Option("--year", help="分红年度 YYYY"),
 ]
+LimitOption = Annotated[
+    int | None,
+    typer.Option("--limit", help="只取前 N 只样本，用于快速验证"),
+]
 
 
 def _selected_update_entities(entity: str, domains: str | None) -> list[str]:
@@ -611,9 +615,152 @@ def update(
         console.print("[green]OK[/] 数据更新完成")
 
 
+@app.command("validate-p2b")
+def validate_p2b(
+    db_path: DbPathOption = None,
+    sample: SamplePathOption = None,
+    output: Annotated[
+        str,
+        typer.Option("--output", "-o", help="报告输出路径，支持 .json / .md"),
+    ] = "docs/phase2/p2b_validation_report.json",
+    algorithms: Annotated[
+        str,
+        typer.Option("--algorithms", help="逗号分隔算法: simulated_holding,dynamic_attribution,scoring"),
+    ] = "simulated_holding,dynamic_attribution,scoring",
+    limit: LimitOption = None,
+) -> None:
+    """运行 P2B 批量验收并生成可审计报告。"""
+    from sqlalchemy.orm import sessionmaker
+
+    from fund_research.config.settings import get_settings
+    from fund_research.db.session import create_engine_from_path
+    from fund_research.experiments.validation import (
+        P2B_ALGORITHMS,
+        load_sample_fund_codes,
+        run_p2b_validation_report,
+        write_p2b_validation_report,
+    )
+
+    selected_algorithms = [
+        item.strip()
+        for item in algorithms.split(",")
+        if item.strip()
+    ]
+    unknown = sorted(set(selected_algorithms) - set(P2B_ALGORITHMS))
+    if unknown:
+        console.print(f"[red]未知 P2B 算法:[/] {', '.join(unknown)}")
+        raise typer.Exit(code=1)
+
+    sample_path = sample or get_settings().sample_funds_path_absolute
+    if not sample_path.exists():
+        console.print(f"[red]样本文件不存在:[/] {sample_path}")
+        raise typer.Exit(code=1)
+
+    fund_codes = load_sample_fund_codes(sample_path, limit=limit)
+    if not fund_codes:
+        console.print("[red]样本基金为空[/]")
+        raise typer.Exit(code=1)
+
+    engine = create_engine_from_path(db_path)
+    session_factory = sessionmaker(bind=engine)
+    with session_factory() as session, console.status("[bold cyan]正在运行 P2B 批量验收..."):
+        report = run_p2b_validation_report(
+            session,
+            fund_codes,
+            selected_algorithms,
+            expected_fund_count=30 if limit is None else min(limit, 30),
+        )
+
+    output_path = Path(output)
+    history_path = write_p2b_validation_report(report, output_path)
+
+    table = Table(title="P2B 验收摘要")
+    table.add_column("算法")
+    table.add_column("基金数")
+    table.add_column("成功率")
+    table.add_column("结论")
+    for algorithm, algorithm_report in report["algorithms"].items():
+        summary = algorithm_report.get("experiment_summary", {})
+        stats = algorithm_report.get("aggregate_stats", {})
+        table.add_row(
+            algorithm,
+            str(summary.get("fund_count", 0)),
+            f"{float(stats.get('success_rate') or 0.0):.1%}",
+            str(algorithm_report.get("overall_conclusion")),
+        )
+    console.print(table)
+    console.print(
+        f"[green]报告已生成:[/] {output_path} "
+        f"pipeline={report['pipeline_gate']['status']} "
+        f"productization={report['productization_gate']['status']} "
+        f"status={report['conclusion_status']}"
+    )
+    if history_path:
+        console.print(f"[green]History snapshot generated:[/] {history_path}")
+    for warning in report["warnings"]:
+        console.print(f"[yellow]WARN[/] {warning}")
+
+
 # ============================================================
 # export — 结构化导出
 # ============================================================
+
+@app.command("check-p2c")
+def check_p2c(
+    report: Annotated[
+        str,
+        typer.Option("--report", "-r", help="P2B validation report JSON path"),
+    ] = "docs/phase2/p2b_validation_report.json",
+    output: Annotated[
+        str | None,
+        typer.Option("--output", "-o", help="Optional P2C acceptance report markdown path"),
+    ] = "docs/phase2/p2c_acceptance_report.md",
+) -> None:
+    """Check Phase 2C acceptance gate from the latest P2B validation report."""
+    from fund_research.experiments.p2c_acceptance import (
+        evaluate_p2c_acceptance,
+        load_p2b_report,
+        write_p2c_acceptance_report,
+    )
+
+    report_path = Path(report)
+    if not report_path.exists():
+        console.print(f"[red]P2B validation report not found:[/] {report_path}")
+        raise typer.Exit(code=1)
+
+    try:
+        p2b_report = load_p2b_report(report_path)
+    except json.JSONDecodeError as exc:
+        console.print(f"[red]P2B validation report JSON parse failed:[/] {exc}")
+        raise typer.Exit(code=1) from None
+
+    evaluation = evaluate_p2c_acceptance(p2b_report, report_path=report_path)
+    if output:
+        write_p2c_acceptance_report(evaluation, Path(output))
+
+    table = Table(title="P2C Acceptance Gate")
+    table.add_column("check")
+    table.add_column("required")
+    table.add_column("status")
+    table.add_column("detail")
+    for check in evaluation["checks"]:
+        table.add_row(
+            str(check["name"]),
+            "yes" if check["required"] else "no",
+            "[green]pass[/]" if check["passed"] else "[red]fail[/]",
+            str(check["detail"]),
+        )
+    console.print(table)
+    console.print(
+        f"status={evaluation['status']} "
+        f"allowed_scope={evaluation['allowed_scope']} "
+        f"report_id={evaluation.get('report_id')}"
+    )
+    if output:
+        console.print(f"[green]P2C acceptance report written:[/] {output}")
+    if evaluation["status"] != "pass":
+        raise typer.Exit(code=1)
+
 
 ExportFormatOption = Annotated[
     str,

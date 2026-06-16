@@ -142,6 +142,149 @@ export interface ScreenResult {
   offset: number;
 }
 
+export interface Experiment {
+  id: string;
+  name: string;
+  algorithm: string;
+  version: string;
+  status: string;
+  fund_count: number;
+  success_count: number;
+  failure_count: number;
+  created_at: string;
+}
+
+export interface ExperimentResultItem {
+  fund_code: string;
+  is_success: boolean;
+  metrics: Record<string, unknown> | null;
+  error_message: string | null;
+}
+
+export interface ExperimentDetail {
+  id: string;
+  experiment_name: string;
+  algorithm_name: string;
+  algorithm_version: string;
+  status: string;
+  results: ExperimentResultItem[];
+  summary?: string;
+}
+
+export interface ExperimentListData {
+  experiments: Experiment[];
+  total: number;
+}
+
+export interface P2BAlgorithmReport {
+  experiment_summary: {
+    fund_count: number;
+    success_count: number;
+    failure_count: number;
+    algorithm_name?: string;
+    status?: string;
+  };
+  aggregate_stats: Record<string, number | null>;
+  per_fund: Array<{
+    fund_code: string;
+    is_success: boolean;
+    diagnostics?: Record<string, unknown>;
+    metrics?: Record<string, unknown>;
+    error_message: string | null;
+    warnings: string[];
+  }>;
+  overall_conclusion: string;
+  conclusion_status: string;
+  warnings: string[];
+}
+
+export interface P2BValidationReport {
+  report_type: string;
+  report_id?: string;
+  generated_at: string;
+  generated_date?: string;
+  expected_fund_count: number;
+  sample_fund_count: number;
+  pipeline_gate: { status: string; conclusion_status?: string };
+  productization_gate: { status: string; conclusion_status?: string; warnings?: string[] };
+  readiness_summary: Record<string, {
+    level: string;
+    productization_allowed: boolean;
+    reason: string;
+  }>;
+  gate_checks: Array<{ name: string; passed: boolean; detail: string }>;
+  algorithms: Record<string, P2BAlgorithmReport>;
+  warnings: string[];
+  conclusion_status: string;
+}
+
+export interface P2BValidationReportSummary {
+  report_id: string;
+  generated_at: string | null;
+  sample_fund_count: number | null;
+  expected_fund_count: number | null;
+  pipeline_status: string | null;
+  productization_status: string | null;
+  conclusion_status: string | null;
+  algorithm_count: number;
+  warning_count: number;
+  is_latest: boolean;
+}
+
+export interface P2BValidationReportListData {
+  reports: P2BValidationReportSummary[];
+  total: number;
+}
+
+export interface P2BValidationComparison {
+  base: P2BValidationReportSummary;
+  target: P2BValidationReportSummary;
+  changed: boolean;
+  gate_changes: Array<{
+    name: string;
+    base_passed: boolean | null;
+    target_passed: boolean | null;
+    base_detail: string | null;
+    target_detail: string | null;
+    changed: boolean;
+  }>;
+  algorithm_changes: Array<{
+    algorithm: string;
+    base_conclusion: string | null;
+    target_conclusion: string | null;
+    base_readiness: string | null;
+    target_readiness: string | null;
+    base_success_count: number | null;
+    target_success_count: number | null;
+    base_failure_count: number | null;
+    target_failure_count: number | null;
+    metric_deltas: Record<string, {
+      base: number | null;
+      target: number | null;
+      delta: number | null;
+    }>;
+    changed: boolean;
+  }>;
+}
+
+export interface P2BValidationTask {
+  task_id: string;
+  status: "queued" | "running" | "completed" | "failed" | string;
+  stage: string;
+  message: string | null;
+  percent: number | null;
+  current?: number | null;
+  total?: number | null;
+  algorithm?: string | null;
+  algorithms?: string[];
+  limit?: number | null;
+  report_id?: string | null;
+  generated_at?: string | null;
+  report_path?: string | null;
+  history_path?: string | null;
+  warnings?: string[];
+}
+
 // ---- Generic fetch wrapper ----
 
 async function request<T>(
@@ -215,4 +358,75 @@ export const api = {
       method: "POST",
       body: JSON.stringify(body),
     }),
+
+  listExperiments: () =>
+    request<ExperimentListData>("/api/v2/experiments"),
+
+  getExperiment: (id: string) =>
+    request<ExperimentDetail>(`/api/v2/experiments/${id}`),
+
+  createExperiment: (body: {
+    experiment_name: string;
+    algorithm_name: string;
+    algorithm_version: string;
+    parameters: Record<string, unknown>;
+    sample_fund_codes: string[];
+  }) =>
+    request<{ id: string; status: string; experiment_name: string }>(
+      "/api/v2/experiments",
+      {
+        method: "POST",
+        body: JSON.stringify(body),
+      }
+    ),
+
+  runExperiment: (id: string) =>
+    request<{
+      experiment_id: string;
+      status: string;
+      fund_count: number;
+      success_count: number;
+      failure_count: number;
+    }>(`/api/v2/experiments/${id}/run`, { method: "POST" }),
+
+  rerunExperiment: (id: string) =>
+    request<{ id: string; status: string }>(
+      `/api/v2/experiments/${id}/rerun`,
+      { method: "POST" }
+    ),
+
+  deleteExperiment: (id: string) =>
+    request<{ id: string; deleted: boolean }>(
+      `/api/v2/experiments/${id}`,
+      { method: "DELETE" }
+    ),
+
+  getLatestP2BValidationReport: () =>
+    request<P2BValidationReport>("/api/v2/validation/p2b/latest"),
+
+  listP2BValidationReports: () =>
+    request<P2BValidationReportListData>("/api/v2/validation/p2b/reports"),
+
+  getP2BValidationReport: (reportId: string) =>
+    request<P2BValidationReport>(`/api/v2/validation/p2b/reports/${reportId}`),
+
+  compareP2BValidationReports: (baseReportId: string, targetReportId = "latest") => {
+    const search = new URLSearchParams({
+      base_report_id: baseReportId,
+      target_report_id: targetReportId,
+    }).toString();
+    return request<P2BValidationComparison>(`/api/v2/validation/p2b/compare?${search}`);
+  },
+
+  rerunP2BValidationReport: (body?: {
+    algorithms?: string[];
+    limit?: number;
+  }) =>
+    request<P2BValidationTask>("/api/v2/validation/p2b/rerun", {
+      method: "POST",
+      body: JSON.stringify(body ?? {}),
+    }),
+
+  getP2BValidationTask: (taskId: string) =>
+    request<P2BValidationTask>(`/api/v2/validation/p2b/tasks/${taskId}`),
 };

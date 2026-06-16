@@ -1,0 +1,4622 @@
+{
+  "report_type": "p2b_validation",
+  "report_id": "p2b-20260616-141423",
+  "generated_at": "2026-06-16T14:14:23",
+  "generated_date": "2026-06-16",
+  "expected_fund_count": 30,
+  "sample_fund_count": 30,
+  "sample_fund_codes": [
+    "000001",
+    "020005",
+    "070002",
+    "110009",
+    "163406",
+    "260108",
+    "519068",
+    "002939",
+    "005827",
+    "161005",
+    "166002",
+    "450002",
+    "519736",
+    "000697",
+    "001071",
+    "001938",
+    "003095",
+    "004851",
+    "005267",
+    "006228",
+    "110022",
+    "340007",
+    "519712",
+    "540003",
+    "570001",
+    "000409",
+    "001480",
+    "519772",
+    "000978",
+    "001810"
+  ],
+  "algorithms": {
+    "simulated_holding": {
+      "experiment_summary": {
+        "experiment_id": 5119300947457114345,
+        "experiment_name": "p2b-validation-simulated_holding-2026-06-16",
+        "algorithm_name": "simulated_holding",
+        "algorithm_version": "0.1.0",
+        "status": "completed",
+        "fund_count": 30,
+        "success_count": 30,
+        "failure_count": 0
+      },
+      "aggregate_stats": {
+        "mean_estimated_tracking_error": 0.010282,
+        "mean_estimated_top10_recall": 0.9633,
+        "mean_estimated_industry_correlation": null,
+        "success_rate": 1.0
+      },
+      "per_fund": [
+        {
+          "fund_code": "000001",
+          "is_success": true,
+          "estimated_tracking_error": 0.012944,
+          "estimated_top10_recall": 1.0,
+          "estimated_industry_correlation": null,
+          "diagnostics": {
+            "method": "naive_replication",
+            "uses_disclosed_holdings": true,
+            "period_count": 1,
+            "matched_stock_count": 10,
+            "return_sample_count": 3928,
+            "estimated_tracking_error": 0.012944045420559134,
+            "estimated_top10_recall": 1.0,
+            "estimated_industry_correlation": null
+          },
+          "metrics": {
+            "estimated_overall_tracking_error": 0.012944045420559134,
+            "estimated_overall_top10_recall": 1.0,
+            "estimated_overall_industry_correlation": null,
+            "method": "naive_replication",
+            "uses_disclosed_holdings": true,
+            "period_count": 1,
+            "matched_stock_count": 10,
+            "return_sample_count": 3928,
+            "backtest_detail_count": 1,
+            "backtest_detail_sample": [
+              {
+                "calc_date": "2026-03-31",
+                "top10_recall": 1.0,
+                "industry_correlation": null,
+                "common_stocks": 10,
+                "simulated_count": 10,
+                "actual_count": 10
+              }
+            ]
+          },
+          "error_message": null,
+          "warnings": []
+        },
+        {
+          "fund_code": "020005",
+          "is_success": true,
+          "estimated_tracking_error": 0.011084,
+          "estimated_top10_recall": 1.0,
+          "estimated_industry_correlation": null,
+          "diagnostics": {
+            "method": "naive_replication",
+            "uses_disclosed_holdings": true,
+            "period_count": 1,
+            "matched_stock_count": 10,
+            "return_sample_count": 590,
+            "estimated_tracking_error": 0.011084020358043454,
+            "estimated_top10_recall": 1.0,
+            "estimated_industry_correlation": null
+          },
+          "metrics": {
+            "estimated_overall_tracking_error": 0.011084020358043454,
+            "estimated_overall_top10_recall": 1.0,
+            "estimated_overall_industry_correlation": null,
+            "method": "naive_replication",
+            "uses_disclosed_holdings": true,
+            "period_count": 1,
+            "matched_stock_count": 10,
+            "return_sample_count": 590,
+            "backtest_detail_count": 1,
+            "backtest_detail_sample": [
+              {
+                "calc_date": "2026-03-31",
+                "top10_recall": 1.0,
+                "industry_correlation": null,
+                "common_stocks": 10,
+                "simulated_count": 10,
+                "actual_count": 10
+              }
+            ]
+          },
+          "error_message": null,
+          "warnings": []
+        },
+        {
+          "fund_code": "070002",
+          "is_success": true,
+          "estimated_tracking_error": 0.009052,
+          "estimated_top10_recall": 1.0,
+          "estimated_industry_correlation": null,
+          "diagnostics": {
+            "method": "naive_replication",
+            "uses_disclosed_holdings": true,
+            "period_count": 1,
+            "matched_stock_count": 10,
+            "return_sample_count": 590,
+            "estimated_tracking_error": 0.009052486715935702,
+            "estimated_top10_recall": 1.0,
+            "estimated_industry_correlation": null
+          },
+          "metrics": {
+            "estimated_overall_tracking_error": 0.009052486715935702,
+            "estimated_overall_top10_recall": 1.0,
+            "estimated_overall_industry_correlation": null,
+            "method": "naive_replication",
+            "uses_disclosed_holdings": true,
+            "period_count": 1,
+            "matched_stock_count": 10,
+            "return_sample_count": 590,
+            "backtest_detail_count": 1,
+            "backtest_detail_sample": [
+              {
+                "calc_date": "2026-03-31",
+                "top10_recall": 1.0,
+                "industry_correlation": null,
+                "common_stocks": 10,
+                "simulated_count": 10,
+                "actual_count": 10
+              }
+            ]
+          },
+          "error_message": null,
+          "warnings": []
+        },
+        {
+          "fund_code": "110009",
+          "is_success": true,
+          "estimated_tracking_error": 0.01242,
+          "estimated_top10_recall": 1.0,
+          "estimated_industry_correlation": null,
+          "diagnostics": {
+            "method": "naive_replication",
+            "uses_disclosed_holdings": true,
+            "period_count": 1,
+            "matched_stock_count": 12,
+            "return_sample_count": 3274,
+            "estimated_tracking_error": 0.012420208278250681,
+            "estimated_top10_recall": 1.0,
+            "estimated_industry_correlation": null
+          },
+          "metrics": {
+            "estimated_overall_tracking_error": 0.012420208278250681,
+            "estimated_overall_top10_recall": 1.0,
+            "estimated_overall_industry_correlation": null,
+            "method": "naive_replication",
+            "uses_disclosed_holdings": true,
+            "period_count": 1,
+            "matched_stock_count": 12,
+            "return_sample_count": 3274,
+            "backtest_detail_count": 1,
+            "backtest_detail_sample": [
+              {
+                "calc_date": "2026-03-31",
+                "top10_recall": 1.0,
+                "industry_correlation": null,
+                "common_stocks": 12,
+                "simulated_count": 12,
+                "actual_count": 13
+              }
+            ]
+          },
+          "error_message": null,
+          "warnings": []
+        },
+        {
+          "fund_code": "163406",
+          "is_success": true,
+          "estimated_tracking_error": 0.011747,
+          "estimated_top10_recall": 1.0,
+          "estimated_industry_correlation": null,
+          "diagnostics": {
+            "method": "naive_replication",
+            "uses_disclosed_holdings": true,
+            "period_count": 1,
+            "matched_stock_count": 25,
+            "return_sample_count": 3274,
+            "estimated_tracking_error": 0.0117465193496294,
+            "estimated_top10_recall": 1.0,
+            "estimated_industry_correlation": null
+          },
+          "metrics": {
+            "estimated_overall_tracking_error": 0.0117465193496294,
+            "estimated_overall_top10_recall": 1.0,
+            "estimated_overall_industry_correlation": null,
+            "method": "naive_replication",
+            "uses_disclosed_holdings": true,
+            "period_count": 1,
+            "matched_stock_count": 25,
+            "return_sample_count": 3274,
+            "backtest_detail_count": 1,
+            "backtest_detail_sample": [
+              {
+                "calc_date": "2026-03-31",
+                "top10_recall": 1.0,
+                "industry_correlation": null,
+                "common_stocks": 25,
+                "simulated_count": 25,
+                "actual_count": 25
+              }
+            ]
+          },
+          "error_message": null,
+          "warnings": []
+        },
+        {
+          "fund_code": "260108",
+          "is_success": true,
+          "estimated_tracking_error": 0.002304,
+          "estimated_top10_recall": 1.0,
+          "estimated_industry_correlation": null,
+          "diagnostics": {
+            "method": "naive_replication",
+            "uses_disclosed_holdings": true,
+            "period_count": 1,
+            "matched_stock_count": 14,
+            "return_sample_count": 590,
+            "estimated_tracking_error": 0.0023035018804108986,
+            "estimated_top10_recall": 1.0,
+            "estimated_industry_correlation": null
+          },
+          "metrics": {
+            "estimated_overall_tracking_error": 0.0023035018804108986,
+            "estimated_overall_top10_recall": 1.0,
+            "estimated_overall_industry_correlation": null,
+            "method": "naive_replication",
+            "uses_disclosed_holdings": true,
+            "period_count": 1,
+            "matched_stock_count": 14,
+            "return_sample_count": 590,
+            "backtest_detail_count": 1,
+            "backtest_detail_sample": [
+              {
+                "calc_date": "2026-03-31",
+                "top10_recall": 1.0,
+                "industry_correlation": null,
+                "common_stocks": 14,
+                "simulated_count": 14,
+                "actual_count": 14
+              }
+            ]
+          },
+          "error_message": null,
+          "warnings": []
+        },
+        {
+          "fund_code": "519068",
+          "is_success": true,
+          "estimated_tracking_error": 0.012953,
+          "estimated_top10_recall": 1.0,
+          "estimated_industry_correlation": null,
+          "diagnostics": {
+            "method": "naive_replication",
+            "uses_disclosed_holdings": true,
+            "period_count": 1,
+            "matched_stock_count": 10,
+            "return_sample_count": 3274,
+            "estimated_tracking_error": 0.01295316245837896,
+            "estimated_top10_recall": 1.0,
+            "estimated_industry_correlation": null
+          },
+          "metrics": {
+            "estimated_overall_tracking_error": 0.01295316245837896,
+            "estimated_overall_top10_recall": 1.0,
+            "estimated_overall_industry_correlation": null,
+            "method": "naive_replication",
+            "uses_disclosed_holdings": true,
+            "period_count": 1,
+            "matched_stock_count": 10,
+            "return_sample_count": 3274,
+            "backtest_detail_count": 1,
+            "backtest_detail_sample": [
+              {
+                "calc_date": "2026-03-31",
+                "top10_recall": 1.0,
+                "industry_correlation": null,
+                "common_stocks": 10,
+                "simulated_count": 10,
+                "actual_count": 10
+              }
+            ]
+          },
+          "error_message": null,
+          "warnings": []
+        },
+        {
+          "fund_code": "002939",
+          "is_success": true,
+          "estimated_tracking_error": 0.013334,
+          "estimated_top10_recall": 1.0,
+          "estimated_industry_correlation": null,
+          "diagnostics": {
+            "method": "naive_replication",
+            "uses_disclosed_holdings": true,
+            "period_count": 1,
+            "matched_stock_count": 16,
+            "return_sample_count": 590,
+            "estimated_tracking_error": 0.013333875963582747,
+            "estimated_top10_recall": 1.0,
+            "estimated_industry_correlation": null
+          },
+          "metrics": {
+            "estimated_overall_tracking_error": 0.013333875963582747,
+            "estimated_overall_top10_recall": 1.0,
+            "estimated_overall_industry_correlation": null,
+            "method": "naive_replication",
+            "uses_disclosed_holdings": true,
+            "period_count": 1,
+            "matched_stock_count": 16,
+            "return_sample_count": 590,
+            "backtest_detail_count": 1,
+            "backtest_detail_sample": [
+              {
+                "calc_date": "2026-03-31",
+                "top10_recall": 1.0,
+                "industry_correlation": null,
+                "common_stocks": 16,
+                "simulated_count": 16,
+                "actual_count": 16
+              }
+            ]
+          },
+          "error_message": null,
+          "warnings": []
+        },
+        {
+          "fund_code": "005827",
+          "is_success": true,
+          "estimated_tracking_error": 0.008732,
+          "estimated_top10_recall": 0.5,
+          "estimated_industry_correlation": null,
+          "diagnostics": {
+            "method": "naive_replication",
+            "uses_disclosed_holdings": true,
+            "period_count": 1,
+            "matched_stock_count": 7,
+            "return_sample_count": 590,
+            "estimated_tracking_error": 0.008731776272773516,
+            "estimated_top10_recall": 0.5,
+            "estimated_industry_correlation": null
+          },
+          "metrics": {
+            "estimated_overall_tracking_error": 0.008731776272773516,
+            "estimated_overall_top10_recall": 0.5,
+            "estimated_overall_industry_correlation": null,
+            "method": "naive_replication",
+            "uses_disclosed_holdings": true,
+            "period_count": 1,
+            "matched_stock_count": 7,
+            "return_sample_count": 590,
+            "backtest_detail_count": 1,
+            "backtest_detail_sample": [
+              {
+                "calc_date": "2026-03-31",
+                "top10_recall": 0.5,
+                "industry_correlation": null,
+                "common_stocks": 7,
+                "simulated_count": 7,
+                "actual_count": 12
+              }
+            ]
+          },
+          "error_message": null,
+          "warnings": []
+        },
+        {
+          "fund_code": "161005",
+          "is_success": true,
+          "estimated_tracking_error": 0.004451,
+          "estimated_top10_recall": 1.0,
+          "estimated_industry_correlation": null,
+          "diagnostics": {
+            "method": "naive_replication",
+            "uses_disclosed_holdings": true,
+            "period_count": 1,
+            "matched_stock_count": 32,
+            "return_sample_count": 590,
+            "estimated_tracking_error": 0.00445078905851603,
+            "estimated_top10_recall": 1.0,
+            "estimated_industry_correlation": null
+          },
+          "metrics": {
+            "estimated_overall_tracking_error": 0.00445078905851603,
+            "estimated_overall_top10_recall": 1.0,
+            "estimated_overall_industry_correlation": null,
+            "method": "naive_replication",
+            "uses_disclosed_holdings": true,
+            "period_count": 1,
+            "matched_stock_count": 32,
+            "return_sample_count": 590,
+            "backtest_detail_count": 1,
+            "backtest_detail_sample": [
+              {
+                "calc_date": "2026-03-31",
+                "top10_recall": 1.0,
+                "industry_correlation": null,
+                "common_stocks": 32,
+                "simulated_count": 32,
+                "actual_count": 33
+              }
+            ]
+          },
+          "error_message": null,
+          "warnings": []
+        },
+        {
+          "fund_code": "166002",
+          "is_success": true,
+          "estimated_tracking_error": 0.010884,
+          "estimated_top10_recall": 1.0,
+          "estimated_industry_correlation": null,
+          "diagnostics": {
+            "method": "naive_replication",
+            "uses_disclosed_holdings": true,
+            "period_count": 1,
+            "matched_stock_count": 11,
+            "return_sample_count": 3274,
+            "estimated_tracking_error": 0.01088421042052591,
+            "estimated_top10_recall": 1.0,
+            "estimated_industry_correlation": null
+          },
+          "metrics": {
+            "estimated_overall_tracking_error": 0.01088421042052591,
+            "estimated_overall_top10_recall": 1.0,
+            "estimated_overall_industry_correlation": null,
+            "method": "naive_replication",
+            "uses_disclosed_holdings": true,
+            "period_count": 1,
+            "matched_stock_count": 11,
+            "return_sample_count": 3274,
+            "backtest_detail_count": 1,
+            "backtest_detail_sample": [
+              {
+                "calc_date": "2026-03-31",
+                "top10_recall": 1.0,
+                "industry_correlation": null,
+                "common_stocks": 11,
+                "simulated_count": 11,
+                "actual_count": 11
+              }
+            ]
+          },
+          "error_message": null,
+          "warnings": []
+        },
+        {
+          "fund_code": "450002",
+          "is_success": true,
+          "estimated_tracking_error": 0.004713,
+          "estimated_top10_recall": 1.0,
+          "estimated_industry_correlation": null,
+          "diagnostics": {
+            "method": "naive_replication",
+            "uses_disclosed_holdings": true,
+            "period_count": 1,
+            "matched_stock_count": 10,
+            "return_sample_count": 590,
+            "estimated_tracking_error": 0.004712624646697035,
+            "estimated_top10_recall": 1.0,
+            "estimated_industry_correlation": null
+          },
+          "metrics": {
+            "estimated_overall_tracking_error": 0.004712624646697035,
+            "estimated_overall_top10_recall": 1.0,
+            "estimated_overall_industry_correlation": null,
+            "method": "naive_replication",
+            "uses_disclosed_holdings": true,
+            "period_count": 1,
+            "matched_stock_count": 10,
+            "return_sample_count": 590,
+            "backtest_detail_count": 1,
+            "backtest_detail_sample": [
+              {
+                "calc_date": "2026-03-31",
+                "top10_recall": 1.0,
+                "industry_correlation": null,
+                "common_stocks": 10,
+                "simulated_count": 10,
+                "actual_count": 10
+              }
+            ]
+          },
+          "error_message": null,
+          "warnings": []
+        },
+        {
+          "fund_code": "519736",
+          "is_success": true,
+          "estimated_tracking_error": 0.008045,
+          "estimated_top10_recall": 1.0,
+          "estimated_industry_correlation": null,
+          "diagnostics": {
+            "method": "naive_replication",
+            "uses_disclosed_holdings": true,
+            "period_count": 1,
+            "matched_stock_count": 11,
+            "return_sample_count": 590,
+            "estimated_tracking_error": 0.008044828386333287,
+            "estimated_top10_recall": 1.0,
+            "estimated_industry_correlation": null
+          },
+          "metrics": {
+            "estimated_overall_tracking_error": 0.008044828386333287,
+            "estimated_overall_top10_recall": 1.0,
+            "estimated_overall_industry_correlation": null,
+            "method": "naive_replication",
+            "uses_disclosed_holdings": true,
+            "period_count": 1,
+            "matched_stock_count": 11,
+            "return_sample_count": 590,
+            "backtest_detail_count": 1,
+            "backtest_detail_sample": [
+              {
+                "calc_date": "2026-03-31",
+                "top10_recall": 1.0,
+                "industry_correlation": null,
+                "common_stocks": 11,
+                "simulated_count": 11,
+                "actual_count": 11
+              }
+            ]
+          },
+          "error_message": null,
+          "warnings": []
+        },
+        {
+          "fund_code": "000697",
+          "is_success": true,
+          "estimated_tracking_error": 0.017387,
+          "estimated_top10_recall": 1.0,
+          "estimated_industry_correlation": null,
+          "diagnostics": {
+            "method": "naive_replication",
+            "uses_disclosed_holdings": true,
+            "period_count": 1,
+            "matched_stock_count": 11,
+            "return_sample_count": 2669,
+            "estimated_tracking_error": 0.017386740163377573,
+            "estimated_top10_recall": 1.0,
+            "estimated_industry_correlation": null
+          },
+          "metrics": {
+            "estimated_overall_tracking_error": 0.017386740163377573,
+            "estimated_overall_top10_recall": 1.0,
+            "estimated_overall_industry_correlation": null,
+            "method": "naive_replication",
+            "uses_disclosed_holdings": true,
+            "period_count": 1,
+            "matched_stock_count": 11,
+            "return_sample_count": 2669,
+            "backtest_detail_count": 1,
+            "backtest_detail_sample": [
+              {
+                "calc_date": "2026-03-31",
+                "top10_recall": 1.0,
+                "industry_correlation": null,
+                "common_stocks": 11,
+                "simulated_count": 11,
+                "actual_count": 11
+              }
+            ]
+          },
+          "error_message": null,
+          "warnings": []
+        },
+        {
+          "fund_code": "001071",
+          "is_success": true,
+          "estimated_tracking_error": 0.014828,
+          "estimated_top10_recall": 1.0,
+          "estimated_industry_correlation": null,
+          "diagnostics": {
+            "method": "naive_replication",
+            "uses_disclosed_holdings": true,
+            "period_count": 1,
+            "matched_stock_count": 16,
+            "return_sample_count": 2519,
+            "estimated_tracking_error": 0.014827846584742465,
+            "estimated_top10_recall": 1.0,
+            "estimated_industry_correlation": null
+          },
+          "metrics": {
+            "estimated_overall_tracking_error": 0.014827846584742465,
+            "estimated_overall_top10_recall": 1.0,
+            "estimated_overall_industry_correlation": null,
+            "method": "naive_replication",
+            "uses_disclosed_holdings": true,
+            "period_count": 1,
+            "matched_stock_count": 16,
+            "return_sample_count": 2519,
+            "backtest_detail_count": 1,
+            "backtest_detail_sample": [
+              {
+                "calc_date": "2026-03-31",
+                "top10_recall": 1.0,
+                "industry_correlation": null,
+                "common_stocks": 16,
+                "simulated_count": 16,
+                "actual_count": 16
+              }
+            ]
+          },
+          "error_message": null,
+          "warnings": []
+        },
+        {
+          "fund_code": "001938",
+          "is_success": true,
+          "estimated_tracking_error": 0.012153,
+          "estimated_top10_recall": 1.0,
+          "estimated_industry_correlation": null,
+          "diagnostics": {
+            "method": "naive_replication",
+            "uses_disclosed_holdings": true,
+            "period_count": 1,
+            "matched_stock_count": 16,
+            "return_sample_count": 2418,
+            "estimated_tracking_error": 0.012153325841006165,
+            "estimated_top10_recall": 1.0,
+            "estimated_industry_correlation": null
+          },
+          "metrics": {
+            "estimated_overall_tracking_error": 0.012153325841006165,
+            "estimated_overall_top10_recall": 1.0,
+            "estimated_overall_industry_correlation": null,
+            "method": "naive_replication",
+            "uses_disclosed_holdings": true,
+            "period_count": 1,
+            "matched_stock_count": 16,
+            "return_sample_count": 2418,
+            "backtest_detail_count": 1,
+            "backtest_detail_sample": [
+              {
+                "calc_date": "2026-03-31",
+                "top10_recall": 1.0,
+                "industry_correlation": null,
+                "common_stocks": 16,
+                "simulated_count": 16,
+                "actual_count": 16
+              }
+            ]
+          },
+          "error_message": null,
+          "warnings": []
+        },
+        {
+          "fund_code": "003095",
+          "is_success": true,
+          "estimated_tracking_error": 0.005685,
+          "estimated_top10_recall": 1.0,
+          "estimated_industry_correlation": null,
+          "diagnostics": {
+            "method": "naive_replication",
+            "uses_disclosed_holdings": true,
+            "period_count": 1,
+            "matched_stock_count": 24,
+            "return_sample_count": 590,
+            "estimated_tracking_error": 0.0056853710695243705,
+            "estimated_top10_recall": 1.0,
+            "estimated_industry_correlation": null
+          },
+          "metrics": {
+            "estimated_overall_tracking_error": 0.0056853710695243705,
+            "estimated_overall_top10_recall": 1.0,
+            "estimated_overall_industry_correlation": null,
+            "method": "naive_replication",
+            "uses_disclosed_holdings": true,
+            "period_count": 1,
+            "matched_stock_count": 24,
+            "return_sample_count": 590,
+            "backtest_detail_count": 1,
+            "backtest_detail_sample": [
+              {
+                "calc_date": "2026-03-31",
+                "top10_recall": 1.0,
+                "industry_correlation": null,
+                "common_stocks": 24,
+                "simulated_count": 24,
+                "actual_count": 24
+              }
+            ]
+          },
+          "error_message": null,
+          "warnings": []
+        },
+        {
+          "fund_code": "004851",
+          "is_success": true,
+          "estimated_tracking_error": 0.008953,
+          "estimated_top10_recall": 1.0,
+          "estimated_industry_correlation": null,
+          "diagnostics": {
+            "method": "naive_replication",
+            "uses_disclosed_holdings": true,
+            "period_count": 1,
+            "matched_stock_count": 16,
+            "return_sample_count": 590,
+            "estimated_tracking_error": 0.008952856998527048,
+            "estimated_top10_recall": 1.0,
+            "estimated_industry_correlation": null
+          },
+          "metrics": {
+            "estimated_overall_tracking_error": 0.008952856998527048,
+            "estimated_overall_top10_recall": 1.0,
+            "estimated_overall_industry_correlation": null,
+            "method": "naive_replication",
+            "uses_disclosed_holdings": true,
+            "period_count": 1,
+            "matched_stock_count": 16,
+            "return_sample_count": 590,
+            "backtest_detail_count": 1,
+            "backtest_detail_sample": [
+              {
+                "calc_date": "2026-03-31",
+                "top10_recall": 1.0,
+                "industry_correlation": null,
+                "common_stocks": 16,
+                "simulated_count": 16,
+                "actual_count": 16
+              }
+            ]
+          },
+          "error_message": null,
+          "warnings": []
+        },
+        {
+          "fund_code": "005267",
+          "is_success": true,
+          "estimated_tracking_error": 0.007622,
+          "estimated_top10_recall": 0.8,
+          "estimated_industry_correlation": null,
+          "diagnostics": {
+            "method": "naive_replication",
+            "uses_disclosed_holdings": true,
+            "period_count": 1,
+            "matched_stock_count": 8,
+            "return_sample_count": 590,
+            "estimated_tracking_error": 0.007621774920325187,
+            "estimated_top10_recall": 0.8,
+            "estimated_industry_correlation": null
+          },
+          "metrics": {
+            "estimated_overall_tracking_error": 0.007621774920325187,
+            "estimated_overall_top10_recall": 0.8,
+            "estimated_overall_industry_correlation": null,
+            "method": "naive_replication",
+            "uses_disclosed_holdings": true,
+            "period_count": 1,
+            "matched_stock_count": 8,
+            "return_sample_count": 590,
+            "backtest_detail_count": 1,
+            "backtest_detail_sample": [
+              {
+                "calc_date": "2026-03-31",
+                "top10_recall": 0.8,
+                "industry_correlation": null,
+                "common_stocks": 8,
+                "simulated_count": 8,
+                "actual_count": 10
+              }
+            ]
+          },
+          "error_message": null,
+          "warnings": []
+        },
+        {
+          "fund_code": "006228",
+          "is_success": true,
+          "estimated_tracking_error": 0.010181,
+          "estimated_top10_recall": 0.6,
+          "estimated_industry_correlation": null,
+          "diagnostics": {
+            "method": "naive_replication",
+            "uses_disclosed_holdings": true,
+            "period_count": 1,
+            "matched_stock_count": 6,
+            "return_sample_count": 590,
+            "estimated_tracking_error": 0.010181364989369817,
+            "estimated_top10_recall": 0.6,
+            "estimated_industry_correlation": null
+          },
+          "metrics": {
+            "estimated_overall_tracking_error": 0.010181364989369817,
+            "estimated_overall_top10_recall": 0.6,
+            "estimated_overall_industry_correlation": null,
+            "method": "naive_replication",
+            "uses_disclosed_holdings": true,
+            "period_count": 1,
+            "matched_stock_count": 6,
+            "return_sample_count": 590,
+            "backtest_detail_count": 1,
+            "backtest_detail_sample": [
+              {
+                "calc_date": "2026-03-31",
+                "top10_recall": 0.6,
+                "industry_correlation": null,
+                "common_stocks": 6,
+                "simulated_count": 6,
+                "actual_count": 11
+              }
+            ]
+          },
+          "error_message": null,
+          "warnings": []
+        },
+        {
+          "fund_code": "110022",
+          "is_success": true,
+          "estimated_tracking_error": 0.003793,
+          "estimated_top10_recall": 1.0,
+          "estimated_industry_correlation": null,
+          "diagnostics": {
+            "method": "naive_replication",
+            "uses_disclosed_holdings": true,
+            "period_count": 1,
+            "matched_stock_count": 13,
+            "return_sample_count": 590,
+            "estimated_tracking_error": 0.003792778187810181,
+            "estimated_top10_recall": 1.0,
+            "estimated_industry_correlation": null
+          },
+          "metrics": {
+            "estimated_overall_tracking_error": 0.003792778187810181,
+            "estimated_overall_top10_recall": 1.0,
+            "estimated_overall_industry_correlation": null,
+            "method": "naive_replication",
+            "uses_disclosed_holdings": true,
+            "period_count": 1,
+            "matched_stock_count": 13,
+            "return_sample_count": 590,
+            "backtest_detail_count": 1,
+            "backtest_detail_sample": [
+              {
+                "calc_date": "2026-03-31",
+                "top10_recall": 1.0,
+                "industry_correlation": null,
+                "common_stocks": 13,
+                "simulated_count": 13,
+                "actual_count": 13
+              }
+            ]
+          },
+          "error_message": null,
+          "warnings": []
+        },
+        {
+          "fund_code": "340007",
+          "is_success": true,
+          "estimated_tracking_error": 0.014457,
+          "estimated_top10_recall": 1.0,
+          "estimated_industry_correlation": null,
+          "diagnostics": {
+            "method": "naive_replication",
+            "uses_disclosed_holdings": true,
+            "period_count": 1,
+            "matched_stock_count": 10,
+            "return_sample_count": 3274,
+            "estimated_tracking_error": 0.014457475414048822,
+            "estimated_top10_recall": 1.0,
+            "estimated_industry_correlation": null
+          },
+          "metrics": {
+            "estimated_overall_tracking_error": 0.014457475414048822,
+            "estimated_overall_top10_recall": 1.0,
+            "estimated_overall_industry_correlation": null,
+            "method": "naive_replication",
+            "uses_disclosed_holdings": true,
+            "period_count": 1,
+            "matched_stock_count": 10,
+            "return_sample_count": 3274,
+            "backtest_detail_count": 1,
+            "backtest_detail_sample": [
+              {
+                "calc_date": "2026-03-31",
+                "top10_recall": 1.0,
+                "industry_correlation": null,
+                "common_stocks": 10,
+                "simulated_count": 10,
+                "actual_count": 10
+              }
+            ]
+          },
+          "error_message": null,
+          "warnings": []
+        },
+        {
+          "fund_code": "519712",
+          "is_success": true,
+          "estimated_tracking_error": 0.01277,
+          "estimated_top10_recall": 1.0,
+          "estimated_industry_correlation": null,
+          "diagnostics": {
+            "method": "naive_replication",
+            "uses_disclosed_holdings": true,
+            "period_count": 1,
+            "matched_stock_count": 10,
+            "return_sample_count": 3354,
+            "estimated_tracking_error": 0.01276991846847427,
+            "estimated_top10_recall": 1.0,
+            "estimated_industry_correlation": null
+          },
+          "metrics": {
+            "estimated_overall_tracking_error": 0.01276991846847427,
+            "estimated_overall_top10_recall": 1.0,
+            "estimated_overall_industry_correlation": null,
+            "method": "naive_replication",
+            "uses_disclosed_holdings": true,
+            "period_count": 1,
+            "matched_stock_count": 10,
+            "return_sample_count": 3354,
+            "backtest_detail_count": 1,
+            "backtest_detail_sample": [
+              {
+                "calc_date": "2026-03-31",
+                "top10_recall": 1.0,
+                "industry_correlation": null,
+                "common_stocks": 10,
+                "simulated_count": 10,
+                "actual_count": 10
+              }
+            ]
+          },
+          "error_message": null,
+          "warnings": []
+        },
+        {
+          "fund_code": "540003",
+          "is_success": true,
+          "estimated_tracking_error": 0.010833,
+          "estimated_top10_recall": 1.0,
+          "estimated_industry_correlation": null,
+          "diagnostics": {
+            "method": "naive_replication",
+            "uses_disclosed_holdings": true,
+            "period_count": 1,
+            "matched_stock_count": 11,
+            "return_sample_count": 590,
+            "estimated_tracking_error": 0.0108326778131261,
+            "estimated_top10_recall": 1.0,
+            "estimated_industry_correlation": null
+          },
+          "metrics": {
+            "estimated_overall_tracking_error": 0.0108326778131261,
+            "estimated_overall_top10_recall": 1.0,
+            "estimated_overall_industry_correlation": null,
+            "method": "naive_replication",
+            "uses_disclosed_holdings": true,
+            "period_count": 1,
+            "matched_stock_count": 11,
+            "return_sample_count": 590,
+            "backtest_detail_count": 1,
+            "backtest_detail_sample": [
+              {
+                "calc_date": "2026-03-31",
+                "top10_recall": 1.0,
+                "industry_correlation": null,
+                "common_stocks": 11,
+                "simulated_count": 11,
+                "actual_count": 11
+              }
+            ]
+          },
+          "error_message": null,
+          "warnings": []
+        },
+        {
+          "fund_code": "570001",
+          "is_success": true,
+          "estimated_tracking_error": 0.011361,
+          "estimated_top10_recall": 1.0,
+          "estimated_industry_correlation": null,
+          "diagnostics": {
+            "method": "naive_replication",
+            "uses_disclosed_holdings": true,
+            "period_count": 1,
+            "matched_stock_count": 11,
+            "return_sample_count": 590,
+            "estimated_tracking_error": 0.011361408936348478,
+            "estimated_top10_recall": 1.0,
+            "estimated_industry_correlation": null
+          },
+          "metrics": {
+            "estimated_overall_tracking_error": 0.011361408936348478,
+            "estimated_overall_top10_recall": 1.0,
+            "estimated_overall_industry_correlation": null,
+            "method": "naive_replication",
+            "uses_disclosed_holdings": true,
+            "period_count": 1,
+            "matched_stock_count": 11,
+            "return_sample_count": 590,
+            "backtest_detail_count": 1,
+            "backtest_detail_sample": [
+              {
+                "calc_date": "2026-03-31",
+                "top10_recall": 1.0,
+                "industry_correlation": null,
+                "common_stocks": 11,
+                "simulated_count": 11,
+                "actual_count": 11
+              }
+            ]
+          },
+          "error_message": null,
+          "warnings": []
+        },
+        {
+          "fund_code": "000409",
+          "is_success": true,
+          "estimated_tracking_error": 0.011971,
+          "estimated_top10_recall": 1.0,
+          "estimated_industry_correlation": null,
+          "diagnostics": {
+            "method": "naive_replication",
+            "uses_disclosed_holdings": true,
+            "period_count": 1,
+            "matched_stock_count": 10,
+            "return_sample_count": 590,
+            "estimated_tracking_error": 0.011971009500186992,
+            "estimated_top10_recall": 1.0,
+            "estimated_industry_correlation": null
+          },
+          "metrics": {
+            "estimated_overall_tracking_error": 0.011971009500186992,
+            "estimated_overall_top10_recall": 1.0,
+            "estimated_overall_industry_correlation": null,
+            "method": "naive_replication",
+            "uses_disclosed_holdings": true,
+            "period_count": 1,
+            "matched_stock_count": 10,
+            "return_sample_count": 590,
+            "backtest_detail_count": 1,
+            "backtest_detail_sample": [
+              {
+                "calc_date": "2026-03-31",
+                "top10_recall": 1.0,
+                "industry_correlation": null,
+                "common_stocks": 10,
+                "simulated_count": 10,
+                "actual_count": 10
+              }
+            ]
+          },
+          "error_message": null,
+          "warnings": []
+        },
+        {
+          "fund_code": "001480",
+          "is_success": true,
+          "estimated_tracking_error": 0.017099,
+          "estimated_top10_recall": 1.0,
+          "estimated_industry_correlation": null,
+          "diagnostics": {
+            "method": "naive_replication",
+            "uses_disclosed_holdings": true,
+            "period_count": 1,
+            "matched_stock_count": 10,
+            "return_sample_count": 2485,
+            "estimated_tracking_error": 0.01709878541231941,
+            "estimated_top10_recall": 1.0,
+            "estimated_industry_correlation": null
+          },
+          "metrics": {
+            "estimated_overall_tracking_error": 0.01709878541231941,
+            "estimated_overall_top10_recall": 1.0,
+            "estimated_overall_industry_correlation": null,
+            "method": "naive_replication",
+            "uses_disclosed_holdings": true,
+            "period_count": 1,
+            "matched_stock_count": 10,
+            "return_sample_count": 2485,
+            "backtest_detail_count": 1,
+            "backtest_detail_sample": [
+              {
+                "calc_date": "2026-03-31",
+                "top10_recall": 1.0,
+                "industry_correlation": null,
+                "common_stocks": 10,
+                "simulated_count": 10,
+                "actual_count": 10
+              }
+            ]
+          },
+          "error_message": null,
+          "warnings": []
+        },
+        {
+          "fund_code": "519772",
+          "is_success": true,
+          "estimated_tracking_error": 0.00824,
+          "estimated_top10_recall": 1.0,
+          "estimated_industry_correlation": null,
+          "diagnostics": {
+            "method": "naive_replication",
+            "uses_disclosed_holdings": true,
+            "period_count": 1,
+            "matched_stock_count": 12,
+            "return_sample_count": 590,
+            "estimated_tracking_error": 0.008239948456329478,
+            "estimated_top10_recall": 1.0,
+            "estimated_industry_correlation": null
+          },
+          "metrics": {
+            "estimated_overall_tracking_error": 0.008239948456329478,
+            "estimated_overall_top10_recall": 1.0,
+            "estimated_overall_industry_correlation": null,
+            "method": "naive_replication",
+            "uses_disclosed_holdings": true,
+            "period_count": 1,
+            "matched_stock_count": 12,
+            "return_sample_count": 590,
+            "backtest_detail_count": 1,
+            "backtest_detail_sample": [
+              {
+                "calc_date": "2026-03-31",
+                "top10_recall": 1.0,
+                "industry_correlation": null,
+                "common_stocks": 12,
+                "simulated_count": 12,
+                "actual_count": 12
+              }
+            ]
+          },
+          "error_message": null,
+          "warnings": []
+        },
+        {
+          "fund_code": "000978",
+          "is_success": true,
+          "estimated_tracking_error": 0.009545,
+          "estimated_top10_recall": 1.0,
+          "estimated_industry_correlation": null,
+          "diagnostics": {
+            "method": "naive_replication",
+            "uses_disclosed_holdings": true,
+            "period_count": 1,
+            "matched_stock_count": 10,
+            "return_sample_count": 590,
+            "estimated_tracking_error": 0.009545409075900763,
+            "estimated_top10_recall": 1.0,
+            "estimated_industry_correlation": null
+          },
+          "metrics": {
+            "estimated_overall_tracking_error": 0.009545409075900763,
+            "estimated_overall_top10_recall": 1.0,
+            "estimated_overall_industry_correlation": null,
+            "method": "naive_replication",
+            "uses_disclosed_holdings": true,
+            "period_count": 1,
+            "matched_stock_count": 10,
+            "return_sample_count": 590,
+            "backtest_detail_count": 1,
+            "backtest_detail_sample": [
+              {
+                "calc_date": "2026-03-31",
+                "top10_recall": 1.0,
+                "industry_correlation": null,
+                "common_stocks": 10,
+                "simulated_count": 10,
+                "actual_count": 10
+              }
+            ]
+          },
+          "error_message": null,
+          "warnings": []
+        },
+        {
+          "fund_code": "001810",
+          "is_success": true,
+          "estimated_tracking_error": 0.008934,
+          "estimated_top10_recall": 1.0,
+          "estimated_industry_correlation": null,
+          "diagnostics": {
+            "method": "naive_replication",
+            "uses_disclosed_holdings": true,
+            "period_count": 1,
+            "matched_stock_count": 11,
+            "return_sample_count": 590,
+            "estimated_tracking_error": 0.008934120751363713,
+            "estimated_top10_recall": 1.0,
+            "estimated_industry_correlation": null
+          },
+          "metrics": {
+            "estimated_overall_tracking_error": 0.008934120751363713,
+            "estimated_overall_top10_recall": 1.0,
+            "estimated_overall_industry_correlation": null,
+            "method": "naive_replication",
+            "uses_disclosed_holdings": true,
+            "period_count": 1,
+            "matched_stock_count": 11,
+            "return_sample_count": 590,
+            "backtest_detail_count": 1,
+            "backtest_detail_sample": [
+              {
+                "calc_date": "2026-03-31",
+                "top10_recall": 1.0,
+                "industry_correlation": null,
+                "common_stocks": 11,
+                "simulated_count": 11,
+                "actual_count": 11
+              }
+            ]
+          },
+          "error_message": null,
+          "warnings": []
+        }
+      ],
+      "overall_conclusion": "pass",
+      "warnings": [],
+      "conclusion_status": "estimated"
+    },
+    "dynamic_attribution": {
+      "experiment_summary": {
+        "experiment_id": 5300124510294768337,
+        "experiment_name": "p2b-validation-dynamic_attribution-2026-06-16",
+        "algorithm_name": "dynamic_attribution",
+        "algorithm_version": "0.1.0",
+        "status": "completed",
+        "fund_count": 30,
+        "success_count": 30,
+        "failure_count": 0
+      },
+      "aggregate_stats": {
+        "mean_estimated_tracking_error": null,
+        "mean_estimated_top10_recall": null,
+        "mean_estimated_industry_correlation": null,
+        "success_rate": 1.0
+      },
+      "per_fund": [
+        {
+          "fund_code": "000001",
+          "is_success": true,
+          "estimated_tracking_error": null,
+          "estimated_top10_recall": null,
+          "estimated_industry_correlation": null,
+          "diagnostics": {
+            "method": "BHB",
+            "period_count": 1,
+            "uses_proxy_benchmark": true,
+            "uses_proxy_sector_returns": true,
+            "estimated_total_portfolio_return": 0.290837,
+            "estimated_total_benchmark_return": 0.261754,
+            "estimated_total_residual": -1e-06,
+            "normalized_report_count": 1
+          },
+          "metrics": {
+            "estimated_total_portfolio_return": 0.290837,
+            "estimated_total_benchmark_return": 0.261754,
+            "estimated_total_allocation_effect": 0.0,
+            "estimated_total_selection_effect": 0.029084,
+            "estimated_total_interaction_effect": 0.0,
+            "estimated_total_residual": -1e-06,
+            "period_count": 1,
+            "method": "BHB",
+            "uses_proxy_benchmark": true,
+            "uses_proxy_sector_returns": true,
+            "normalized_weight_sum_by_report": {
+              "2026-03-31": 1.0
+            }
+          },
+          "error_message": null,
+          "warnings": [
+            "P2B 近似：行业收益和基准收益使用基金收益代理，不能作为正式归因结论"
+          ]
+        },
+        {
+          "fund_code": "020005",
+          "is_success": true,
+          "estimated_tracking_error": null,
+          "estimated_top10_recall": null,
+          "estimated_industry_correlation": null,
+          "diagnostics": {
+            "method": "BHB",
+            "period_count": 1,
+            "uses_proxy_benchmark": true,
+            "uses_proxy_sector_returns": true,
+            "estimated_total_portfolio_return": 0.144752,
+            "estimated_total_benchmark_return": 0.130277,
+            "estimated_total_residual": 0.0,
+            "normalized_report_count": 1
+          },
+          "metrics": {
+            "estimated_total_portfolio_return": 0.144752,
+            "estimated_total_benchmark_return": 0.130277,
+            "estimated_total_allocation_effect": 0.0,
+            "estimated_total_selection_effect": 0.014475,
+            "estimated_total_interaction_effect": 0.0,
+            "estimated_total_residual": 0.0,
+            "period_count": 1,
+            "method": "BHB",
+            "uses_proxy_benchmark": true,
+            "uses_proxy_sector_returns": true,
+            "normalized_weight_sum_by_report": {
+              "2026-03-31": 1.0
+            }
+          },
+          "error_message": null,
+          "warnings": [
+            "P2B 近似：行业收益和基准收益使用基金收益代理，不能作为正式归因结论"
+          ]
+        },
+        {
+          "fund_code": "070002",
+          "is_success": true,
+          "estimated_tracking_error": null,
+          "estimated_top10_recall": null,
+          "estimated_industry_correlation": null,
+          "diagnostics": {
+            "method": "BHB",
+            "period_count": 1,
+            "uses_proxy_benchmark": true,
+            "uses_proxy_sector_returns": true,
+            "estimated_total_portfolio_return": 0.14623,
+            "estimated_total_benchmark_return": 0.131607,
+            "estimated_total_residual": 0.0,
+            "normalized_report_count": 1
+          },
+          "metrics": {
+            "estimated_total_portfolio_return": 0.14623,
+            "estimated_total_benchmark_return": 0.131607,
+            "estimated_total_allocation_effect": 0.0,
+            "estimated_total_selection_effect": 0.014623,
+            "estimated_total_interaction_effect": 0.0,
+            "estimated_total_residual": 0.0,
+            "period_count": 1,
+            "method": "BHB",
+            "uses_proxy_benchmark": true,
+            "uses_proxy_sector_returns": true,
+            "normalized_weight_sum_by_report": {
+              "2026-03-31": 1.0
+            }
+          },
+          "error_message": null,
+          "warnings": [
+            "P2B 近似：行业收益和基准收益使用基金收益代理，不能作为正式归因结论"
+          ]
+        },
+        {
+          "fund_code": "110009",
+          "is_success": true,
+          "estimated_tracking_error": null,
+          "estimated_top10_recall": null,
+          "estimated_industry_correlation": null,
+          "diagnostics": {
+            "method": "BHB",
+            "period_count": 1,
+            "uses_proxy_benchmark": true,
+            "uses_proxy_sector_returns": true,
+            "estimated_total_portfolio_return": 0.164147,
+            "estimated_total_benchmark_return": 0.147732,
+            "estimated_total_residual": 0.0,
+            "normalized_report_count": 1
+          },
+          "metrics": {
+            "estimated_total_portfolio_return": 0.164147,
+            "estimated_total_benchmark_return": 0.147732,
+            "estimated_total_allocation_effect": 0.0,
+            "estimated_total_selection_effect": 0.016415,
+            "estimated_total_interaction_effect": 0.0,
+            "estimated_total_residual": 0.0,
+            "period_count": 1,
+            "method": "BHB",
+            "uses_proxy_benchmark": true,
+            "uses_proxy_sector_returns": true,
+            "normalized_weight_sum_by_report": {
+              "2026-03-31": 1.0
+            }
+          },
+          "error_message": null,
+          "warnings": [
+            "P2B 近似：行业收益和基准收益使用基金收益代理，不能作为正式归因结论"
+          ]
+        },
+        {
+          "fund_code": "163406",
+          "is_success": true,
+          "estimated_tracking_error": null,
+          "estimated_top10_recall": null,
+          "estimated_industry_correlation": null,
+          "diagnostics": {
+            "method": "BHB",
+            "period_count": 1,
+            "uses_proxy_benchmark": true,
+            "uses_proxy_sector_returns": true,
+            "estimated_total_portfolio_return": 0.219952,
+            "estimated_total_benchmark_return": 0.197957,
+            "estimated_total_residual": -0.0,
+            "normalized_report_count": 1
+          },
+          "metrics": {
+            "estimated_total_portfolio_return": 0.219952,
+            "estimated_total_benchmark_return": 0.197957,
+            "estimated_total_allocation_effect": 0.0,
+            "estimated_total_selection_effect": 0.021995,
+            "estimated_total_interaction_effect": 0.0,
+            "estimated_total_residual": -0.0,
+            "period_count": 1,
+            "method": "BHB",
+            "uses_proxy_benchmark": true,
+            "uses_proxy_sector_returns": true,
+            "normalized_weight_sum_by_report": {
+              "2026-03-31": 1.0
+            }
+          },
+          "error_message": null,
+          "warnings": [
+            "P2B 近似：行业收益和基准收益使用基金收益代理，不能作为正式归因结论"
+          ]
+        },
+        {
+          "fund_code": "260108",
+          "is_success": true,
+          "estimated_tracking_error": null,
+          "estimated_top10_recall": null,
+          "estimated_industry_correlation": null,
+          "diagnostics": {
+            "method": "BHB",
+            "period_count": 1,
+            "uses_proxy_benchmark": true,
+            "uses_proxy_sector_returns": true,
+            "estimated_total_portfolio_return": -0.073368,
+            "estimated_total_benchmark_return": -0.066031,
+            "estimated_total_residual": -0.0,
+            "normalized_report_count": 1
+          },
+          "metrics": {
+            "estimated_total_portfolio_return": -0.073368,
+            "estimated_total_benchmark_return": -0.066031,
+            "estimated_total_allocation_effect": 0.0,
+            "estimated_total_selection_effect": -0.007337,
+            "estimated_total_interaction_effect": 0.0,
+            "estimated_total_residual": -0.0,
+            "period_count": 1,
+            "method": "BHB",
+            "uses_proxy_benchmark": true,
+            "uses_proxy_sector_returns": true,
+            "normalized_weight_sum_by_report": {
+              "2026-03-31": 1.0
+            }
+          },
+          "error_message": null,
+          "warnings": [
+            "P2B 近似：行业收益和基准收益使用基金收益代理，不能作为正式归因结论"
+          ]
+        },
+        {
+          "fund_code": "519068",
+          "is_success": true,
+          "estimated_tracking_error": null,
+          "estimated_top10_recall": null,
+          "estimated_industry_correlation": null,
+          "diagnostics": {
+            "method": "BHB",
+            "period_count": 1,
+            "uses_proxy_benchmark": true,
+            "uses_proxy_sector_returns": true,
+            "estimated_total_portfolio_return": 0.199843,
+            "estimated_total_benchmark_return": 0.179858,
+            "estimated_total_residual": 1e-06,
+            "normalized_report_count": 1
+          },
+          "metrics": {
+            "estimated_total_portfolio_return": 0.199843,
+            "estimated_total_benchmark_return": 0.179858,
+            "estimated_total_allocation_effect": 0.0,
+            "estimated_total_selection_effect": 0.019984,
+            "estimated_total_interaction_effect": 0.0,
+            "estimated_total_residual": 1e-06,
+            "period_count": 1,
+            "method": "BHB",
+            "uses_proxy_benchmark": true,
+            "uses_proxy_sector_returns": true,
+            "normalized_weight_sum_by_report": {
+              "2026-03-31": 1.0
+            }
+          },
+          "error_message": null,
+          "warnings": [
+            "P2B 近似：行业收益和基准收益使用基金收益代理，不能作为正式归因结论"
+          ]
+        },
+        {
+          "fund_code": "002939",
+          "is_success": true,
+          "estimated_tracking_error": null,
+          "estimated_top10_recall": null,
+          "estimated_industry_correlation": null,
+          "diagnostics": {
+            "method": "BHB",
+            "period_count": 1,
+            "uses_proxy_benchmark": true,
+            "uses_proxy_sector_returns": true,
+            "estimated_total_portfolio_return": 0.346674,
+            "estimated_total_benchmark_return": 0.312006,
+            "estimated_total_residual": 1e-06,
+            "normalized_report_count": 1
+          },
+          "metrics": {
+            "estimated_total_portfolio_return": 0.346674,
+            "estimated_total_benchmark_return": 0.312006,
+            "estimated_total_allocation_effect": 0.0,
+            "estimated_total_selection_effect": 0.034667,
+            "estimated_total_interaction_effect": 0.0,
+            "estimated_total_residual": 1e-06,
+            "period_count": 1,
+            "method": "BHB",
+            "uses_proxy_benchmark": true,
+            "uses_proxy_sector_returns": true,
+            "normalized_weight_sum_by_report": {
+              "2026-03-31": 1.0
+            }
+          },
+          "error_message": null,
+          "warnings": [
+            "P2B 近似：行业收益和基准收益使用基金收益代理，不能作为正式归因结论"
+          ]
+        },
+        {
+          "fund_code": "005827",
+          "is_success": true,
+          "estimated_tracking_error": null,
+          "estimated_top10_recall": null,
+          "estimated_industry_correlation": null,
+          "diagnostics": {
+            "method": "BHB",
+            "period_count": 1,
+            "uses_proxy_benchmark": true,
+            "uses_proxy_sector_returns": true,
+            "estimated_total_portfolio_return": -0.120309,
+            "estimated_total_benchmark_return": -0.108278,
+            "estimated_total_residual": -0.0,
+            "normalized_report_count": 1
+          },
+          "metrics": {
+            "estimated_total_portfolio_return": -0.120309,
+            "estimated_total_benchmark_return": -0.108278,
+            "estimated_total_allocation_effect": 0.0,
+            "estimated_total_selection_effect": -0.012031,
+            "estimated_total_interaction_effect": 0.0,
+            "estimated_total_residual": -0.0,
+            "period_count": 1,
+            "method": "BHB",
+            "uses_proxy_benchmark": true,
+            "uses_proxy_sector_returns": true,
+            "normalized_weight_sum_by_report": {
+              "2026-03-31": 1.0
+            }
+          },
+          "error_message": null,
+          "warnings": [
+            "P2B 近似：行业收益和基准收益使用基金收益代理，不能作为正式归因结论"
+          ]
+        },
+        {
+          "fund_code": "161005",
+          "is_success": true,
+          "estimated_tracking_error": null,
+          "estimated_top10_recall": null,
+          "estimated_industry_correlation": null,
+          "diagnostics": {
+            "method": "BHB",
+            "period_count": 1,
+            "uses_proxy_benchmark": true,
+            "uses_proxy_sector_returns": true,
+            "estimated_total_portfolio_return": 0.102837,
+            "estimated_total_benchmark_return": 0.092553,
+            "estimated_total_residual": -0.0,
+            "normalized_report_count": 1
+          },
+          "metrics": {
+            "estimated_total_portfolio_return": 0.102837,
+            "estimated_total_benchmark_return": 0.092553,
+            "estimated_total_allocation_effect": 0.0,
+            "estimated_total_selection_effect": 0.010284,
+            "estimated_total_interaction_effect": 0.0,
+            "estimated_total_residual": -0.0,
+            "period_count": 1,
+            "method": "BHB",
+            "uses_proxy_benchmark": true,
+            "uses_proxy_sector_returns": true,
+            "normalized_weight_sum_by_report": {
+              "2026-03-31": 1.0
+            }
+          },
+          "error_message": null,
+          "warnings": [
+            "P2B 近似：行业收益和基准收益使用基金收益代理，不能作为正式归因结论"
+          ]
+        },
+        {
+          "fund_code": "166002",
+          "is_success": true,
+          "estimated_tracking_error": null,
+          "estimated_top10_recall": null,
+          "estimated_industry_correlation": null,
+          "diagnostics": {
+            "method": "BHB",
+            "period_count": 1,
+            "uses_proxy_benchmark": true,
+            "uses_proxy_sector_returns": true,
+            "estimated_total_portfolio_return": 0.204054,
+            "estimated_total_benchmark_return": 0.183649,
+            "estimated_total_residual": 0.0,
+            "normalized_report_count": 1
+          },
+          "metrics": {
+            "estimated_total_portfolio_return": 0.204054,
+            "estimated_total_benchmark_return": 0.183649,
+            "estimated_total_allocation_effect": 0.0,
+            "estimated_total_selection_effect": 0.020405,
+            "estimated_total_interaction_effect": 0.0,
+            "estimated_total_residual": 0.0,
+            "period_count": 1,
+            "method": "BHB",
+            "uses_proxy_benchmark": true,
+            "uses_proxy_sector_returns": true,
+            "normalized_weight_sum_by_report": {
+              "2026-03-31": 1.0
+            }
+          },
+          "error_message": null,
+          "warnings": [
+            "P2B 近似：行业收益和基准收益使用基金收益代理，不能作为正式归因结论"
+          ]
+        },
+        {
+          "fund_code": "450002",
+          "is_success": true,
+          "estimated_tracking_error": null,
+          "estimated_top10_recall": null,
+          "estimated_industry_correlation": null,
+          "diagnostics": {
+            "method": "BHB",
+            "period_count": 1,
+            "uses_proxy_benchmark": true,
+            "uses_proxy_sector_returns": true,
+            "estimated_total_portfolio_return": -0.030005,
+            "estimated_total_benchmark_return": -0.027004,
+            "estimated_total_residual": -1e-06,
+            "normalized_report_count": 1
+          },
+          "metrics": {
+            "estimated_total_portfolio_return": -0.030005,
+            "estimated_total_benchmark_return": -0.027004,
+            "estimated_total_allocation_effect": 0.0,
+            "estimated_total_selection_effect": -0.003,
+            "estimated_total_interaction_effect": 0.0,
+            "estimated_total_residual": -1e-06,
+            "period_count": 1,
+            "method": "BHB",
+            "uses_proxy_benchmark": true,
+            "uses_proxy_sector_returns": true,
+            "normalized_weight_sum_by_report": {
+              "2026-03-31": 1.0
+            }
+          },
+          "error_message": null,
+          "warnings": [
+            "P2B 近似：行业收益和基准收益使用基金收益代理，不能作为正式归因结论"
+          ]
+        },
+        {
+          "fund_code": "519736",
+          "is_success": true,
+          "estimated_tracking_error": null,
+          "estimated_top10_recall": null,
+          "estimated_industry_correlation": null,
+          "diagnostics": {
+            "method": "BHB",
+            "period_count": 1,
+            "uses_proxy_benchmark": true,
+            "uses_proxy_sector_returns": true,
+            "estimated_total_portfolio_return": 0.031781,
+            "estimated_total_benchmark_return": 0.028603,
+            "estimated_total_residual": 0.0,
+            "normalized_report_count": 1
+          },
+          "metrics": {
+            "estimated_total_portfolio_return": 0.031781,
+            "estimated_total_benchmark_return": 0.028603,
+            "estimated_total_allocation_effect": 0.0,
+            "estimated_total_selection_effect": 0.003178,
+            "estimated_total_interaction_effect": 0.0,
+            "estimated_total_residual": 0.0,
+            "period_count": 1,
+            "method": "BHB",
+            "uses_proxy_benchmark": true,
+            "uses_proxy_sector_returns": true,
+            "normalized_weight_sum_by_report": {
+              "2026-03-31": 1.0
+            }
+          },
+          "error_message": null,
+          "warnings": [
+            "P2B 近似：行业收益和基准收益使用基金收益代理，不能作为正式归因结论"
+          ]
+        },
+        {
+          "fund_code": "000697",
+          "is_success": true,
+          "estimated_tracking_error": null,
+          "estimated_top10_recall": null,
+          "estimated_industry_correlation": null,
+          "diagnostics": {
+            "method": "BHB",
+            "period_count": 1,
+            "uses_proxy_benchmark": true,
+            "uses_proxy_sector_returns": true,
+            "estimated_total_portfolio_return": 0.569542,
+            "estimated_total_benchmark_return": 0.512587,
+            "estimated_total_residual": 1e-06,
+            "normalized_report_count": 1
+          },
+          "metrics": {
+            "estimated_total_portfolio_return": 0.569542,
+            "estimated_total_benchmark_return": 0.512587,
+            "estimated_total_allocation_effect": 0.0,
+            "estimated_total_selection_effect": 0.056954,
+            "estimated_total_interaction_effect": 0.0,
+            "estimated_total_residual": 1e-06,
+            "period_count": 1,
+            "method": "BHB",
+            "uses_proxy_benchmark": true,
+            "uses_proxy_sector_returns": true,
+            "normalized_weight_sum_by_report": {
+              "2026-03-31": 1.0
+            }
+          },
+          "error_message": null,
+          "warnings": [
+            "P2B 近似：行业收益和基准收益使用基金收益代理，不能作为正式归因结论"
+          ]
+        },
+        {
+          "fund_code": "001071",
+          "is_success": true,
+          "estimated_tracking_error": null,
+          "estimated_top10_recall": null,
+          "estimated_industry_correlation": null,
+          "diagnostics": {
+            "method": "BHB",
+            "period_count": 1,
+            "uses_proxy_benchmark": true,
+            "uses_proxy_sector_returns": true,
+            "estimated_total_portfolio_return": 0.158418,
+            "estimated_total_benchmark_return": 0.142576,
+            "estimated_total_residual": -0.0,
+            "normalized_report_count": 1
+          },
+          "metrics": {
+            "estimated_total_portfolio_return": 0.158418,
+            "estimated_total_benchmark_return": 0.142576,
+            "estimated_total_allocation_effect": 0.0,
+            "estimated_total_selection_effect": 0.015842,
+            "estimated_total_interaction_effect": 0.0,
+            "estimated_total_residual": -0.0,
+            "period_count": 1,
+            "method": "BHB",
+            "uses_proxy_benchmark": true,
+            "uses_proxy_sector_returns": true,
+            "normalized_weight_sum_by_report": {
+              "2026-03-31": 1.0
+            }
+          },
+          "error_message": null,
+          "warnings": [
+            "P2B 近似：行业收益和基准收益使用基金收益代理，不能作为正式归因结论"
+          ]
+        },
+        {
+          "fund_code": "001938",
+          "is_success": true,
+          "estimated_tracking_error": null,
+          "estimated_top10_recall": null,
+          "estimated_industry_correlation": null,
+          "diagnostics": {
+            "method": "BHB",
+            "period_count": 1,
+            "uses_proxy_benchmark": true,
+            "uses_proxy_sector_returns": true,
+            "estimated_total_portfolio_return": 0.12133,
+            "estimated_total_benchmark_return": 0.109197,
+            "estimated_total_residual": -0.0,
+            "normalized_report_count": 1
+          },
+          "metrics": {
+            "estimated_total_portfolio_return": 0.12133,
+            "estimated_total_benchmark_return": 0.109197,
+            "estimated_total_allocation_effect": 0.0,
+            "estimated_total_selection_effect": 0.012133,
+            "estimated_total_interaction_effect": 0.0,
+            "estimated_total_residual": -0.0,
+            "period_count": 1,
+            "method": "BHB",
+            "uses_proxy_benchmark": true,
+            "uses_proxy_sector_returns": true,
+            "normalized_weight_sum_by_report": {
+              "2026-03-31": 1.0
+            }
+          },
+          "error_message": null,
+          "warnings": [
+            "P2B 近似：行业收益和基准收益使用基金收益代理，不能作为正式归因结论"
+          ]
+        },
+        {
+          "fund_code": "003095",
+          "is_success": true,
+          "estimated_tracking_error": null,
+          "estimated_top10_recall": null,
+          "estimated_industry_correlation": null,
+          "diagnostics": {
+            "method": "BHB",
+            "period_count": 1,
+            "uses_proxy_benchmark": true,
+            "uses_proxy_sector_returns": true,
+            "estimated_total_portfolio_return": -0.113261,
+            "estimated_total_benchmark_return": -0.101935,
+            "estimated_total_residual": -0.0,
+            "normalized_report_count": 1
+          },
+          "metrics": {
+            "estimated_total_portfolio_return": -0.113261,
+            "estimated_total_benchmark_return": -0.101935,
+            "estimated_total_allocation_effect": 0.0,
+            "estimated_total_selection_effect": -0.011326,
+            "estimated_total_interaction_effect": 0.0,
+            "estimated_total_residual": -0.0,
+            "period_count": 1,
+            "method": "BHB",
+            "uses_proxy_benchmark": true,
+            "uses_proxy_sector_returns": true,
+            "normalized_weight_sum_by_report": {
+              "2026-03-31": 1.0
+            }
+          },
+          "error_message": null,
+          "warnings": [
+            "P2B 近似：行业收益和基准收益使用基金收益代理，不能作为正式归因结论"
+          ]
+        },
+        {
+          "fund_code": "004851",
+          "is_success": true,
+          "estimated_tracking_error": null,
+          "estimated_top10_recall": null,
+          "estimated_industry_correlation": null,
+          "diagnostics": {
+            "method": "BHB",
+            "period_count": 1,
+            "uses_proxy_benchmark": true,
+            "uses_proxy_sector_returns": true,
+            "estimated_total_portfolio_return": -0.112084,
+            "estimated_total_benchmark_return": -0.100875,
+            "estimated_total_residual": -1e-06,
+            "normalized_report_count": 1
+          },
+          "metrics": {
+            "estimated_total_portfolio_return": -0.112084,
+            "estimated_total_benchmark_return": -0.100875,
+            "estimated_total_allocation_effect": 0.0,
+            "estimated_total_selection_effect": -0.011208,
+            "estimated_total_interaction_effect": 0.0,
+            "estimated_total_residual": -1e-06,
+            "period_count": 1,
+            "method": "BHB",
+            "uses_proxy_benchmark": true,
+            "uses_proxy_sector_returns": true,
+            "normalized_weight_sum_by_report": {
+              "2026-03-31": 1.0
+            }
+          },
+          "error_message": null,
+          "warnings": [
+            "P2B 近似：行业收益和基准收益使用基金收益代理，不能作为正式归因结论"
+          ]
+        },
+        {
+          "fund_code": "005267",
+          "is_success": true,
+          "estimated_tracking_error": null,
+          "estimated_top10_recall": null,
+          "estimated_industry_correlation": null,
+          "diagnostics": {
+            "method": "BHB",
+            "period_count": 1,
+            "uses_proxy_benchmark": true,
+            "uses_proxy_sector_returns": true,
+            "estimated_total_portfolio_return": -0.062354,
+            "estimated_total_benchmark_return": -0.056118,
+            "estimated_total_residual": -1e-06,
+            "normalized_report_count": 1
+          },
+          "metrics": {
+            "estimated_total_portfolio_return": -0.062354,
+            "estimated_total_benchmark_return": -0.056118,
+            "estimated_total_allocation_effect": 0.0,
+            "estimated_total_selection_effect": -0.006235,
+            "estimated_total_interaction_effect": 0.0,
+            "estimated_total_residual": -1e-06,
+            "period_count": 1,
+            "method": "BHB",
+            "uses_proxy_benchmark": true,
+            "uses_proxy_sector_returns": true,
+            "normalized_weight_sum_by_report": {
+              "2026-03-31": 1.0
+            }
+          },
+          "error_message": null,
+          "warnings": [
+            "P2B 近似：行业收益和基准收益使用基金收益代理，不能作为正式归因结论"
+          ]
+        },
+        {
+          "fund_code": "006228",
+          "is_success": true,
+          "estimated_tracking_error": null,
+          "estimated_top10_recall": null,
+          "estimated_industry_correlation": null,
+          "diagnostics": {
+            "method": "BHB",
+            "period_count": 1,
+            "uses_proxy_benchmark": true,
+            "uses_proxy_sector_returns": true,
+            "estimated_total_portfolio_return": -0.135551,
+            "estimated_total_benchmark_return": -0.121996,
+            "estimated_total_residual": 0.0,
+            "normalized_report_count": 1
+          },
+          "metrics": {
+            "estimated_total_portfolio_return": -0.135551,
+            "estimated_total_benchmark_return": -0.121996,
+            "estimated_total_allocation_effect": 0.0,
+            "estimated_total_selection_effect": -0.013555,
+            "estimated_total_interaction_effect": 0.0,
+            "estimated_total_residual": 0.0,
+            "period_count": 1,
+            "method": "BHB",
+            "uses_proxy_benchmark": true,
+            "uses_proxy_sector_returns": true,
+            "normalized_weight_sum_by_report": {
+              "2026-03-31": 1.0
+            }
+          },
+          "error_message": null,
+          "warnings": [
+            "P2B 近似：行业收益和基准收益使用基金收益代理，不能作为正式归因结论"
+          ]
+        },
+        {
+          "fund_code": "110022",
+          "is_success": true,
+          "estimated_tracking_error": null,
+          "estimated_top10_recall": null,
+          "estimated_industry_correlation": null,
+          "diagnostics": {
+            "method": "BHB",
+            "period_count": 1,
+            "uses_proxy_benchmark": true,
+            "uses_proxy_sector_returns": true,
+            "estimated_total_portfolio_return": -0.104066,
+            "estimated_total_benchmark_return": -0.093659,
+            "estimated_total_residual": 0.0,
+            "normalized_report_count": 1
+          },
+          "metrics": {
+            "estimated_total_portfolio_return": -0.104066,
+            "estimated_total_benchmark_return": -0.093659,
+            "estimated_total_allocation_effect": 0.0,
+            "estimated_total_selection_effect": -0.010407,
+            "estimated_total_interaction_effect": 0.0,
+            "estimated_total_residual": 0.0,
+            "period_count": 1,
+            "method": "BHB",
+            "uses_proxy_benchmark": true,
+            "uses_proxy_sector_returns": true,
+            "normalized_weight_sum_by_report": {
+              "2026-03-31": 1.0
+            }
+          },
+          "error_message": null,
+          "warnings": [
+            "P2B 近似：行业收益和基准收益使用基金收益代理，不能作为正式归因结论"
+          ]
+        },
+        {
+          "fund_code": "340007",
+          "is_success": true,
+          "estimated_tracking_error": null,
+          "estimated_top10_recall": null,
+          "estimated_industry_correlation": null,
+          "diagnostics": {
+            "method": "BHB",
+            "period_count": 1,
+            "uses_proxy_benchmark": true,
+            "uses_proxy_sector_returns": true,
+            "estimated_total_portfolio_return": 0.205447,
+            "estimated_total_benchmark_return": 0.184903,
+            "estimated_total_residual": -1e-06,
+            "normalized_report_count": 1
+          },
+          "metrics": {
+            "estimated_total_portfolio_return": 0.205447,
+            "estimated_total_benchmark_return": 0.184903,
+            "estimated_total_allocation_effect": 0.0,
+            "estimated_total_selection_effect": 0.020545,
+            "estimated_total_interaction_effect": 0.0,
+            "estimated_total_residual": -1e-06,
+            "period_count": 1,
+            "method": "BHB",
+            "uses_proxy_benchmark": true,
+            "uses_proxy_sector_returns": true,
+            "normalized_weight_sum_by_report": {
+              "2026-03-31": 1.0
+            }
+          },
+          "error_message": null,
+          "warnings": [
+            "P2B 近似：行业收益和基准收益使用基金收益代理，不能作为正式归因结论"
+          ]
+        },
+        {
+          "fund_code": "519712",
+          "is_success": true,
+          "estimated_tracking_error": null,
+          "estimated_top10_recall": null,
+          "estimated_industry_correlation": null,
+          "diagnostics": {
+            "method": "BHB",
+            "period_count": 1,
+            "uses_proxy_benchmark": true,
+            "uses_proxy_sector_returns": true,
+            "estimated_total_portfolio_return": 0.321991,
+            "estimated_total_benchmark_return": 0.289792,
+            "estimated_total_residual": 0.0,
+            "normalized_report_count": 1
+          },
+          "metrics": {
+            "estimated_total_portfolio_return": 0.321991,
+            "estimated_total_benchmark_return": 0.289792,
+            "estimated_total_allocation_effect": 0.0,
+            "estimated_total_selection_effect": 0.032199,
+            "estimated_total_interaction_effect": 0.0,
+            "estimated_total_residual": 0.0,
+            "period_count": 1,
+            "method": "BHB",
+            "uses_proxy_benchmark": true,
+            "uses_proxy_sector_returns": true,
+            "normalized_weight_sum_by_report": {
+              "2026-03-31": 1.0
+            }
+          },
+          "error_message": null,
+          "warnings": [
+            "P2B 近似：行业收益和基准收益使用基金收益代理，不能作为正式归因结论"
+          ]
+        },
+        {
+          "fund_code": "540003",
+          "is_success": true,
+          "estimated_tracking_error": null,
+          "estimated_top10_recall": null,
+          "estimated_industry_correlation": null,
+          "diagnostics": {
+            "method": "BHB",
+            "period_count": 1,
+            "uses_proxy_benchmark": true,
+            "uses_proxy_sector_returns": true,
+            "estimated_total_portfolio_return": -0.135176,
+            "estimated_total_benchmark_return": -0.121659,
+            "estimated_total_residual": 1e-06,
+            "normalized_report_count": 1
+          },
+          "metrics": {
+            "estimated_total_portfolio_return": -0.135176,
+            "estimated_total_benchmark_return": -0.121659,
+            "estimated_total_allocation_effect": 0.0,
+            "estimated_total_selection_effect": -0.013518,
+            "estimated_total_interaction_effect": 0.0,
+            "estimated_total_residual": 1e-06,
+            "period_count": 1,
+            "method": "BHB",
+            "uses_proxy_benchmark": true,
+            "uses_proxy_sector_returns": true,
+            "normalized_weight_sum_by_report": {
+              "2026-03-31": 1.0
+            }
+          },
+          "error_message": null,
+          "warnings": [
+            "P2B 近似：行业收益和基准收益使用基金收益代理，不能作为正式归因结论"
+          ]
+        },
+        {
+          "fund_code": "570001",
+          "is_success": true,
+          "estimated_tracking_error": null,
+          "estimated_top10_recall": null,
+          "estimated_industry_correlation": null,
+          "diagnostics": {
+            "method": "BHB",
+            "period_count": 1,
+            "uses_proxy_benchmark": true,
+            "uses_proxy_sector_returns": true,
+            "estimated_total_portfolio_return": 0.179323,
+            "estimated_total_benchmark_return": 0.161391,
+            "estimated_total_residual": 0.0,
+            "normalized_report_count": 1
+          },
+          "metrics": {
+            "estimated_total_portfolio_return": 0.179323,
+            "estimated_total_benchmark_return": 0.161391,
+            "estimated_total_allocation_effect": 0.0,
+            "estimated_total_selection_effect": 0.017932,
+            "estimated_total_interaction_effect": 0.0,
+            "estimated_total_residual": 0.0,
+            "period_count": 1,
+            "method": "BHB",
+            "uses_proxy_benchmark": true,
+            "uses_proxy_sector_returns": true,
+            "normalized_weight_sum_by_report": {
+              "2026-03-31": 1.0
+            }
+          },
+          "error_message": null,
+          "warnings": [
+            "P2B 近似：行业收益和基准收益使用基金收益代理，不能作为正式归因结论"
+          ]
+        },
+        {
+          "fund_code": "000409",
+          "is_success": true,
+          "estimated_tracking_error": null,
+          "estimated_top10_recall": null,
+          "estimated_industry_correlation": null,
+          "diagnostics": {
+            "method": "BHB",
+            "period_count": 1,
+            "uses_proxy_benchmark": true,
+            "uses_proxy_sector_returns": true,
+            "estimated_total_portfolio_return": 0.152421,
+            "estimated_total_benchmark_return": 0.137179,
+            "estimated_total_residual": -0.0,
+            "normalized_report_count": 1
+          },
+          "metrics": {
+            "estimated_total_portfolio_return": 0.152421,
+            "estimated_total_benchmark_return": 0.137179,
+            "estimated_total_allocation_effect": 0.0,
+            "estimated_total_selection_effect": 0.015242,
+            "estimated_total_interaction_effect": 0.0,
+            "estimated_total_residual": -0.0,
+            "period_count": 1,
+            "method": "BHB",
+            "uses_proxy_benchmark": true,
+            "uses_proxy_sector_returns": true,
+            "normalized_weight_sum_by_report": {
+              "2026-03-31": 1.0
+            }
+          },
+          "error_message": null,
+          "warnings": [
+            "P2B 近似：行业收益和基准收益使用基金收益代理，不能作为正式归因结论"
+          ]
+        },
+        {
+          "fund_code": "001480",
+          "is_success": true,
+          "estimated_tracking_error": null,
+          "estimated_top10_recall": null,
+          "estimated_industry_correlation": null,
+          "diagnostics": {
+            "method": "BHB",
+            "period_count": 1,
+            "uses_proxy_benchmark": true,
+            "uses_proxy_sector_returns": true,
+            "estimated_total_portfolio_return": 1.089186,
+            "estimated_total_benchmark_return": 0.980267,
+            "estimated_total_residual": -0.0,
+            "normalized_report_count": 1
+          },
+          "metrics": {
+            "estimated_total_portfolio_return": 1.089186,
+            "estimated_total_benchmark_return": 0.980267,
+            "estimated_total_allocation_effect": 0.0,
+            "estimated_total_selection_effect": 0.108919,
+            "estimated_total_interaction_effect": 0.0,
+            "estimated_total_residual": -0.0,
+            "period_count": 1,
+            "method": "BHB",
+            "uses_proxy_benchmark": true,
+            "uses_proxy_sector_returns": true,
+            "normalized_weight_sum_by_report": {
+              "2026-03-31": 1.0
+            }
+          },
+          "error_message": null,
+          "warnings": [
+            "P2B 近似：行业收益和基准收益使用基金收益代理，不能作为正式归因结论"
+          ]
+        },
+        {
+          "fund_code": "519772",
+          "is_success": true,
+          "estimated_tracking_error": null,
+          "estimated_top10_recall": null,
+          "estimated_industry_correlation": null,
+          "diagnostics": {
+            "method": "BHB",
+            "period_count": 1,
+            "uses_proxy_benchmark": true,
+            "uses_proxy_sector_returns": true,
+            "estimated_total_portfolio_return": 0.016796,
+            "estimated_total_benchmark_return": 0.015116,
+            "estimated_total_residual": 0.0,
+            "normalized_report_count": 1
+          },
+          "metrics": {
+            "estimated_total_portfolio_return": 0.016796,
+            "estimated_total_benchmark_return": 0.015116,
+            "estimated_total_allocation_effect": 0.0,
+            "estimated_total_selection_effect": 0.00168,
+            "estimated_total_interaction_effect": 0.0,
+            "estimated_total_residual": 0.0,
+            "period_count": 1,
+            "method": "BHB",
+            "uses_proxy_benchmark": true,
+            "uses_proxy_sector_returns": true,
+            "normalized_weight_sum_by_report": {
+              "2026-03-31": 1.0
+            }
+          },
+          "error_message": null,
+          "warnings": [
+            "P2B 近似：行业收益和基准收益使用基金收益代理，不能作为正式归因结论"
+          ]
+        },
+        {
+          "fund_code": "000978",
+          "is_success": true,
+          "estimated_tracking_error": null,
+          "estimated_top10_recall": null,
+          "estimated_industry_correlation": null,
+          "diagnostics": {
+            "method": "BHB",
+            "period_count": 1,
+            "uses_proxy_benchmark": true,
+            "uses_proxy_sector_returns": true,
+            "estimated_total_portfolio_return": 0.118076,
+            "estimated_total_benchmark_return": 0.106268,
+            "estimated_total_residual": 0.0,
+            "normalized_report_count": 1
+          },
+          "metrics": {
+            "estimated_total_portfolio_return": 0.118076,
+            "estimated_total_benchmark_return": 0.106268,
+            "estimated_total_allocation_effect": 0.0,
+            "estimated_total_selection_effect": 0.011808,
+            "estimated_total_interaction_effect": 0.0,
+            "estimated_total_residual": 0.0,
+            "period_count": 1,
+            "method": "BHB",
+            "uses_proxy_benchmark": true,
+            "uses_proxy_sector_returns": true,
+            "normalized_weight_sum_by_report": {
+              "2026-03-31": 1.0
+            }
+          },
+          "error_message": null,
+          "warnings": [
+            "P2B 近似：行业收益和基准收益使用基金收益代理，不能作为正式归因结论"
+          ]
+        },
+        {
+          "fund_code": "001810",
+          "is_success": true,
+          "estimated_tracking_error": null,
+          "estimated_top10_recall": null,
+          "estimated_industry_correlation": null,
+          "diagnostics": {
+            "method": "BHB",
+            "period_count": 1,
+            "uses_proxy_benchmark": true,
+            "uses_proxy_sector_returns": true,
+            "estimated_total_portfolio_return": -0.068511,
+            "estimated_total_benchmark_return": -0.06166,
+            "estimated_total_residual": 0.0,
+            "normalized_report_count": 1
+          },
+          "metrics": {
+            "estimated_total_portfolio_return": -0.068511,
+            "estimated_total_benchmark_return": -0.06166,
+            "estimated_total_allocation_effect": 0.0,
+            "estimated_total_selection_effect": -0.006851,
+            "estimated_total_interaction_effect": 0.0,
+            "estimated_total_residual": 0.0,
+            "period_count": 1,
+            "method": "BHB",
+            "uses_proxy_benchmark": true,
+            "uses_proxy_sector_returns": true,
+            "normalized_weight_sum_by_report": {
+              "2026-03-31": 1.0
+            }
+          },
+          "error_message": null,
+          "warnings": [
+            "P2B 近似：行业收益和基准收益使用基金收益代理，不能作为正式归因结论"
+          ]
+        }
+      ],
+      "overall_conclusion": "partial",
+      "warnings": [
+        "P2B 近似：行业收益和基准收益使用基金收益代理，不能作为正式归因结论",
+        "P2B 近似：行业收益和基准收益使用基金收益代理，不能作为正式归因结论",
+        "P2B 近似：行业收益和基准收益使用基金收益代理，不能作为正式归因结论",
+        "P2B 近似：行业收益和基准收益使用基金收益代理，不能作为正式归因结论",
+        "P2B 近似：行业收益和基准收益使用基金收益代理，不能作为正式归因结论",
+        "P2B 近似：行业收益和基准收益使用基金收益代理，不能作为正式归因结论",
+        "P2B 近似：行业收益和基准收益使用基金收益代理，不能作为正式归因结论",
+        "P2B 近似：行业收益和基准收益使用基金收益代理，不能作为正式归因结论",
+        "P2B 近似：行业收益和基准收益使用基金收益代理，不能作为正式归因结论",
+        "P2B 近似：行业收益和基准收益使用基金收益代理，不能作为正式归因结论",
+        "P2B 近似：行业收益和基准收益使用基金收益代理，不能作为正式归因结论",
+        "P2B 近似：行业收益和基准收益使用基金收益代理，不能作为正式归因结论",
+        "P2B 近似：行业收益和基准收益使用基金收益代理，不能作为正式归因结论",
+        "P2B 近似：行业收益和基准收益使用基金收益代理，不能作为正式归因结论",
+        "P2B 近似：行业收益和基准收益使用基金收益代理，不能作为正式归因结论",
+        "P2B 近似：行业收益和基准收益使用基金收益代理，不能作为正式归因结论",
+        "P2B 近似：行业收益和基准收益使用基金收益代理，不能作为正式归因结论",
+        "P2B 近似：行业收益和基准收益使用基金收益代理，不能作为正式归因结论",
+        "P2B 近似：行业收益和基准收益使用基金收益代理，不能作为正式归因结论",
+        "P2B 近似：行业收益和基准收益使用基金收益代理，不能作为正式归因结论",
+        "P2B 近似：行业收益和基准收益使用基金收益代理，不能作为正式归因结论",
+        "P2B 近似：行业收益和基准收益使用基金收益代理，不能作为正式归因结论",
+        "P2B 近似：行业收益和基准收益使用基金收益代理，不能作为正式归因结论",
+        "P2B 近似：行业收益和基准收益使用基金收益代理，不能作为正式归因结论",
+        "P2B 近似：行业收益和基准收益使用基金收益代理，不能作为正式归因结论",
+        "P2B 近似：行业收益和基准收益使用基金收益代理，不能作为正式归因结论",
+        "P2B 近似：行业收益和基准收益使用基金收益代理，不能作为正式归因结论",
+        "P2B 近似：行业收益和基准收益使用基金收益代理，不能作为正式归因结论",
+        "P2B 近似：行业收益和基准收益使用基金收益代理，不能作为正式归因结论",
+        "P2B 近似：行业收益和基准收益使用基金收益代理，不能作为正式归因结论"
+      ],
+      "conclusion_status": "estimated"
+    },
+    "scoring": {
+      "experiment_summary": {
+        "experiment_id": 3232466800186394242,
+        "experiment_name": "p2b-validation-scoring-2026-06-16",
+        "algorithm_name": "scoring",
+        "algorithm_version": "0.1.0",
+        "status": "completed",
+        "fund_count": 30,
+        "success_count": 30,
+        "failure_count": 0
+      },
+      "aggregate_stats": {
+        "mean_estimated_tracking_error": null,
+        "mean_estimated_top10_recall": null,
+        "mean_estimated_industry_correlation": null,
+        "success_rate": 1.0
+      },
+      "per_fund": [
+        {
+          "fund_code": "001071",
+          "is_success": true,
+          "estimated_tracking_error": null,
+          "estimated_top10_recall": null,
+          "estimated_industry_correlation": null,
+          "diagnostics": {
+            "estimated_total_score": 37.33,
+            "estimated_percentile_rank": 1.0,
+            "verified_dimension_count": 2,
+            "verified_dimensions": [
+              "return",
+              "risk"
+            ],
+            "allow_estimated": false,
+            "excluded_estimated_dimensions": [
+              "alpha",
+              "trading",
+              "style_stability",
+              "scale",
+              "team",
+              "holder"
+            ],
+            "estimated_deduction_reasons": [
+              "alpha 含未验证估计成分，默认评分剔除",
+              "trading 含未验证估计成分，默认评分剔除",
+              "style_stability 含未验证估计成分，默认评分剔除",
+              "scale 含未验证估计成分，默认评分剔除",
+              "team 含未验证估计成分，默认评分剔除",
+              "holder 含未验证估计成分，默认评分剔除"
+            ]
+          },
+          "metrics": {
+            "estimated_total_score": 37.33,
+            "estimated_sub_scores": {
+              "return": 19.33,
+              "risk": 18.0,
+              "alpha": 0.0,
+              "trading": 0.0,
+              "style_stability": 0.0,
+              "scale": 0.0,
+              "team": 0.0,
+              "holder": 0.0
+            },
+            "estimated_percentile_rank": 1.0,
+            "estimated_deduction_reasons": [
+              "alpha 含未验证估计成分，默认评分剔除",
+              "trading 含未验证估计成分，默认评分剔除",
+              "style_stability 含未验证估计成分，默认评分剔除",
+              "scale 含未验证估计成分，默认评分剔除",
+              "team 含未验证估计成分，默认评分剔除",
+              "holder 含未验证估计成分，默认评分剔除"
+            ],
+            "verified_dimension_count": 2,
+            "verified_dimensions": [
+              "return",
+              "risk"
+            ],
+            "allow_estimated": false,
+            "excluded_estimated_dimensions": [
+              "alpha",
+              "trading",
+              "style_stability",
+              "scale",
+              "team",
+              "holder"
+            ]
+          },
+          "error_message": null,
+          "warnings": []
+        },
+        {
+          "fund_code": "001938",
+          "is_success": true,
+          "estimated_tracking_error": null,
+          "estimated_top10_recall": null,
+          "estimated_industry_correlation": null,
+          "diagnostics": {
+            "estimated_total_score": 34.67,
+            "estimated_percentile_rank": 0.9655,
+            "verified_dimension_count": 2,
+            "verified_dimensions": [
+              "return",
+              "risk"
+            ],
+            "allow_estimated": false,
+            "excluded_estimated_dimensions": [
+              "alpha",
+              "trading",
+              "style_stability",
+              "scale",
+              "team",
+              "holder"
+            ],
+            "estimated_deduction_reasons": [
+              "alpha 含未验证估计成分，默认评分剔除",
+              "trading 含未验证估计成分，默认评分剔除",
+              "style_stability 含未验证估计成分，默认评分剔除",
+              "scale 含未验证估计成分，默认评分剔除",
+              "team 含未验证估计成分，默认评分剔除",
+              "holder 含未验证估计成分，默认评分剔除"
+            ]
+          },
+          "metrics": {
+            "estimated_total_score": 34.67,
+            "estimated_sub_scores": {
+              "return": 18.67,
+              "risk": 16.0,
+              "alpha": 0.0,
+              "trading": 0.0,
+              "style_stability": 0.0,
+              "scale": 0.0,
+              "team": 0.0,
+              "holder": 0.0
+            },
+            "estimated_percentile_rank": 0.9655,
+            "estimated_deduction_reasons": [
+              "alpha 含未验证估计成分，默认评分剔除",
+              "trading 含未验证估计成分，默认评分剔除",
+              "style_stability 含未验证估计成分，默认评分剔除",
+              "scale 含未验证估计成分，默认评分剔除",
+              "team 含未验证估计成分，默认评分剔除",
+              "holder 含未验证估计成分，默认评分剔除"
+            ],
+            "verified_dimension_count": 2,
+            "verified_dimensions": [
+              "return",
+              "risk"
+            ],
+            "allow_estimated": false,
+            "excluded_estimated_dimensions": [
+              "alpha",
+              "trading",
+              "style_stability",
+              "scale",
+              "team",
+              "holder"
+            ]
+          },
+          "error_message": null,
+          "warnings": []
+        },
+        {
+          "fund_code": "163406",
+          "is_success": true,
+          "estimated_tracking_error": null,
+          "estimated_top10_recall": null,
+          "estimated_industry_correlation": null,
+          "diagnostics": {
+            "estimated_total_score": 33.33,
+            "estimated_percentile_rank": 0.931,
+            "verified_dimension_count": 2,
+            "verified_dimensions": [
+              "return",
+              "risk"
+            ],
+            "allow_estimated": false,
+            "excluded_estimated_dimensions": [
+              "alpha",
+              "trading",
+              "style_stability",
+              "scale",
+              "team",
+              "holder"
+            ],
+            "estimated_deduction_reasons": [
+              "alpha 含未验证估计成分，默认评分剔除",
+              "trading 含未验证估计成分，默认评分剔除",
+              "style_stability 含未验证估计成分，默认评分剔除",
+              "scale 含未验证估计成分，默认评分剔除",
+              "team 含未验证估计成分，默认评分剔除",
+              "holder 含未验证估计成分，默认评分剔除"
+            ]
+          },
+          "metrics": {
+            "estimated_total_score": 33.33,
+            "estimated_sub_scores": {
+              "return": 16.67,
+              "risk": 16.67,
+              "alpha": 0.0,
+              "trading": 0.0,
+              "style_stability": 0.0,
+              "scale": 0.0,
+              "team": 0.0,
+              "holder": 0.0
+            },
+            "estimated_percentile_rank": 0.931,
+            "estimated_deduction_reasons": [
+              "alpha 含未验证估计成分，默认评分剔除",
+              "trading 含未验证估计成分，默认评分剔除",
+              "style_stability 含未验证估计成分，默认评分剔除",
+              "scale 含未验证估计成分，默认评分剔除",
+              "team 含未验证估计成分，默认评分剔除",
+              "holder 含未验证估计成分，默认评分剔除"
+            ],
+            "verified_dimension_count": 2,
+            "verified_dimensions": [
+              "return",
+              "risk"
+            ],
+            "allow_estimated": false,
+            "excluded_estimated_dimensions": [
+              "alpha",
+              "trading",
+              "style_stability",
+              "scale",
+              "team",
+              "holder"
+            ]
+          },
+          "error_message": null,
+          "warnings": []
+        },
+        {
+          "fund_code": "166002",
+          "is_success": true,
+          "estimated_tracking_error": null,
+          "estimated_top10_recall": null,
+          "estimated_industry_correlation": null,
+          "diagnostics": {
+            "estimated_total_score": 33.33,
+            "estimated_percentile_rank": 0.8966,
+            "verified_dimension_count": 2,
+            "verified_dimensions": [
+              "return",
+              "risk"
+            ],
+            "allow_estimated": false,
+            "excluded_estimated_dimensions": [
+              "alpha",
+              "trading",
+              "style_stability",
+              "scale",
+              "team",
+              "holder"
+            ],
+            "estimated_deduction_reasons": [
+              "alpha 含未验证估计成分，默认评分剔除",
+              "trading 含未验证估计成分，默认评分剔除",
+              "style_stability 含未验证估计成分，默认评分剔除",
+              "scale 含未验证估计成分，默认评分剔除",
+              "team 含未验证估计成分，默认评分剔除",
+              "holder 含未验证估计成分，默认评分剔除"
+            ]
+          },
+          "metrics": {
+            "estimated_total_score": 33.33,
+            "estimated_sub_scores": {
+              "return": 14.67,
+              "risk": 18.67,
+              "alpha": 0.0,
+              "trading": 0.0,
+              "style_stability": 0.0,
+              "scale": 0.0,
+              "team": 0.0,
+              "holder": 0.0
+            },
+            "estimated_percentile_rank": 0.8966,
+            "estimated_deduction_reasons": [
+              "alpha 含未验证估计成分，默认评分剔除",
+              "trading 含未验证估计成分，默认评分剔除",
+              "style_stability 含未验证估计成分，默认评分剔除",
+              "scale 含未验证估计成分，默认评分剔除",
+              "team 含未验证估计成分，默认评分剔除",
+              "holder 含未验证估计成分，默认评分剔除"
+            ],
+            "verified_dimension_count": 2,
+            "verified_dimensions": [
+              "return",
+              "risk"
+            ],
+            "allow_estimated": false,
+            "excluded_estimated_dimensions": [
+              "alpha",
+              "trading",
+              "style_stability",
+              "scale",
+              "team",
+              "holder"
+            ]
+          },
+          "error_message": null,
+          "warnings": []
+        },
+        {
+          "fund_code": "519712",
+          "is_success": true,
+          "estimated_tracking_error": null,
+          "estimated_top10_recall": null,
+          "estimated_industry_correlation": null,
+          "diagnostics": {
+            "estimated_total_score": 33.33,
+            "estimated_percentile_rank": 0.8621,
+            "verified_dimension_count": 2,
+            "verified_dimensions": [
+              "return",
+              "risk"
+            ],
+            "allow_estimated": false,
+            "excluded_estimated_dimensions": [
+              "alpha",
+              "trading",
+              "style_stability",
+              "scale",
+              "team",
+              "holder"
+            ],
+            "estimated_deduction_reasons": [
+              "alpha 含未验证估计成分，默认评分剔除",
+              "trading 含未验证估计成分，默认评分剔除",
+              "style_stability 含未验证估计成分，默认评分剔除",
+              "scale 含未验证估计成分，默认评分剔除",
+              "team 含未验证估计成分，默认评分剔除",
+              "holder 含未验证估计成分，默认评分剔除"
+            ]
+          },
+          "metrics": {
+            "estimated_total_score": 33.33,
+            "estimated_sub_scores": {
+              "return": 16.0,
+              "risk": 17.33,
+              "alpha": 0.0,
+              "trading": 0.0,
+              "style_stability": 0.0,
+              "scale": 0.0,
+              "team": 0.0,
+              "holder": 0.0
+            },
+            "estimated_percentile_rank": 0.8621,
+            "estimated_deduction_reasons": [
+              "alpha 含未验证估计成分，默认评分剔除",
+              "trading 含未验证估计成分，默认评分剔除",
+              "style_stability 含未验证估计成分，默认评分剔除",
+              "scale 含未验证估计成分，默认评分剔除",
+              "team 含未验证估计成分，默认评分剔除",
+              "holder 含未验证估计成分，默认评分剔除"
+            ],
+            "verified_dimension_count": 2,
+            "verified_dimensions": [
+              "return",
+              "risk"
+            ],
+            "allow_estimated": false,
+            "excluded_estimated_dimensions": [
+              "alpha",
+              "trading",
+              "style_stability",
+              "scale",
+              "team",
+              "holder"
+            ]
+          },
+          "error_message": null,
+          "warnings": []
+        },
+        {
+          "fund_code": "070002",
+          "is_success": true,
+          "estimated_tracking_error": null,
+          "estimated_top10_recall": null,
+          "estimated_industry_correlation": null,
+          "diagnostics": {
+            "estimated_total_score": 32.67,
+            "estimated_percentile_rank": 0.8276,
+            "verified_dimension_count": 2,
+            "verified_dimensions": [
+              "return",
+              "risk"
+            ],
+            "allow_estimated": false,
+            "excluded_estimated_dimensions": [
+              "alpha",
+              "trading",
+              "style_stability",
+              "scale",
+              "team",
+              "holder"
+            ],
+            "estimated_deduction_reasons": [
+              "alpha 含未验证估计成分，默认评分剔除",
+              "trading 含未验证估计成分，默认评分剔除",
+              "style_stability 含未验证估计成分，默认评分剔除",
+              "scale 含未验证估计成分，默认评分剔除",
+              "team 含未验证估计成分，默认评分剔除",
+              "holder 含未验证估计成分，默认评分剔除"
+            ]
+          },
+          "metrics": {
+            "estimated_total_score": 32.67,
+            "estimated_sub_scores": {
+              "return": 18.0,
+              "risk": 14.67,
+              "alpha": 0.0,
+              "trading": 0.0,
+              "style_stability": 0.0,
+              "scale": 0.0,
+              "team": 0.0,
+              "holder": 0.0
+            },
+            "estimated_percentile_rank": 0.8276,
+            "estimated_deduction_reasons": [
+              "alpha 含未验证估计成分，默认评分剔除",
+              "trading 含未验证估计成分，默认评分剔除",
+              "style_stability 含未验证估计成分，默认评分剔除",
+              "scale 含未验证估计成分，默认评分剔除",
+              "team 含未验证估计成分，默认评分剔除",
+              "holder 含未验证估计成分，默认评分剔除"
+            ],
+            "verified_dimension_count": 2,
+            "verified_dimensions": [
+              "return",
+              "risk"
+            ],
+            "allow_estimated": false,
+            "excluded_estimated_dimensions": [
+              "alpha",
+              "trading",
+              "style_stability",
+              "scale",
+              "team",
+              "holder"
+            ]
+          },
+          "error_message": null,
+          "warnings": []
+        },
+        {
+          "fund_code": "001810",
+          "is_success": true,
+          "estimated_tracking_error": null,
+          "estimated_top10_recall": null,
+          "estimated_industry_correlation": null,
+          "diagnostics": {
+            "estimated_total_score": 30.0,
+            "estimated_percentile_rank": 0.7931,
+            "verified_dimension_count": 2,
+            "verified_dimensions": [
+              "return",
+              "risk"
+            ],
+            "allow_estimated": false,
+            "excluded_estimated_dimensions": [
+              "alpha",
+              "trading",
+              "style_stability",
+              "scale",
+              "team",
+              "holder"
+            ],
+            "estimated_deduction_reasons": [
+              "alpha 含未验证估计成分，默认评分剔除",
+              "trading 含未验证估计成分，默认评分剔除",
+              "style_stability 含未验证估计成分，默认评分剔除",
+              "scale 含未验证估计成分，默认评分剔除",
+              "team 含未验证估计成分，默认评分剔除",
+              "holder 含未验证估计成分，默认评分剔除"
+            ]
+          },
+          "metrics": {
+            "estimated_total_score": 30.0,
+            "estimated_sub_scores": {
+              "return": 10.0,
+              "risk": 20.0,
+              "alpha": 0.0,
+              "trading": 0.0,
+              "style_stability": 0.0,
+              "scale": 0.0,
+              "team": 0.0,
+              "holder": 0.0
+            },
+            "estimated_percentile_rank": 0.7931,
+            "estimated_deduction_reasons": [
+              "alpha 含未验证估计成分，默认评分剔除",
+              "trading 含未验证估计成分，默认评分剔除",
+              "style_stability 含未验证估计成分，默认评分剔除",
+              "scale 含未验证估计成分，默认评分剔除",
+              "team 含未验证估计成分，默认评分剔除",
+              "holder 含未验证估计成分，默认评分剔除"
+            ],
+            "verified_dimension_count": 2,
+            "verified_dimensions": [
+              "return",
+              "risk"
+            ],
+            "allow_estimated": false,
+            "excluded_estimated_dimensions": [
+              "alpha",
+              "trading",
+              "style_stability",
+              "scale",
+              "team",
+              "holder"
+            ]
+          },
+          "error_message": null,
+          "warnings": []
+        },
+        {
+          "fund_code": "001480",
+          "is_success": true,
+          "estimated_tracking_error": null,
+          "estimated_top10_recall": null,
+          "estimated_industry_correlation": null,
+          "diagnostics": {
+            "estimated_total_score": 29.33,
+            "estimated_percentile_rank": 0.7586,
+            "verified_dimension_count": 2,
+            "verified_dimensions": [
+              "return",
+              "risk"
+            ],
+            "allow_estimated": false,
+            "excluded_estimated_dimensions": [
+              "alpha",
+              "trading",
+              "style_stability",
+              "scale",
+              "team",
+              "holder"
+            ],
+            "estimated_deduction_reasons": [
+              "alpha 含未验证估计成分，默认评分剔除",
+              "trading 含未验证估计成分，默认评分剔除",
+              "style_stability 含未验证估计成分，默认评分剔除",
+              "scale 含未验证估计成分，默认评分剔除",
+              "team 含未验证估计成分，默认评分剔除",
+              "holder 含未验证估计成分，默认评分剔除"
+            ]
+          },
+          "metrics": {
+            "estimated_total_score": 29.33,
+            "estimated_sub_scores": {
+              "return": 20.0,
+              "risk": 9.33,
+              "alpha": 0.0,
+              "trading": 0.0,
+              "style_stability": 0.0,
+              "scale": 0.0,
+              "team": 0.0,
+              "holder": 0.0
+            },
+            "estimated_percentile_rank": 0.7586,
+            "estimated_deduction_reasons": [
+              "alpha 含未验证估计成分，默认评分剔除",
+              "trading 含未验证估计成分，默认评分剔除",
+              "style_stability 含未验证估计成分，默认评分剔除",
+              "scale 含未验证估计成分，默认评分剔除",
+              "team 含未验证估计成分，默认评分剔除",
+              "holder 含未验证估计成分，默认评分剔除"
+            ],
+            "verified_dimension_count": 2,
+            "verified_dimensions": [
+              "return",
+              "risk"
+            ],
+            "allow_estimated": false,
+            "excluded_estimated_dimensions": [
+              "alpha",
+              "trading",
+              "style_stability",
+              "scale",
+              "team",
+              "holder"
+            ]
+          },
+          "error_message": null,
+          "warnings": []
+        },
+        {
+          "fund_code": "519736",
+          "is_success": true,
+          "estimated_tracking_error": null,
+          "estimated_top10_recall": null,
+          "estimated_industry_correlation": null,
+          "diagnostics": {
+            "estimated_total_score": 26.67,
+            "estimated_percentile_rank": 0.7241,
+            "verified_dimension_count": 2,
+            "verified_dimensions": [
+              "return",
+              "risk"
+            ],
+            "allow_estimated": false,
+            "excluded_estimated_dimensions": [
+              "alpha",
+              "trading",
+              "style_stability",
+              "scale",
+              "team",
+              "holder"
+            ],
+            "estimated_deduction_reasons": [
+              "alpha 含未验证估计成分，默认评分剔除",
+              "trading 含未验证估计成分，默认评分剔除",
+              "style_stability 含未验证估计成分，默认评分剔除",
+              "scale 含未验证估计成分，默认评分剔除",
+              "team 含未验证估计成分，默认评分剔除",
+              "holder 含未验证估计成分，默认评分剔除"
+            ]
+          },
+          "metrics": {
+            "estimated_total_score": 26.67,
+            "estimated_sub_scores": {
+              "return": 11.33,
+              "risk": 15.33,
+              "alpha": 0.0,
+              "trading": 0.0,
+              "style_stability": 0.0,
+              "scale": 0.0,
+              "team": 0.0,
+              "holder": 0.0
+            },
+            "estimated_percentile_rank": 0.7241,
+            "estimated_deduction_reasons": [
+              "alpha 含未验证估计成分，默认评分剔除",
+              "trading 含未验证估计成分，默认评分剔除",
+              "style_stability 含未验证估计成分，默认评分剔除",
+              "scale 含未验证估计成分，默认评分剔除",
+              "team 含未验证估计成分，默认评分剔除",
+              "holder 含未验证估计成分，默认评分剔除"
+            ],
+            "verified_dimension_count": 2,
+            "verified_dimensions": [
+              "return",
+              "risk"
+            ],
+            "allow_estimated": false,
+            "excluded_estimated_dimensions": [
+              "alpha",
+              "trading",
+              "style_stability",
+              "scale",
+              "team",
+              "holder"
+            ]
+          },
+          "error_message": null,
+          "warnings": []
+        },
+        {
+          "fund_code": "161005",
+          "is_success": true,
+          "estimated_tracking_error": null,
+          "estimated_top10_recall": null,
+          "estimated_industry_correlation": null,
+          "diagnostics": {
+            "estimated_total_score": 26.0,
+            "estimated_percentile_rank": 0.6897,
+            "verified_dimension_count": 2,
+            "verified_dimensions": [
+              "return",
+              "risk"
+            ],
+            "allow_estimated": false,
+            "excluded_estimated_dimensions": [
+              "alpha",
+              "trading",
+              "style_stability",
+              "scale",
+              "team",
+              "holder"
+            ],
+            "estimated_deduction_reasons": [
+              "alpha 含未验证估计成分，默认评分剔除",
+              "trading 含未验证估计成分，默认评分剔除",
+              "style_stability 含未验证估计成分，默认评分剔除",
+              "scale 含未验证估计成分，默认评分剔除",
+              "team 含未验证估计成分，默认评分剔除",
+              "holder 含未验证估计成分，默认评分剔除"
+            ]
+          },
+          "metrics": {
+            "estimated_total_score": 26.0,
+            "estimated_sub_scores": {
+              "return": 17.33,
+              "risk": 8.67,
+              "alpha": 0.0,
+              "trading": 0.0,
+              "style_stability": 0.0,
+              "scale": 0.0,
+              "team": 0.0,
+              "holder": 0.0
+            },
+            "estimated_percentile_rank": 0.6897,
+            "estimated_deduction_reasons": [
+              "alpha 含未验证估计成分，默认评分剔除",
+              "trading 含未验证估计成分，默认评分剔除",
+              "style_stability 含未验证估计成分，默认评分剔除",
+              "scale 含未验证估计成分，默认评分剔除",
+              "team 含未验证估计成分，默认评分剔除",
+              "holder 含未验证估计成分，默认评分剔除"
+            ],
+            "verified_dimension_count": 2,
+            "verified_dimensions": [
+              "return",
+              "risk"
+            ],
+            "allow_estimated": false,
+            "excluded_estimated_dimensions": [
+              "alpha",
+              "trading",
+              "style_stability",
+              "scale",
+              "team",
+              "holder"
+            ]
+          },
+          "error_message": null,
+          "warnings": []
+        },
+        {
+          "fund_code": "450002",
+          "is_success": true,
+          "estimated_tracking_error": null,
+          "estimated_top10_recall": null,
+          "estimated_industry_correlation": null,
+          "diagnostics": {
+            "estimated_total_score": 26.0,
+            "estimated_percentile_rank": 0.6552,
+            "verified_dimension_count": 2,
+            "verified_dimensions": [
+              "return",
+              "risk"
+            ],
+            "allow_estimated": false,
+            "excluded_estimated_dimensions": [
+              "alpha",
+              "trading",
+              "style_stability",
+              "scale",
+              "team",
+              "holder"
+            ],
+            "estimated_deduction_reasons": [
+              "alpha 含未验证估计成分，默认评分剔除",
+              "trading 含未验证估计成分，默认评分剔除",
+              "style_stability 含未验证估计成分，默认评分剔除",
+              "scale 含未验证估计成分，默认评分剔除",
+              "team 含未验证估计成分，默认评分剔除",
+              "holder 含未验证估计成分，默认评分剔除"
+            ]
+          },
+          "metrics": {
+            "estimated_total_score": 26.0,
+            "estimated_sub_scores": {
+              "return": 12.0,
+              "risk": 14.0,
+              "alpha": 0.0,
+              "trading": 0.0,
+              "style_stability": 0.0,
+              "scale": 0.0,
+              "team": 0.0,
+              "holder": 0.0
+            },
+            "estimated_percentile_rank": 0.6552,
+            "estimated_deduction_reasons": [
+              "alpha 含未验证估计成分，默认评分剔除",
+              "trading 含未验证估计成分，默认评分剔除",
+              "style_stability 含未验证估计成分，默认评分剔除",
+              "scale 含未验证估计成分，默认评分剔除",
+              "team 含未验证估计成分，默认评分剔除",
+              "holder 含未验证估计成分，默认评分剔除"
+            ],
+            "verified_dimension_count": 2,
+            "verified_dimensions": [
+              "return",
+              "risk"
+            ],
+            "allow_estimated": false,
+            "excluded_estimated_dimensions": [
+              "alpha",
+              "trading",
+              "style_stability",
+              "scale",
+              "team",
+              "holder"
+            ]
+          },
+          "error_message": null,
+          "warnings": []
+        },
+        {
+          "fund_code": "005267",
+          "is_success": true,
+          "estimated_tracking_error": null,
+          "estimated_top10_recall": null,
+          "estimated_industry_correlation": null,
+          "diagnostics": {
+            "estimated_total_score": 26.0,
+            "estimated_percentile_rank": 0.6207,
+            "verified_dimension_count": 2,
+            "verified_dimensions": [
+              "return",
+              "risk"
+            ],
+            "allow_estimated": false,
+            "excluded_estimated_dimensions": [
+              "alpha",
+              "trading",
+              "style_stability",
+              "scale",
+              "team",
+              "holder"
+            ],
+            "estimated_deduction_reasons": [
+              "alpha 含未验证估计成分，默认评分剔除",
+              "trading 含未验证估计成分，默认评分剔除",
+              "style_stability 含未验证估计成分，默认评分剔除",
+              "scale 含未验证估计成分，默认评分剔除",
+              "team 含未验证估计成分，默认评分剔除",
+              "holder 含未验证估计成分，默认评分剔除"
+            ]
+          },
+          "metrics": {
+            "estimated_total_score": 26.0,
+            "estimated_sub_scores": {
+              "return": 6.67,
+              "risk": 19.33,
+              "alpha": 0.0,
+              "trading": 0.0,
+              "style_stability": 0.0,
+              "scale": 0.0,
+              "team": 0.0,
+              "holder": 0.0
+            },
+            "estimated_percentile_rank": 0.6207,
+            "estimated_deduction_reasons": [
+              "alpha 含未验证估计成分，默认评分剔除",
+              "trading 含未验证估计成分，默认评分剔除",
+              "style_stability 含未验证估计成分，默认评分剔除",
+              "scale 含未验证估计成分，默认评分剔除",
+              "team 含未验证估计成分，默认评分剔除",
+              "holder 含未验证估计成分，默认评分剔除"
+            ],
+            "verified_dimension_count": 2,
+            "verified_dimensions": [
+              "return",
+              "risk"
+            ],
+            "allow_estimated": false,
+            "excluded_estimated_dimensions": [
+              "alpha",
+              "trading",
+              "style_stability",
+              "scale",
+              "team",
+              "holder"
+            ]
+          },
+          "error_message": null,
+          "warnings": []
+        },
+        {
+          "fund_code": "110009",
+          "is_success": true,
+          "estimated_tracking_error": null,
+          "estimated_top10_recall": null,
+          "estimated_industry_correlation": null,
+          "diagnostics": {
+            "estimated_total_score": 25.33,
+            "estimated_percentile_rank": 0.5862,
+            "verified_dimension_count": 2,
+            "verified_dimensions": [
+              "return",
+              "risk"
+            ],
+            "allow_estimated": false,
+            "excluded_estimated_dimensions": [
+              "alpha",
+              "trading",
+              "style_stability",
+              "scale",
+              "team",
+              "holder"
+            ],
+            "estimated_deduction_reasons": [
+              "alpha 含未验证估计成分，默认评分剔除",
+              "trading 含未验证估计成分，默认评分剔除",
+              "style_stability 含未验证估计成分，默认评分剔除",
+              "scale 含未验证估计成分，默认评分剔除",
+              "team 含未验证估计成分，默认评分剔除",
+              "holder 含未验证估计成分，默认评分剔除"
+            ]
+          },
+          "metrics": {
+            "estimated_total_score": 25.33,
+            "estimated_sub_scores": {
+              "return": 14.0,
+              "risk": 11.33,
+              "alpha": 0.0,
+              "trading": 0.0,
+              "style_stability": 0.0,
+              "scale": 0.0,
+              "team": 0.0,
+              "holder": 0.0
+            },
+            "estimated_percentile_rank": 0.5862,
+            "estimated_deduction_reasons": [
+              "alpha 含未验证估计成分，默认评分剔除",
+              "trading 含未验证估计成分，默认评分剔除",
+              "style_stability 含未验证估计成分，默认评分剔除",
+              "scale 含未验证估计成分，默认评分剔除",
+              "team 含未验证估计成分，默认评分剔除",
+              "holder 含未验证估计成分，默认评分剔除"
+            ],
+            "verified_dimension_count": 2,
+            "verified_dimensions": [
+              "return",
+              "risk"
+            ],
+            "allow_estimated": false,
+            "excluded_estimated_dimensions": [
+              "alpha",
+              "trading",
+              "style_stability",
+              "scale",
+              "team",
+              "holder"
+            ]
+          },
+          "error_message": null,
+          "warnings": []
+        },
+        {
+          "fund_code": "000409",
+          "is_success": true,
+          "estimated_tracking_error": null,
+          "estimated_top10_recall": null,
+          "estimated_industry_correlation": null,
+          "diagnostics": {
+            "estimated_total_score": 22.67,
+            "estimated_percentile_rank": 0.5517,
+            "verified_dimension_count": 2,
+            "verified_dimensions": [
+              "return",
+              "risk"
+            ],
+            "allow_estimated": false,
+            "excluded_estimated_dimensions": [
+              "alpha",
+              "trading",
+              "style_stability",
+              "scale",
+              "team",
+              "holder"
+            ],
+            "estimated_deduction_reasons": [
+              "alpha 含未验证估计成分，默认评分剔除",
+              "trading 含未验证估计成分，默认评分剔除",
+              "style_stability 含未验证估计成分，默认评分剔除",
+              "scale 含未验证估计成分，默认评分剔除",
+              "team 含未验证估计成分，默认评分剔除",
+              "holder 含未验证估计成分，默认评分剔除"
+            ]
+          },
+          "metrics": {
+            "estimated_total_score": 22.67,
+            "estimated_sub_scores": {
+              "return": 15.33,
+              "risk": 7.33,
+              "alpha": 0.0,
+              "trading": 0.0,
+              "style_stability": 0.0,
+              "scale": 0.0,
+              "team": 0.0,
+              "holder": 0.0
+            },
+            "estimated_percentile_rank": 0.5517,
+            "estimated_deduction_reasons": [
+              "alpha 含未验证估计成分，默认评分剔除",
+              "trading 含未验证估计成分，默认评分剔除",
+              "style_stability 含未验证估计成分，默认评分剔除",
+              "scale 含未验证估计成分，默认评分剔除",
+              "team 含未验证估计成分，默认评分剔除",
+              "holder 含未验证估计成分，默认评分剔除"
+            ],
+            "verified_dimension_count": 2,
+            "verified_dimensions": [
+              "return",
+              "risk"
+            ],
+            "allow_estimated": false,
+            "excluded_estimated_dimensions": [
+              "alpha",
+              "trading",
+              "style_stability",
+              "scale",
+              "team",
+              "holder"
+            ]
+          },
+          "error_message": null,
+          "warnings": []
+        },
+        {
+          "fund_code": "519772",
+          "is_success": true,
+          "estimated_tracking_error": null,
+          "estimated_top10_recall": null,
+          "estimated_industry_correlation": null,
+          "diagnostics": {
+            "estimated_total_score": 20.0,
+            "estimated_percentile_rank": 0.5172,
+            "verified_dimension_count": 2,
+            "verified_dimensions": [
+              "return",
+              "risk"
+            ],
+            "allow_estimated": false,
+            "excluded_estimated_dimensions": [
+              "alpha",
+              "trading",
+              "style_stability",
+              "scale",
+              "team",
+              "holder"
+            ],
+            "estimated_deduction_reasons": [
+              "alpha 含未验证估计成分，默认评分剔除",
+              "trading 含未验证估计成分，默认评分剔除",
+              "style_stability 含未验证估计成分，默认评分剔除",
+              "scale 含未验证估计成分，默认评分剔除",
+              "team 含未验证估计成分，默认评分剔除",
+              "holder 含未验证估计成分，默认评分剔除"
+            ]
+          },
+          "metrics": {
+            "estimated_total_score": 20.0,
+            "estimated_sub_scores": {
+              "return": 7.33,
+              "risk": 12.67,
+              "alpha": 0.0,
+              "trading": 0.0,
+              "style_stability": 0.0,
+              "scale": 0.0,
+              "team": 0.0,
+              "holder": 0.0
+            },
+            "estimated_percentile_rank": 0.5172,
+            "estimated_deduction_reasons": [
+              "alpha 含未验证估计成分，默认评分剔除",
+              "trading 含未验证估计成分，默认评分剔除",
+              "style_stability 含未验证估计成分，默认评分剔除",
+              "scale 含未验证估计成分，默认评分剔除",
+              "team 含未验证估计成分，默认评分剔除",
+              "holder 含未验证估计成分，默认评分剔除"
+            ],
+            "verified_dimension_count": 2,
+            "verified_dimensions": [
+              "return",
+              "risk"
+            ],
+            "allow_estimated": false,
+            "excluded_estimated_dimensions": [
+              "alpha",
+              "trading",
+              "style_stability",
+              "scale",
+              "team",
+              "holder"
+            ]
+          },
+          "error_message": null,
+          "warnings": []
+        },
+        {
+          "fund_code": "540003",
+          "is_success": true,
+          "estimated_tracking_error": null,
+          "estimated_top10_recall": null,
+          "estimated_industry_correlation": null,
+          "diagnostics": {
+            "estimated_total_score": 16.67,
+            "estimated_percentile_rank": 0.4828,
+            "verified_dimension_count": 2,
+            "verified_dimensions": [
+              "return",
+              "risk"
+            ],
+            "allow_estimated": false,
+            "excluded_estimated_dimensions": [
+              "alpha",
+              "trading",
+              "style_stability",
+              "scale",
+              "team",
+              "holder"
+            ],
+            "estimated_deduction_reasons": [
+              "alpha 含未验证估计成分，默认评分剔除",
+              "trading 含未验证估计成分，默认评分剔除",
+              "style_stability 含未验证估计成分，默认评分剔除",
+              "scale 含未验证估计成分，默认评分剔除",
+              "team 含未验证估计成分，默认评分剔除",
+              "holder 含未验证估计成分，默认评分剔除"
+            ]
+          },
+          "metrics": {
+            "estimated_total_score": 16.67,
+            "estimated_sub_scores": {
+              "return": 6.0,
+              "risk": 10.67,
+              "alpha": 0.0,
+              "trading": 0.0,
+              "style_stability": 0.0,
+              "scale": 0.0,
+              "team": 0.0,
+              "holder": 0.0
+            },
+            "estimated_percentile_rank": 0.4828,
+            "estimated_deduction_reasons": [
+              "alpha 含未验证估计成分，默认评分剔除",
+              "trading 含未验证估计成分，默认评分剔除",
+              "style_stability 含未验证估计成分，默认评分剔除",
+              "scale 含未验证估计成分，默认评分剔除",
+              "team 含未验证估计成分，默认评分剔除",
+              "holder 含未验证估计成分，默认评分剔除"
+            ],
+            "verified_dimension_count": 2,
+            "verified_dimensions": [
+              "return",
+              "risk"
+            ],
+            "allow_estimated": false,
+            "excluded_estimated_dimensions": [
+              "alpha",
+              "trading",
+              "style_stability",
+              "scale",
+              "team",
+              "holder"
+            ]
+          },
+          "error_message": null,
+          "warnings": []
+        },
+        {
+          "fund_code": "000001",
+          "is_success": true,
+          "estimated_tracking_error": null,
+          "estimated_top10_recall": null,
+          "estimated_industry_correlation": null,
+          "diagnostics": {
+            "estimated_total_score": 16.0,
+            "estimated_percentile_rank": 0.4483,
+            "verified_dimension_count": 2,
+            "verified_dimensions": [
+              "return",
+              "risk"
+            ],
+            "allow_estimated": false,
+            "excluded_estimated_dimensions": [
+              "alpha",
+              "trading",
+              "style_stability",
+              "scale",
+              "team",
+              "holder"
+            ],
+            "estimated_deduction_reasons": [
+              "alpha 含未验证估计成分，默认评分剔除",
+              "trading 含未验证估计成分，默认评分剔除",
+              "style_stability 含未验证估计成分，默认评分剔除",
+              "scale 含未验证估计成分，默认评分剔除",
+              "team 含未验证估计成分，默认评分剔除",
+              "holder 含未验证估计成分，默认评分剔除"
+            ]
+          },
+          "metrics": {
+            "estimated_total_score": 16.0,
+            "estimated_sub_scores": {
+              "return": 8.0,
+              "risk": 8.0,
+              "alpha": 0.0,
+              "trading": 0.0,
+              "style_stability": 0.0,
+              "scale": 0.0,
+              "team": 0.0,
+              "holder": 0.0
+            },
+            "estimated_percentile_rank": 0.4483,
+            "estimated_deduction_reasons": [
+              "alpha 含未验证估计成分，默认评分剔除",
+              "trading 含未验证估计成分，默认评分剔除",
+              "style_stability 含未验证估计成分，默认评分剔除",
+              "scale 含未验证估计成分，默认评分剔除",
+              "team 含未验证估计成分，默认评分剔除",
+              "holder 含未验证估计成分，默认评分剔除"
+            ],
+            "verified_dimension_count": 2,
+            "verified_dimensions": [
+              "return",
+              "risk"
+            ],
+            "allow_estimated": false,
+            "excluded_estimated_dimensions": [
+              "alpha",
+              "trading",
+              "style_stability",
+              "scale",
+              "team",
+              "holder"
+            ]
+          },
+          "error_message": null,
+          "warnings": []
+        },
+        {
+          "fund_code": "519068",
+          "is_success": true,
+          "estimated_tracking_error": null,
+          "estimated_top10_recall": null,
+          "estimated_industry_correlation": null,
+          "diagnostics": {
+            "estimated_total_score": 16.0,
+            "estimated_percentile_rank": 0.4138,
+            "verified_dimension_count": 2,
+            "verified_dimensions": [
+              "return",
+              "risk"
+            ],
+            "allow_estimated": false,
+            "excluded_estimated_dimensions": [
+              "alpha",
+              "trading",
+              "style_stability",
+              "scale",
+              "team",
+              "holder"
+            ],
+            "estimated_deduction_reasons": [
+              "alpha 含未验证估计成分，默认评分剔除",
+              "trading 含未验证估计成分，默认评分剔除",
+              "style_stability 含未验证估计成分，默认评分剔除",
+              "scale 含未验证估计成分，默认评分剔除",
+              "team 含未验证估计成分，默认评分剔除",
+              "holder 含未验证估计成分，默认评分剔除"
+            ]
+          },
+          "metrics": {
+            "estimated_total_score": 16.0,
+            "estimated_sub_scores": {
+              "return": 9.33,
+              "risk": 6.67,
+              "alpha": 0.0,
+              "trading": 0.0,
+              "style_stability": 0.0,
+              "scale": 0.0,
+              "team": 0.0,
+              "holder": 0.0
+            },
+            "estimated_percentile_rank": 0.4138,
+            "estimated_deduction_reasons": [
+              "alpha 含未验证估计成分，默认评分剔除",
+              "trading 含未验证估计成分，默认评分剔除",
+              "style_stability 含未验证估计成分，默认评分剔除",
+              "scale 含未验证估计成分，默认评分剔除",
+              "team 含未验证估计成分，默认评分剔除",
+              "holder 含未验证估计成分，默认评分剔除"
+            ],
+            "verified_dimension_count": 2,
+            "verified_dimensions": [
+              "return",
+              "risk"
+            ],
+            "allow_estimated": false,
+            "excluded_estimated_dimensions": [
+              "alpha",
+              "trading",
+              "style_stability",
+              "scale",
+              "team",
+              "holder"
+            ]
+          },
+          "error_message": null,
+          "warnings": []
+        },
+        {
+          "fund_code": "002939",
+          "is_success": true,
+          "estimated_tracking_error": null,
+          "estimated_top10_recall": null,
+          "estimated_industry_correlation": null,
+          "diagnostics": {
+            "estimated_total_score": 16.0,
+            "estimated_percentile_rank": 0.3793,
+            "verified_dimension_count": 2,
+            "verified_dimensions": [
+              "return",
+              "risk"
+            ],
+            "allow_estimated": false,
+            "excluded_estimated_dimensions": [
+              "alpha",
+              "trading",
+              "style_stability",
+              "scale",
+              "team",
+              "holder"
+            ],
+            "estimated_deduction_reasons": [
+              "alpha 含未验证估计成分，默认评分剔除",
+              "trading 含未验证估计成分，默认评分剔除",
+              "style_stability 含未验证估计成分，默认评分剔除",
+              "scale 含未验证估计成分，默认评分剔除",
+              "team 含未验证估计成分，默认评分剔除",
+              "holder 含未验证估计成分，默认评分剔除"
+            ]
+          },
+          "metrics": {
+            "estimated_total_score": 16.0,
+            "estimated_sub_scores": {
+              "return": 13.33,
+              "risk": 2.67,
+              "alpha": 0.0,
+              "trading": 0.0,
+              "style_stability": 0.0,
+              "scale": 0.0,
+              "team": 0.0,
+              "holder": 0.0
+            },
+            "estimated_percentile_rank": 0.3793,
+            "estimated_deduction_reasons": [
+              "alpha 含未验证估计成分，默认评分剔除",
+              "trading 含未验证估计成分，默认评分剔除",
+              "style_stability 含未验证估计成分，默认评分剔除",
+              "scale 含未验证估计成分，默认评分剔除",
+              "team 含未验证估计成分，默认评分剔除",
+              "holder 含未验证估计成分，默认评分剔除"
+            ],
+            "verified_dimension_count": 2,
+            "verified_dimensions": [
+              "return",
+              "risk"
+            ],
+            "allow_estimated": false,
+            "excluded_estimated_dimensions": [
+              "alpha",
+              "trading",
+              "style_stability",
+              "scale",
+              "team",
+              "holder"
+            ]
+          },
+          "error_message": null,
+          "warnings": []
+        },
+        {
+          "fund_code": "110022",
+          "is_success": true,
+          "estimated_tracking_error": null,
+          "estimated_top10_recall": null,
+          "estimated_industry_correlation": null,
+          "diagnostics": {
+            "estimated_total_score": 16.0,
+            "estimated_percentile_rank": 0.3448,
+            "verified_dimension_count": 2,
+            "verified_dimensions": [
+              "return",
+              "risk"
+            ],
+            "allow_estimated": false,
+            "excluded_estimated_dimensions": [
+              "alpha",
+              "trading",
+              "style_stability",
+              "scale",
+              "team",
+              "holder"
+            ],
+            "estimated_deduction_reasons": [
+              "alpha 含未验证估计成分，默认评分剔除",
+              "trading 含未验证估计成分，默认评分剔除",
+              "style_stability 含未验证估计成分，默认评分剔除",
+              "scale 含未验证估计成分，默认评分剔除",
+              "team 含未验证估计成分，默认评分剔除",
+              "holder 含未验证估计成分，默认评分剔除"
+            ]
+          },
+          "metrics": {
+            "estimated_total_score": 16.0,
+            "estimated_sub_scores": {
+              "return": 4.0,
+              "risk": 12.0,
+              "alpha": 0.0,
+              "trading": 0.0,
+              "style_stability": 0.0,
+              "scale": 0.0,
+              "team": 0.0,
+              "holder": 0.0
+            },
+            "estimated_percentile_rank": 0.3448,
+            "estimated_deduction_reasons": [
+              "alpha 含未验证估计成分，默认评分剔除",
+              "trading 含未验证估计成分，默认评分剔除",
+              "style_stability 含未验证估计成分，默认评分剔除",
+              "scale 含未验证估计成分，默认评分剔除",
+              "team 含未验证估计成分，默认评分剔除",
+              "holder 含未验证估计成分，默认评分剔除"
+            ],
+            "verified_dimension_count": 2,
+            "verified_dimensions": [
+              "return",
+              "risk"
+            ],
+            "allow_estimated": false,
+            "excluded_estimated_dimensions": [
+              "alpha",
+              "trading",
+              "style_stability",
+              "scale",
+              "team",
+              "holder"
+            ]
+          },
+          "error_message": null,
+          "warnings": []
+        },
+        {
+          "fund_code": "000978",
+          "is_success": true,
+          "estimated_tracking_error": null,
+          "estimated_top10_recall": null,
+          "estimated_industry_correlation": null,
+          "diagnostics": {
+            "estimated_total_score": 16.0,
+            "estimated_percentile_rank": 0.3103,
+            "verified_dimension_count": 2,
+            "verified_dimensions": [
+              "return",
+              "risk"
+            ],
+            "allow_estimated": false,
+            "excluded_estimated_dimensions": [
+              "alpha",
+              "trading",
+              "style_stability",
+              "scale",
+              "team",
+              "holder"
+            ],
+            "estimated_deduction_reasons": [
+              "alpha 含未验证估计成分，默认评分剔除",
+              "trading 含未验证估计成分，默认评分剔除",
+              "style_stability 含未验证估计成分，默认评分剔除",
+              "scale 含未验证估计成分，默认评分剔除",
+              "team 含未验证估计成分，默认评分剔除",
+              "holder 含未验证估计成分，默认评分剔除"
+            ]
+          },
+          "metrics": {
+            "estimated_total_score": 16.0,
+            "estimated_sub_scores": {
+              "return": 2.67,
+              "risk": 13.33,
+              "alpha": 0.0,
+              "trading": 0.0,
+              "style_stability": 0.0,
+              "scale": 0.0,
+              "team": 0.0,
+              "holder": 0.0
+            },
+            "estimated_percentile_rank": 0.3103,
+            "estimated_deduction_reasons": [
+              "alpha 含未验证估计成分，默认评分剔除",
+              "trading 含未验证估计成分，默认评分剔除",
+              "style_stability 含未验证估计成分，默认评分剔除",
+              "scale 含未验证估计成分，默认评分剔除",
+              "team 含未验证估计成分，默认评分剔除",
+              "holder 含未验证估计成分，默认评分剔除"
+            ],
+            "verified_dimension_count": 2,
+            "verified_dimensions": [
+              "return",
+              "risk"
+            ],
+            "allow_estimated": false,
+            "excluded_estimated_dimensions": [
+              "alpha",
+              "trading",
+              "style_stability",
+              "scale",
+              "team",
+              "holder"
+            ]
+          },
+          "error_message": null,
+          "warnings": []
+        },
+        {
+          "fund_code": "020005",
+          "is_success": true,
+          "estimated_tracking_error": null,
+          "estimated_top10_recall": null,
+          "estimated_industry_correlation": null,
+          "diagnostics": {
+            "estimated_total_score": 14.67,
+            "estimated_percentile_rank": 0.2759,
+            "verified_dimension_count": 2,
+            "verified_dimensions": [
+              "return",
+              "risk"
+            ],
+            "allow_estimated": false,
+            "excluded_estimated_dimensions": [
+              "alpha",
+              "trading",
+              "style_stability",
+              "scale",
+              "team",
+              "holder"
+            ],
+            "estimated_deduction_reasons": [
+              "alpha 含未验证估计成分，默认评分剔除",
+              "trading 含未验证估计成分，默认评分剔除",
+              "style_stability 含未验证估计成分，默认评分剔除",
+              "scale 含未验证估计成分，默认评分剔除",
+              "team 含未验证估计成分，默认评分剔除",
+              "holder 含未验证估计成分，默认评分剔除"
+            ]
+          },
+          "metrics": {
+            "estimated_total_score": 14.67,
+            "estimated_sub_scores": {
+              "return": 10.67,
+              "risk": 4.0,
+              "alpha": 0.0,
+              "trading": 0.0,
+              "style_stability": 0.0,
+              "scale": 0.0,
+              "team": 0.0,
+              "holder": 0.0
+            },
+            "estimated_percentile_rank": 0.2759,
+            "estimated_deduction_reasons": [
+              "alpha 含未验证估计成分，默认评分剔除",
+              "trading 含未验证估计成分，默认评分剔除",
+              "style_stability 含未验证估计成分，默认评分剔除",
+              "scale 含未验证估计成分，默认评分剔除",
+              "team 含未验证估计成分，默认评分剔除",
+              "holder 含未验证估计成分，默认评分剔除"
+            ],
+            "verified_dimension_count": 2,
+            "verified_dimensions": [
+              "return",
+              "risk"
+            ],
+            "allow_estimated": false,
+            "excluded_estimated_dimensions": [
+              "alpha",
+              "trading",
+              "style_stability",
+              "scale",
+              "team",
+              "holder"
+            ]
+          },
+          "error_message": null,
+          "warnings": []
+        },
+        {
+          "fund_code": "340007",
+          "is_success": true,
+          "estimated_tracking_error": null,
+          "estimated_top10_recall": null,
+          "estimated_industry_correlation": null,
+          "diagnostics": {
+            "estimated_total_score": 14.67,
+            "estimated_percentile_rank": 0.2414,
+            "verified_dimension_count": 2,
+            "verified_dimensions": [
+              "return",
+              "risk"
+            ],
+            "allow_estimated": false,
+            "excluded_estimated_dimensions": [
+              "alpha",
+              "trading",
+              "style_stability",
+              "scale",
+              "team",
+              "holder"
+            ],
+            "estimated_deduction_reasons": [
+              "alpha 含未验证估计成分，默认评分剔除",
+              "trading 含未验证估计成分，默认评分剔除",
+              "style_stability 含未验证估计成分，默认评分剔除",
+              "scale 含未验证估计成分，默认评分剔除",
+              "team 含未验证估计成分，默认评分剔除",
+              "holder 含未验证估计成分，默认评分剔除"
+            ]
+          },
+          "metrics": {
+            "estimated_total_score": 14.67,
+            "estimated_sub_scores": {
+              "return": 8.67,
+              "risk": 6.0,
+              "alpha": 0.0,
+              "trading": 0.0,
+              "style_stability": 0.0,
+              "scale": 0.0,
+              "team": 0.0,
+              "holder": 0.0
+            },
+            "estimated_percentile_rank": 0.2414,
+            "estimated_deduction_reasons": [
+              "alpha 含未验证估计成分，默认评分剔除",
+              "trading 含未验证估计成分，默认评分剔除",
+              "style_stability 含未验证估计成分，默认评分剔除",
+              "scale 含未验证估计成分，默认评分剔除",
+              "team 含未验证估计成分，默认评分剔除",
+              "holder 含未验证估计成分，默认评分剔除"
+            ],
+            "verified_dimension_count": 2,
+            "verified_dimensions": [
+              "return",
+              "risk"
+            ],
+            "allow_estimated": false,
+            "excluded_estimated_dimensions": [
+              "alpha",
+              "trading",
+              "style_stability",
+              "scale",
+              "team",
+              "holder"
+            ]
+          },
+          "error_message": null,
+          "warnings": []
+        },
+        {
+          "fund_code": "000697",
+          "is_success": true,
+          "estimated_tracking_error": null,
+          "estimated_top10_recall": null,
+          "estimated_industry_correlation": null,
+          "diagnostics": {
+            "estimated_total_score": 13.33,
+            "estimated_percentile_rank": 0.2069,
+            "verified_dimension_count": 2,
+            "verified_dimensions": [
+              "return",
+              "risk"
+            ],
+            "allow_estimated": false,
+            "excluded_estimated_dimensions": [
+              "alpha",
+              "trading",
+              "style_stability",
+              "scale",
+              "team",
+              "holder"
+            ],
+            "estimated_deduction_reasons": [
+              "alpha 含未验证估计成分，默认评分剔除",
+              "trading 含未验证估计成分，默认评分剔除",
+              "style_stability 含未验证估计成分，默认评分剔除",
+              "scale 含未验证估计成分，默认评分剔除",
+              "team 含未验证估计成分，默认评分剔除",
+              "holder 含未验证估计成分，默认评分剔除"
+            ]
+          },
+          "metrics": {
+            "estimated_total_score": 13.33,
+            "estimated_sub_scores": {
+              "return": 12.67,
+              "risk": 0.67,
+              "alpha": 0.0,
+              "trading": 0.0,
+              "style_stability": 0.0,
+              "scale": 0.0,
+              "team": 0.0,
+              "holder": 0.0
+            },
+            "estimated_percentile_rank": 0.2069,
+            "estimated_deduction_reasons": [
+              "alpha 含未验证估计成分，默认评分剔除",
+              "trading 含未验证估计成分，默认评分剔除",
+              "style_stability 含未验证估计成分，默认评分剔除",
+              "scale 含未验证估计成分，默认评分剔除",
+              "team 含未验证估计成分，默认评分剔除",
+              "holder 含未验证估计成分，默认评分剔除"
+            ],
+            "verified_dimension_count": 2,
+            "verified_dimensions": [
+              "return",
+              "risk"
+            ],
+            "allow_estimated": false,
+            "excluded_estimated_dimensions": [
+              "alpha",
+              "trading",
+              "style_stability",
+              "scale",
+              "team",
+              "holder"
+            ]
+          },
+          "error_message": null,
+          "warnings": []
+        },
+        {
+          "fund_code": "005827",
+          "is_success": true,
+          "estimated_tracking_error": null,
+          "estimated_top10_recall": null,
+          "estimated_industry_correlation": null,
+          "diagnostics": {
+            "estimated_total_score": 11.33,
+            "estimated_percentile_rank": 0.1724,
+            "verified_dimension_count": 2,
+            "verified_dimensions": [
+              "return",
+              "risk"
+            ],
+            "allow_estimated": false,
+            "excluded_estimated_dimensions": [
+              "alpha",
+              "trading",
+              "style_stability",
+              "scale",
+              "team",
+              "holder"
+            ],
+            "estimated_deduction_reasons": [
+              "alpha 含未验证估计成分，默认评分剔除",
+              "trading 含未验证估计成分，默认评分剔除",
+              "style_stability 含未验证估计成分，默认评分剔除",
+              "scale 含未验证估计成分，默认评分剔除",
+              "team 含未验证估计成分，默认评分剔除",
+              "holder 含未验证估计成分，默认评分剔除"
+            ]
+          },
+          "metrics": {
+            "estimated_total_score": 11.33,
+            "estimated_sub_scores": {
+              "return": 1.33,
+              "risk": 10.0,
+              "alpha": 0.0,
+              "trading": 0.0,
+              "style_stability": 0.0,
+              "scale": 0.0,
+              "team": 0.0,
+              "holder": 0.0
+            },
+            "estimated_percentile_rank": 0.1724,
+            "estimated_deduction_reasons": [
+              "alpha 含未验证估计成分，默认评分剔除",
+              "trading 含未验证估计成分，默认评分剔除",
+              "style_stability 含未验证估计成分，默认评分剔除",
+              "scale 含未验证估计成分，默认评分剔除",
+              "team 含未验证估计成分，默认评分剔除",
+              "holder 含未验证估计成分，默认评分剔除"
+            ],
+            "verified_dimension_count": 2,
+            "verified_dimensions": [
+              "return",
+              "risk"
+            ],
+            "allow_estimated": false,
+            "excluded_estimated_dimensions": [
+              "alpha",
+              "trading",
+              "style_stability",
+              "scale",
+              "team",
+              "holder"
+            ]
+          },
+          "error_message": null,
+          "warnings": []
+        },
+        {
+          "fund_code": "570001",
+          "is_success": true,
+          "estimated_tracking_error": null,
+          "estimated_top10_recall": null,
+          "estimated_industry_correlation": null,
+          "diagnostics": {
+            "estimated_total_score": 10.67,
+            "estimated_percentile_rank": 0.1379,
+            "verified_dimension_count": 2,
+            "verified_dimensions": [
+              "return",
+              "risk"
+            ],
+            "allow_estimated": false,
+            "excluded_estimated_dimensions": [
+              "alpha",
+              "trading",
+              "style_stability",
+              "scale",
+              "team",
+              "holder"
+            ],
+            "estimated_deduction_reasons": [
+              "alpha 含未验证估计成分，默认评分剔除",
+              "trading 含未验证估计成分，默认评分剔除",
+              "style_stability 含未验证估计成分，默认评分剔除",
+              "scale 含未验证估计成分，默认评分剔除",
+              "team 含未验证估计成分，默认评分剔除",
+              "holder 含未验证估计成分，默认评分剔除"
+            ]
+          },
+          "metrics": {
+            "estimated_total_score": 10.67,
+            "estimated_sub_scores": {
+              "return": 5.33,
+              "risk": 5.33,
+              "alpha": 0.0,
+              "trading": 0.0,
+              "style_stability": 0.0,
+              "scale": 0.0,
+              "team": 0.0,
+              "holder": 0.0
+            },
+            "estimated_percentile_rank": 0.1379,
+            "estimated_deduction_reasons": [
+              "alpha 含未验证估计成分，默认评分剔除",
+              "trading 含未验证估计成分，默认评分剔除",
+              "style_stability 含未验证估计成分，默认评分剔除",
+              "scale 含未验证估计成分，默认评分剔除",
+              "team 含未验证估计成分，默认评分剔除",
+              "holder 含未验证估计成分，默认评分剔除"
+            ],
+            "verified_dimension_count": 2,
+            "verified_dimensions": [
+              "return",
+              "risk"
+            ],
+            "allow_estimated": false,
+            "excluded_estimated_dimensions": [
+              "alpha",
+              "trading",
+              "style_stability",
+              "scale",
+              "team",
+              "holder"
+            ]
+          },
+          "error_message": null,
+          "warnings": []
+        },
+        {
+          "fund_code": "260108",
+          "is_success": true,
+          "estimated_tracking_error": null,
+          "estimated_top10_recall": null,
+          "estimated_industry_correlation": null,
+          "diagnostics": {
+            "estimated_total_score": 9.33,
+            "estimated_percentile_rank": 0.1034,
+            "verified_dimension_count": 2,
+            "verified_dimensions": [
+              "return",
+              "risk"
+            ],
+            "allow_estimated": false,
+            "excluded_estimated_dimensions": [
+              "alpha",
+              "trading",
+              "style_stability",
+              "scale",
+              "team",
+              "holder"
+            ],
+            "estimated_deduction_reasons": [
+              "alpha 含未验证估计成分，默认评分剔除",
+              "trading 含未验证估计成分，默认评分剔除",
+              "style_stability 含未验证估计成分，默认评分剔除",
+              "scale 含未验证估计成分，默认评分剔除",
+              "team 含未验证估计成分，默认评分剔除",
+              "holder 含未验证估计成分，默认评分剔除"
+            ]
+          },
+          "metrics": {
+            "estimated_total_score": 9.33,
+            "estimated_sub_scores": {
+              "return": 4.67,
+              "risk": 4.67,
+              "alpha": 0.0,
+              "trading": 0.0,
+              "style_stability": 0.0,
+              "scale": 0.0,
+              "team": 0.0,
+              "holder": 0.0
+            },
+            "estimated_percentile_rank": 0.1034,
+            "estimated_deduction_reasons": [
+              "alpha 含未验证估计成分，默认评分剔除",
+              "trading 含未验证估计成分，默认评分剔除",
+              "style_stability 含未验证估计成分，默认评分剔除",
+              "scale 含未验证估计成分，默认评分剔除",
+              "team 含未验证估计成分，默认评分剔除",
+              "holder 含未验证估计成分，默认评分剔除"
+            ],
+            "verified_dimension_count": 2,
+            "verified_dimensions": [
+              "return",
+              "risk"
+            ],
+            "allow_estimated": false,
+            "excluded_estimated_dimensions": [
+              "alpha",
+              "trading",
+              "style_stability",
+              "scale",
+              "team",
+              "holder"
+            ]
+          },
+          "error_message": null,
+          "warnings": []
+        },
+        {
+          "fund_code": "003095",
+          "is_success": true,
+          "estimated_tracking_error": null,
+          "estimated_top10_recall": null,
+          "estimated_industry_correlation": null,
+          "diagnostics": {
+            "estimated_total_score": 5.33,
+            "estimated_percentile_rank": 0.069,
+            "verified_dimension_count": 2,
+            "verified_dimensions": [
+              "return",
+              "risk"
+            ],
+            "allow_estimated": false,
+            "excluded_estimated_dimensions": [
+              "alpha",
+              "trading",
+              "style_stability",
+              "scale",
+              "team",
+              "holder"
+            ],
+            "estimated_deduction_reasons": [
+              "alpha 含未验证估计成分，默认评分剔除",
+              "trading 含未验证估计成分，默认评分剔除",
+              "style_stability 含未验证估计成分，默认评分剔除",
+              "scale 含未验证估计成分，默认评分剔除",
+              "team 含未验证估计成分，默认评分剔除",
+              "holder 含未验证估计成分，默认评分剔除"
+            ]
+          },
+          "metrics": {
+            "estimated_total_score": 5.33,
+            "estimated_sub_scores": {
+              "return": 3.33,
+              "risk": 2.0,
+              "alpha": 0.0,
+              "trading": 0.0,
+              "style_stability": 0.0,
+              "scale": 0.0,
+              "team": 0.0,
+              "holder": 0.0
+            },
+            "estimated_percentile_rank": 0.069,
+            "estimated_deduction_reasons": [
+              "alpha 含未验证估计成分，默认评分剔除",
+              "trading 含未验证估计成分，默认评分剔除",
+              "style_stability 含未验证估计成分，默认评分剔除",
+              "scale 含未验证估计成分，默认评分剔除",
+              "team 含未验证估计成分，默认评分剔除",
+              "holder 含未验证估计成分，默认评分剔除"
+            ],
+            "verified_dimension_count": 2,
+            "verified_dimensions": [
+              "return",
+              "risk"
+            ],
+            "allow_estimated": false,
+            "excluded_estimated_dimensions": [
+              "alpha",
+              "trading",
+              "style_stability",
+              "scale",
+              "team",
+              "holder"
+            ]
+          },
+          "error_message": null,
+          "warnings": []
+        },
+        {
+          "fund_code": "004851",
+          "is_success": true,
+          "estimated_tracking_error": null,
+          "estimated_top10_recall": null,
+          "estimated_industry_correlation": null,
+          "diagnostics": {
+            "estimated_total_score": 5.33,
+            "estimated_percentile_rank": 0.0345,
+            "verified_dimension_count": 2,
+            "verified_dimensions": [
+              "return",
+              "risk"
+            ],
+            "allow_estimated": false,
+            "excluded_estimated_dimensions": [
+              "alpha",
+              "trading",
+              "style_stability",
+              "scale",
+              "team",
+              "holder"
+            ],
+            "estimated_deduction_reasons": [
+              "alpha 含未验证估计成分，默认评分剔除",
+              "trading 含未验证估计成分，默认评分剔除",
+              "style_stability 含未验证估计成分，默认评分剔除",
+              "scale 含未验证估计成分，默认评分剔除",
+              "team 含未验证估计成分，默认评分剔除",
+              "holder 含未验证估计成分，默认评分剔除"
+            ]
+          },
+          "metrics": {
+            "estimated_total_score": 5.33,
+            "estimated_sub_scores": {
+              "return": 2.0,
+              "risk": 3.33,
+              "alpha": 0.0,
+              "trading": 0.0,
+              "style_stability": 0.0,
+              "scale": 0.0,
+              "team": 0.0,
+              "holder": 0.0
+            },
+            "estimated_percentile_rank": 0.0345,
+            "estimated_deduction_reasons": [
+              "alpha 含未验证估计成分，默认评分剔除",
+              "trading 含未验证估计成分，默认评分剔除",
+              "style_stability 含未验证估计成分，默认评分剔除",
+              "scale 含未验证估计成分，默认评分剔除",
+              "team 含未验证估计成分，默认评分剔除",
+              "holder 含未验证估计成分，默认评分剔除"
+            ],
+            "verified_dimension_count": 2,
+            "verified_dimensions": [
+              "return",
+              "risk"
+            ],
+            "allow_estimated": false,
+            "excluded_estimated_dimensions": [
+              "alpha",
+              "trading",
+              "style_stability",
+              "scale",
+              "team",
+              "holder"
+            ]
+          },
+          "error_message": null,
+          "warnings": []
+        },
+        {
+          "fund_code": "006228",
+          "is_success": true,
+          "estimated_tracking_error": null,
+          "estimated_top10_recall": null,
+          "estimated_industry_correlation": null,
+          "diagnostics": {
+            "estimated_total_score": 2.0,
+            "estimated_percentile_rank": 0.0,
+            "verified_dimension_count": 2,
+            "verified_dimensions": [
+              "return",
+              "risk"
+            ],
+            "allow_estimated": false,
+            "excluded_estimated_dimensions": [
+              "alpha",
+              "trading",
+              "style_stability",
+              "scale",
+              "team",
+              "holder"
+            ],
+            "estimated_deduction_reasons": [
+              "alpha 含未验证估计成分，默认评分剔除",
+              "trading 含未验证估计成分，默认评分剔除",
+              "style_stability 含未验证估计成分，默认评分剔除",
+              "scale 含未验证估计成分，默认评分剔除",
+              "team 含未验证估计成分，默认评分剔除",
+              "holder 含未验证估计成分，默认评分剔除"
+            ]
+          },
+          "metrics": {
+            "estimated_total_score": 2.0,
+            "estimated_sub_scores": {
+              "return": 0.67,
+              "risk": 1.33,
+              "alpha": 0.0,
+              "trading": 0.0,
+              "style_stability": 0.0,
+              "scale": 0.0,
+              "team": 0.0,
+              "holder": 0.0
+            },
+            "estimated_percentile_rank": 0.0,
+            "estimated_deduction_reasons": [
+              "alpha 含未验证估计成分，默认评分剔除",
+              "trading 含未验证估计成分，默认评分剔除",
+              "style_stability 含未验证估计成分，默认评分剔除",
+              "scale 含未验证估计成分，默认评分剔除",
+              "team 含未验证估计成分，默认评分剔除",
+              "holder 含未验证估计成分，默认评分剔除"
+            ],
+            "verified_dimension_count": 2,
+            "verified_dimensions": [
+              "return",
+              "risk"
+            ],
+            "allow_estimated": false,
+            "excluded_estimated_dimensions": [
+              "alpha",
+              "trading",
+              "style_stability",
+              "scale",
+              "team",
+              "holder"
+            ]
+          },
+          "error_message": null,
+          "warnings": []
+        }
+      ],
+      "overall_conclusion": "partial",
+      "warnings": [],
+      "conclusion_status": "estimated"
+    }
+  },
+  "gate_checks": [
+    {
+      "name": "sample_size",
+      "passed": true,
+      "detail": "30/30 funds"
+    },
+    {
+      "name": "algorithm_reports",
+      "passed": true,
+      "detail": "3/3 reports"
+    },
+    {
+      "name": "sample_coverage",
+      "passed": true,
+      "detail": "each selected algorithm produced one row per sample fund"
+    },
+    {
+      "name": "simulated_holding_threshold_metrics",
+      "passed": true,
+      "detail": "TE and top10 recall are present for threshold review"
+    },
+    {
+      "name": "algorithm_thresholds",
+      "passed": true,
+      "detail": "all selected algorithms are not fail"
+    },
+    {
+      "name": "estimated_isolation",
+      "passed": true,
+      "detail": "P2B conclusions remain estimated/needs_review, never fact/computed"
+    }
+  ],
+  "failure_summary": {
+    "simulated_holding": {},
+    "dynamic_attribution": {},
+    "scoring": {}
+  },
+  "readiness_summary": {
+    "simulated_holding": {
+      "level": "candidate",
+      "productization_allowed": false,
+      "reason": "naive_replication passed pipeline thresholds, but remains an estimated optional view until stricter product gates are defined"
+    },
+    "dynamic_attribution": {
+      "level": "experiment_only",
+      "productization_allowed": false,
+      "reason": "uses proxy benchmark/sector returns; formal attribution needs real benchmark data"
+    },
+    "scoring": {
+      "level": "experiment_only",
+      "productization_allowed": false,
+      "reason": "only 2 verified scoring dimensions; score backtest still required"
+    }
+  },
+  "pipeline_gate": {
+    "status": "pass",
+    "conclusion_status": "estimated"
+  },
+  "productization_gate": {
+    "status": "needs_review",
+    "conclusion_status": "needs_review",
+    "warnings": [
+      "产品化门禁未通过: simulated_holding: naive_replication passed pipeline thresholds, but remains an estimated optional view until stricter product gates are defined; dynamic_attribution: uses proxy benchmark/sector returns; formal attribution needs real benchmark data; scoring: only 2 verified scoring dimensions; score backtest still required"
+    ]
+  },
+  "overall_conclusion": "pass",
+  "conclusion_status": "needs_review",
+  "warnings": [
+    "产品化门禁未通过: simulated_holding: naive_replication passed pipeline thresholds, but remains an estimated optional view until stricter product gates are defined; dynamic_attribution: uses proxy benchmark/sector returns; formal attribution needs real benchmark data; scoring: only 2 verified scoring dimensions; score backtest still required"
+  ]
+}

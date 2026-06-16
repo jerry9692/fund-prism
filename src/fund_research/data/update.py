@@ -4,10 +4,11 @@ import csv
 import hashlib
 import json
 import re
+import sys
 from dataclasses import dataclass
 from datetime import date, datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, TypeVar
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -35,6 +36,8 @@ from fund_research.db.models import (
     EvidenceRecord as DBEvidenceRecord,
 )
 from fund_research.research.official_pdf import build_official_pdf_evidence
+
+T = TypeVar("T")
 
 
 @dataclass
@@ -74,6 +77,18 @@ def load_sample_funds(sample_path: Path) -> list[dict[str, str]]:
     """Load the Phase 0 sample fund CSV."""
     with sample_path.open(encoding="utf-8", newline="") as f:
         return list(csv.DictReader(f))
+
+
+def _progress_iter(items: list[T], description: str) -> list[T] | Any:
+    """Render a progress bar for interactive CLI update runs."""
+    if not sys.stderr.isatty():
+        return items
+    try:
+        from rich.progress import track
+
+        return track(items, description=description)
+    except Exception:
+        return items
 
 
 def _local_company_id(company_name: str) -> str:
@@ -373,7 +388,7 @@ def upsert_akshare_fund_info(
         dry_run=dry_run,
         warnings=[],
     )
-    for fund_code in sorted(fund_codes):
+    for fund_code in _progress_iter(sorted(fund_codes), f"更新 {summary.entity}"):
         result = adapter.fetch_fund_info(fund_code)
         if not dry_run:
             _snapshot_from_fetch(session, result)
@@ -467,7 +482,7 @@ def upsert_akshare_fund_managers(
         dry_run=dry_run,
         warnings=[],
     )
-    for fund_code in sorted(fund_codes):
+    for fund_code in _progress_iter(sorted(fund_codes), f"更新 {summary.entity}"):
         result = adapter.fetch_fund_managers(fund_code)
         if not dry_run:
             _snapshot_from_fetch(session, result)
@@ -550,7 +565,7 @@ def upsert_akshare_fund_fees(
         dry_run=dry_run,
         warnings=[],
     )
-    for fund_code in sorted(fund_codes):
+    for fund_code in _progress_iter(sorted(fund_codes), f"更新 {summary.entity}"):
         result = adapter.fetch_fee_detail(fund_code)
         if not dry_run:
             _snapshot_from_fetch(session, result)
@@ -627,7 +642,7 @@ def upsert_akshare_fund_scale(
         dry_run=dry_run,
         warnings=["AKShare 当前仅提供最新规模快照，report_date 使用抓取日期"],
     )
-    for fund_code in sorted(fund_codes):
+    for fund_code in _progress_iter(sorted(fund_codes), f"更新 {summary.entity}"):
         result = adapter.fetch_fund_scale(fund_code)
         if not dry_run:
             _snapshot_from_fetch(session, result)
@@ -705,7 +720,7 @@ def upsert_akshare_holder_structure(
         dry_run=dry_run,
         warnings=[],
     )
-    for fund_code in sorted(fund_codes):
+    for fund_code in _progress_iter(sorted(fund_codes), f"更新 {summary.entity}"):
         result = adapter.fetch_holder_structure(fund_code)
         if not dry_run:
             _snapshot_from_fetch(session, result)
@@ -807,7 +822,7 @@ def upsert_akshare_fund_nav(
         dry_run=dry_run,
         warnings=[],
     )
-    for fund_code in sorted(fund_codes):
+    for fund_code in _progress_iter(sorted(fund_codes), f"更新 {summary.entity}"):
         result = adapter.fetch_fund_nav(fund_code, start_date=start_date, end_date=end_date)
         if not dry_run:
             _snapshot_from_fetch(session, result)
@@ -848,7 +863,7 @@ def upsert_akshare_fund_dividends(
         dry_run=dry_run,
         warnings=[],
     )
-    for fund_code in sorted(fund_codes):
+    for fund_code in _progress_iter(sorted(fund_codes), f"更新 {summary.entity}"):
         result = adapter.fetch_fund_dividends(fund_code, year=year)
         if not dry_run:
             _snapshot_from_fetch(session, result)
@@ -936,7 +951,7 @@ def upsert_akshare_fund_holdings(
         dry_run=dry_run,
         warnings=[],
     )
-    for fund_code in sorted(fund_codes):
+    for fund_code in _progress_iter(sorted(fund_codes), f"更新 {summary.entity}"):
         result = adapter.fetch_fund_holdings(fund_code, report_date=report_date)
         if not dry_run:
             _snapshot_from_fetch(session, result)
@@ -1037,7 +1052,7 @@ def upsert_akshare_fund_industry_allocation(
         dry_run=dry_run,
         warnings=[],
     )
-    for fund_code in sorted(fund_codes):
+    for fund_code in _progress_iter(sorted(fund_codes), f"更新 {summary.entity}"):
         result = adapter.fetch_fund_industry_allocation(fund_code, report_date=report_date)
         if not dry_run:
             _snapshot_from_fetch(session, result)
@@ -1119,7 +1134,7 @@ def upsert_akshare_fund_portfolio_changes(
         dry_run=dry_run,
         warnings=[],
     )
-    for fund_code in sorted(fund_codes):
+    for fund_code in _progress_iter(sorted(fund_codes), f"更新 {summary.entity}"):
         result = adapter.fetch_fund_portfolio_change(fund_code, report_date=report_date)
         if not dry_run:
             _snapshot_from_fetch(session, result)
@@ -1195,7 +1210,7 @@ def upsert_akshare_stock_daily(
         dry_run=dry_run,
         warnings=[],
     )
-    for stock_code in sorted(stock_codes):
+    for stock_code in _progress_iter(sorted(stock_codes), f"更新 {summary.entity}"):
         result = adapter.fetch_stock_daily(stock_code, start_date=start_date, end_date=end_date)
         if not dry_run:
             _snapshot_from_fetch(session, result)
@@ -1236,7 +1251,7 @@ def upsert_akshare_index_daily(
         dry_run=dry_run,
         warnings=[],
     )
-    for symbol in sorted(index_symbols):
+    for symbol in _progress_iter(sorted(index_symbols), f"更新 {summary.entity}"):
         result = adapter.fetch_index_daily(symbol, start_date=start_date, end_date=end_date)
         if not dry_run:
             _snapshot_from_fetch(session, result)
@@ -1311,7 +1326,7 @@ def upsert_akshare_official_pdf_evidence(
         dry_run=dry_run,
         warnings=[],
     )
-    for fund_code in sorted(fund_codes):
+    for fund_code in _progress_iter(sorted(fund_codes), f"更新 {summary.entity}"):
         result = adapter.fetch_announcements(fund_code)
         if not dry_run:
             _snapshot_from_fetch(session, result)
