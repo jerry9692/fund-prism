@@ -45,6 +45,11 @@ UPDATE_ENTITY_ORDER = [
     "holder-structure",
     "stock-daily",
     "index-daily",
+    "benchmark-members",
+    "stock-industry",
+    "benchmark-industry",
+    "benchmark-validation-import",
+    "holding-industry-backfill",
     "official-pdf",
 ]
 UPDATE_DOMAIN_ALIASES = {
@@ -81,6 +86,21 @@ UPDATE_DOMAIN_ALIASES = {
     "stock-daily": "stock-daily",
     "index": "index-daily",
     "index-daily": "index-daily",
+    "benchmark": "benchmark-members",
+    "benchmark-members": "benchmark-members",
+    "benchmark-index-member": "benchmark-members",
+    "benchmark-index-members": "benchmark-members",
+    "benchmark-industry": "benchmark-industry",
+    "benchmark-industry-weight": "benchmark-industry",
+    "benchmark-industry-weights": "benchmark-industry",
+    "benchmark-validation": "benchmark-validation-import",
+    "benchmark-validation-import": "benchmark-validation-import",
+    "validation-import": "benchmark-validation-import",
+    "stock-industry": "stock-industry",
+    "industry-membership": "stock-industry",
+    "holding-industry": "holding-industry-backfill",
+    "holding-industry-backfill": "holding-industry-backfill",
+    "fund-holding-industry": "holding-industry-backfill",
     "official-pdf": "official-pdf",
     "pdf": "official-pdf",
     "all": "all",
@@ -93,7 +113,8 @@ UpdateEntityArg = Annotated[
             "要更新的数据类型 "
             "(sample-funds/fund-info/fund-managers/fund-scale/fund-fees/fund-nav/"
             "fund-dividends/fund-holdings/fund-industry-allocation/"
-            "fund-portfolio-change/holder-structure/stock-daily/index-daily/official-pdf/all)"
+            "fund-portfolio-change/holder-structure/stock-daily/index-daily/"
+            "benchmark-members/stock-industry/benchmark-industry/official-pdf/all)"
         )
     ),
 ]
@@ -108,6 +129,26 @@ StockCodeOption = Annotated[
 IndexSymbolOption = Annotated[
     list[str] | None,
     typer.Option("--index-symbol", help="只更新指定指数 symbol，可重复传入"),
+]
+BenchmarkMembersFileOption = Annotated[
+    Path | None,
+    typer.Option("--benchmark-members-file", help="从本地 CSV/XLS/XLSX 导入指数成分权重，需配合单个 --index-symbol"),
+]
+IndustrySymbolOption = Annotated[
+    list[str] | None,
+    typer.Option("--industry-symbol", help="只更新指定行业 symbol，可重复传入，如 801120.SI"),
+]
+IndustryFileOption = Annotated[
+    Path | None,
+    typer.Option("--industry-file", help="从本地 CSV/XLSX 导入股票行业归属，传入后 stock-industry 不走网络抓取"),
+]
+BenchmarkValidationDbOption = Annotated[
+    Path,
+    typer.Option("--benchmark-validation-db", help="从本地 SQLite 验证库同步基准行业相关三张表"),
+]
+OverwriteHoldingIndustryOption = Annotated[
+    bool,
+    typer.Option("--overwrite-holding-industry", help="回填持仓行业时覆盖已有 industry 字段"),
 ]
 SamplePathOption = Annotated[
     Path | None,
@@ -144,6 +185,18 @@ YearOption = Annotated[
 LimitOption = Annotated[
     int | None,
     typer.Option("--limit", help="只取前 N 只样本，用于快速验证"),
+]
+RequestIntervalOption = Annotated[
+    float,
+    typer.Option("--request-interval", help="批量抓取请求间隔秒数，主要用于 stock-industry"),
+]
+RetryOption = Annotated[
+    int,
+    typer.Option("--retry", help="单个数据项失败后的重试次数，主要用于 stock-industry"),
+]
+IndustryBatchSizeOption = Annotated[
+    int,
+    typer.Option("--industry-batch-size", help="stock-industry 每批提交的行业数量，0 表示不分批"),
 ]
 
 
@@ -404,12 +457,488 @@ def check_data(
         raise typer.Exit(code=1)
 
 
+@app.command("check-dynamic-attribution")
+def check_dynamic_attribution(
+    db_path: DbPathOption = None,
+    fund_code: FundCodeOption = None,
+    benchmark_symbol: str | None = typer.Option(
+        None,
+        "--benchmark-symbol",
+        "--index-symbol",
+        help="动态归因基准指数代码，如 sh000300；不传则按基金资料解析或默认 sh000300",
+    ),
+    min_report_date: str | None = typer.Option(
+        None,
+        "--min-report-date",
+        help="只检查不早于该日期的持仓报告期，格式 YYYY-MM-DD",
+    ),
+    max_report_date: str | None = typer.Option(
+        None,
+        "--max-report-date",
+        help="只检查不晚于该日期的持仓报告期，格式 YYYY-MM-DD",
+    ),
+    min_return_observations: int = typer.Option(
+        3,
+        "--min-return-observations",
+        help="每个报告期最少基准收益观测数",
+    ),
+    max_snapshot_age_days: int = typer.Option(
+        180,
+        "--max-snapshot-age-days",
+        help="基准行业权重快照最大允许年龄",
+    ),
+    ready_only: bool = typer.Option(
+        False,
+        "--ready-only",
+        help="只显示已经满足动态归因运行条件的样本",
+    ),
+    limit: int | None = typer.Option(
+        None,
+        "--limit",
+        help="最多显示多少条候选样本",
+    ),
+    output_json: bool = typer.Option(
+        False,
+        "--json",
+        help="以 JSON 输出检查结果，便于脚本读取",
+    ),
+    require_ready: bool = typer.Option(
+        False,
+        "--require-ready",
+        help="没有可运行样本时返回非零退出码",
+    ),
+) -> None:
+    """检查动态归因真实样本是否具备运行条件。"""
+    from sqlalchemy.orm import sessionmaker
+
+    from fund_research.db.session import create_engine_from_path
+    from fund_research.experiments.readiness import assess_dynamic_attribution_readiness
+
+    engine = create_engine_from_path(db_path)
+    session_factory = sessionmaker(bind=engine)
+    with session_factory() as session:
+        rows = assess_dynamic_attribution_readiness(
+            session,
+            set(fund_code) if fund_code else None,
+            benchmark_symbol=benchmark_symbol,
+            min_report_date=date.fromisoformat(min_report_date) if min_report_date else None,
+            max_report_date=date.fromisoformat(max_report_date) if max_report_date else None,
+            min_return_observations=min_return_observations,
+            max_snapshot_age_days=max_snapshot_age_days,
+            ready_only=ready_only,
+            limit=limit,
+        )
+
+    ready_count = sum(1 for row in rows if row["is_ready"])
+    if output_json:
+        console.print_json(data={"ready": ready_count, "total": len(rows), "rows": rows})
+        if require_ready and ready_count == 0:
+            raise typer.Exit(code=1)
+        return
+
+    table = Table(title="动态归因运行条件检查")
+    table.add_column("ready")
+    table.add_column("fund")
+    table.add_column("report")
+    table.add_column("benchmark")
+    table.add_column("holdings")
+    table.add_column("industry_missing")
+    table.add_column("stock_cov")
+    table.add_column("bench_obs")
+    table.add_column("weight_snapshot")
+    table.add_column("age")
+    table.add_column("coverage")
+    table.add_column("issues")
+
+    for row in rows:
+        issues = "; ".join(row["issues"]) if row["issues"] else ""
+        table.add_row(
+            "[green]YES[/]" if row["is_ready"] else "[red]NO[/]",
+            row["fund_code"],
+            row["report_date"],
+            row["benchmark_symbol"],
+            str(row["holding_count"]),
+            str(row["missing_industry_count"]),
+            f"{row['stock_return_weight_coverage']:.1%}",
+            str(row["benchmark_return_observations"]),
+            str(row["benchmark_weight_snapshot_date"] or "-"),
+            (
+                "-"
+                if row["benchmark_weight_snapshot_age_days"] is None
+                else str(row["benchmark_weight_snapshot_age_days"])
+            ),
+            (
+                "-"
+                if row["benchmark_weight_coverage_pct"] is None
+                else f"{row['benchmark_weight_coverage_pct']:.1f}%"
+            ),
+            issues or "-",
+        )
+
+    console.print(table)
+    console.print(f"ready={ready_count}/{len(rows)}")
+    if require_ready and ready_count == 0:
+        raise typer.Exit(code=1)
+
+
+@app.command("check-simulated-holding-backtest")
+def check_simulated_holding_backtest(
+    db_path: DbPathOption = None,
+    fund_code: FundCodeOption = None,
+    min_report_date: str | None = typer.Option(
+        None,
+        "--min-report-date",
+        help="只检查验证期不早于该日期的披露期回测样本，格式 YYYY-MM-DD",
+    ),
+    max_report_date: str | None = typer.Option(
+        None,
+        "--max-report-date",
+        help="只检查验证期不晚于该日期的披露期回测样本，格式 YYYY-MM-DD",
+    ),
+    min_validation_pairs: int = typer.Option(
+        1,
+        "--min-validation-pairs",
+        help="每只基金最少可用披露期回测对数",
+    ),
+    min_return_observations: int = typer.Option(
+        20,
+        "--min-return-observations",
+        help="每个披露期最少 NAV/股票收益观测数",
+    ),
+    min_stock_weight_coverage: float = typer.Option(
+        0.8,
+        "--min-stock-weight-coverage",
+        help="上一期估计持仓股票收益权重覆盖率下限",
+    ),
+    require_industry: bool = typer.Option(
+        False,
+        "--require-industry",
+        help="要求上一期和验证期持仓都具备行业归属；默认只记录缺失不阻断",
+    ),
+    ready_only: bool = typer.Option(
+        False,
+        "--ready-only",
+        help="只显示已经满足披露期回测条件的基金",
+    ),
+    limit: int | None = typer.Option(
+        None,
+        "--limit",
+        help="最多显示多少只候选基金",
+    ),
+    output_json: bool = typer.Option(
+        False,
+        "--json",
+        help="以 JSON 输出检查结果，便于脚本读取",
+    ),
+    require_ready: bool = typer.Option(
+        False,
+        "--require-ready",
+        help="没有可运行样本时返回非零退出码",
+    ),
+) -> None:
+    """检查模拟持仓披露期回测是否具备运行条件。"""
+    from sqlalchemy.orm import sessionmaker
+
+    from fund_research.db.session import create_engine_from_path
+    from fund_research.experiments.readiness import (
+        assess_simulated_holding_backtest_readiness,
+    )
+
+    engine = create_engine_from_path(db_path)
+    session_factory = sessionmaker(bind=engine)
+    with session_factory() as session:
+        rows = assess_simulated_holding_backtest_readiness(
+            session,
+            set(fund_code) if fund_code else None,
+            min_report_date=date.fromisoformat(min_report_date) if min_report_date else None,
+            max_report_date=date.fromisoformat(max_report_date) if max_report_date else None,
+            min_validation_pairs=min_validation_pairs,
+            min_return_observations=min_return_observations,
+            min_stock_weight_coverage=min_stock_weight_coverage,
+            require_industry=require_industry,
+            ready_only=ready_only,
+            limit=limit,
+        )
+
+    ready_count = sum(1 for row in rows if row["is_ready"])
+    if output_json:
+        console.print_json(data={"ready": ready_count, "total": len(rows), "rows": rows})
+        if require_ready and ready_count == 0:
+            raise typer.Exit(code=1)
+        return
+
+    table = Table(title="模拟持仓披露期回测运行条件检查")
+    table.add_column("ready")
+    table.add_column("fund")
+    table.add_column("reports")
+    table.add_column("pairs")
+    table.add_column("ready_pairs")
+    table.add_column("stock_cov")
+    table.add_column("nav_obs")
+    table.add_column("issues")
+
+    for row in rows:
+        issues = "; ".join(row["issues"]) if row["issues"] else ""
+        table.add_row(
+            "[green]YES[/]" if row["is_ready"] else "[red]NO[/]",
+            row["fund_code"],
+            str(row["report_period_count"]),
+            str(row["validation_pair_count"]),
+            str(row["ready_validation_pair_count"]),
+            f"{row['min_stock_return_weight_coverage']:.1%}",
+            str(row["min_nav_return_observations"]),
+            issues or "-",
+        )
+
+    console.print(table)
+    console.print(f"ready={ready_count}/{len(rows)}")
+    if require_ready and ready_count == 0:
+        raise typer.Exit(code=1)
+
+
+@app.command("create-simulated-holding-backtest-experiment")
+def create_simulated_holding_backtest_experiment(
+    db_path: DbPathOption = None,
+    fund_code: FundCodeOption = None,
+    experiment_name: str = typer.Option(
+        "Simulated holding disclosure-period backtest",
+        "--experiment-name",
+        help="实验名称",
+    ),
+    algorithm_version: str = typer.Option(
+        "0.1.0",
+        "--algorithm-version",
+        help="算法版本",
+    ),
+    min_report_date: str | None = typer.Option(
+        None,
+        "--min-report-date",
+        help="只纳入验证期不早于该日期的披露期回测样本，格式 YYYY-MM-DD",
+    ),
+    max_report_date: str | None = typer.Option(
+        None,
+        "--max-report-date",
+        help="只纳入验证期不晚于该日期的披露期回测样本，格式 YYYY-MM-DD",
+    ),
+    min_validation_pairs: int = typer.Option(
+        1,
+        "--min-validation-pairs",
+        help="每只基金最少可用披露期回测对数",
+    ),
+    min_return_observations: int = typer.Option(
+        20,
+        "--min-return-observations",
+        help="每个披露期最少 NAV/股票收益观测数",
+    ),
+    min_stock_weight_coverage: float = typer.Option(
+        0.8,
+        "--min-stock-weight-coverage",
+        help="上一期估计持仓股票收益权重覆盖率下限",
+    ),
+    simulation_method: str = typer.Option(
+        "lagged_disclosure_baseline",
+        "--simulation-method",
+        help="模拟方法：lagged_disclosure_baseline 或 optimized_tracking",
+    ),
+    max_positions: int = typer.Option(
+        30,
+        "--max-positions",
+        help="optimized_tracking 最大持仓数量",
+    ),
+    max_single_weight: float = typer.Option(
+        0.10,
+        "--max-single-weight",
+        help="optimized_tracking 单只股票权重上限",
+    ),
+    turnover_penalty: float = typer.Option(
+        0.0,
+        "--turnover-penalty",
+        help="optimized_tracking 相对上一期披露权重的换手惩罚",
+    ),
+    industry_penalty: float = typer.Option(
+        0.0,
+        "--industry-penalty",
+        help="optimized_tracking 相对上一期披露行业权重的偏离惩罚",
+    ),
+    use_cvxpy: bool = typer.Option(
+        True,
+        "--use-cvxpy/--no-use-cvxpy",
+        help="optimized_tracking 是否优先使用 CVXPY，关闭后使用 scipy fallback",
+    ),
+    require_industry: bool = typer.Option(
+        False,
+        "--require-industry",
+        help="要求上一期和验证期持仓都具备行业归属；默认只记录缺失不阻断",
+    ),
+    limit: int | None = typer.Option(
+        None,
+        "--limit",
+        help="最多纳入多少只 ready 基金",
+    ),
+) -> None:
+    """从 ready 样本创建模拟持仓披露期回测实验。"""
+    from sqlalchemy.orm import sessionmaker
+
+    from fund_research.db.session import create_engine_from_path
+    from fund_research.experiments.manager import create_experiment
+    from fund_research.experiments.readiness import (
+        assess_simulated_holding_backtest_readiness,
+    )
+
+    parsed_min_report_date = date.fromisoformat(min_report_date) if min_report_date else None
+    parsed_max_report_date = date.fromisoformat(max_report_date) if max_report_date else None
+    if simulation_method not in {"lagged_disclosure_baseline", "optimized_tracking"}:
+        console.print(f"[red]不支持的 simulation_method: {simulation_method}[/]")
+        raise typer.Exit(code=1)
+    engine = create_engine_from_path(db_path)
+    session_factory = sessionmaker(bind=engine)
+    with session_factory() as session:
+        rows = assess_simulated_holding_backtest_readiness(
+            session,
+            set(fund_code) if fund_code else None,
+            min_report_date=parsed_min_report_date,
+            max_report_date=parsed_max_report_date,
+            min_validation_pairs=min_validation_pairs,
+            min_return_observations=min_return_observations,
+            min_stock_weight_coverage=min_stock_weight_coverage,
+            require_industry=require_industry,
+            ready_only=True,
+            limit=limit,
+        )
+        sample_fund_codes = sorted({row["fund_code"] for row in rows})
+        if not sample_fund_codes:
+            console.print("[red]未找到满足模拟持仓披露期回测条件的样本，未创建实验[/]")
+            raise typer.Exit(code=1)
+
+        parameters = {
+            "validation_mode": "disclosure_period",
+            "simulation_method": simulation_method,
+            "min_validation_pairs": min_validation_pairs,
+            "min_return_observations": min_return_observations,
+            "min_stock_weight_coverage": min_stock_weight_coverage,
+            "require_industry": require_industry,
+            "max_positions": max_positions,
+            "max_single_weight": max_single_weight,
+            "turnover_penalty": turnover_penalty,
+            "industry_penalty": industry_penalty,
+            "use_cvxpy": use_cvxpy,
+        }
+        if min_report_date:
+            parameters["min_report_date"] = min_report_date
+        if max_report_date:
+            parameters["max_report_date"] = max_report_date
+        exp = create_experiment(
+            session,
+            experiment_name=experiment_name,
+            algorithm_name="simulated_holding",
+            algorithm_version=algorithm_version,
+            parameters=parameters,
+            sample_fund_codes=sample_fund_codes,
+        )
+
+    console.print(f"[green]OK[/] 已创建模拟持仓披露期回测实验: id={exp.id}")
+    console.print(f"funds={len(sample_fund_codes)}")
+    console.print(f"parameters={json.dumps(parameters, ensure_ascii=False)}")
+
+
+@app.command("create-dynamic-attribution-experiment")
+def create_dynamic_attribution_experiment(
+    db_path: DbPathOption = None,
+    report_date: str = typer.Option(
+        ...,
+        "--report-date",
+        help="只从该持仓报告期的 ready 样本创建实验，格式 YYYY-MM-DD",
+    ),
+    fund_code: FundCodeOption = None,
+    benchmark_symbol: str | None = typer.Option(
+        None,
+        "--benchmark-symbol",
+        "--index-symbol",
+        help="动态归因基准指数代码，如 sh000300；不传则按基金资料解析或默认 sh000300",
+    ),
+    experiment_name: str = typer.Option(
+        "Dynamic attribution ready sample",
+        "--experiment-name",
+        help="实验名称",
+    ),
+    algorithm_version: str = typer.Option(
+        "0.1.0",
+        "--algorithm-version",
+        help="算法版本",
+    ),
+    min_return_observations: int = typer.Option(
+        3,
+        "--min-return-observations",
+        help="每个报告期最少基准收益观测数",
+    ),
+    max_snapshot_age_days: int = typer.Option(
+        180,
+        "--max-snapshot-age-days",
+        help="基准行业权重快照最大允许年龄",
+    ),
+    limit: int | None = typer.Option(
+        None,
+        "--limit",
+        help="最多纳入多少只 ready 基金",
+    ),
+) -> None:
+    """从指定报告期的 ready 样本创建动态归因实验。"""
+    from sqlalchemy.orm import sessionmaker
+
+    from fund_research.db.session import create_engine_from_path
+    from fund_research.experiments.manager import create_experiment
+    from fund_research.experiments.readiness import assess_dynamic_attribution_readiness
+
+    target_report_date = date.fromisoformat(report_date)
+    engine = create_engine_from_path(db_path)
+    session_factory = sessionmaker(bind=engine)
+    with session_factory() as session:
+        rows = assess_dynamic_attribution_readiness(
+            session,
+            set(fund_code) if fund_code else None,
+            benchmark_symbol=benchmark_symbol,
+            min_report_date=target_report_date,
+            max_report_date=target_report_date,
+            min_return_observations=min_return_observations,
+            max_snapshot_age_days=max_snapshot_age_days,
+            ready_only=True,
+            limit=limit,
+        )
+        sample_fund_codes = sorted({row["fund_code"] for row in rows})
+        if not sample_fund_codes:
+            console.print("[red]未找到满足动态归因运行条件的样本，未创建实验[/]")
+            raise typer.Exit(code=1)
+
+        parameters = {
+            "report_dates": [report_date],
+            "min_return_observations": min_return_observations,
+            "max_benchmark_weight_snapshot_age_days": max_snapshot_age_days,
+        }
+        if benchmark_symbol:
+            parameters["benchmark_symbol"] = benchmark_symbol
+        exp = create_experiment(
+            session,
+            experiment_name=experiment_name,
+            algorithm_name="dynamic_attribution",
+            algorithm_version=algorithm_version,
+            parameters=parameters,
+            sample_fund_codes=sample_fund_codes,
+        )
+
+    console.print(f"[green]OK[/] 已创建动态归因实验: id={exp.id}")
+    console.print(f"report_date={report_date}, funds={len(sample_fund_codes)}")
+    console.print(f"parameters={json.dumps(parameters, ensure_ascii=False)}")
+
+
 @app.command()
 def update(
     entity: UpdateEntityArg = "sample-funds",
     fund_code: FundCodeOption = None,
     stock_code: StockCodeOption = None,
     index_symbol: IndexSymbolOption = None,
+    benchmark_members_file: BenchmarkMembersFileOption = None,
+    industry_symbol: IndustrySymbolOption = None,
+    industry_file: IndustryFileOption = None,
     sample: SamplePathOption = None,
     db_path: DbPathOption = None,
     dry_run: DryRunOption = False,
@@ -418,6 +947,11 @@ def update(
     end: EndDateOption = None,
     report_date: ReportDateOption = None,
     year: YearOption = None,
+    request_interval: RequestIntervalOption = 0.0,
+    retry: RetryOption = 0,
+    industry_batch_size: IndustryBatchSizeOption = 20,
+    benchmark_validation_db: BenchmarkValidationDbOption = Path("data/benchmark_validation.sqlite"),
+    overwrite_holding_industry: OverwriteHoldingIndustryOption = False,
 ) -> None:
     """更新本地数据。"""
     from sqlalchemy.orm import sessionmaker
@@ -425,8 +959,11 @@ def update(
     from fund_research.config.settings import get_settings
     from fund_research.data.update import (
         UpdateSummary,
+        backfill_fund_holding_industries,
+        import_benchmark_validation_database,
         latest_holding_stock_codes,
         load_sample_funds,
+        upsert_akshare_benchmark_index_members,
         upsert_akshare_fund_dividends,
         upsert_akshare_fund_fees,
         upsert_akshare_fund_holdings,
@@ -440,6 +977,10 @@ def update(
         upsert_akshare_index_daily,
         upsert_akshare_official_pdf_evidence,
         upsert_akshare_stock_daily,
+        upsert_akshare_stock_industry_membership,
+        upsert_benchmark_industry_weights,
+        upsert_local_benchmark_index_members,
+        upsert_local_stock_industry_membership,
         upsert_sample_funds,
     )
     from fund_research.db.session import create_engine_from_path, init_db
@@ -450,7 +991,8 @@ def update(
         console.print(f"[red]暂不支持的数据类型:[/] {exc}")
         raise typer.Exit(code=1) from None
 
-    sample = sample or get_settings().sample_funds_path_absolute
+    settings = get_settings()
+    sample = sample or settings.sample_funds_path_absolute
     if not sample.exists():
         console.print(f"[red]样本文件不存在:[/] {sample}")
         raise typer.Exit(code=1)
@@ -578,6 +1120,85 @@ def update(
                     selected_index_symbols,
                     start_date=start_date,
                     end_date=end_date,
+                    dry_run=dry_run,
+                )
+            )
+        if "benchmark-members" in selected_entities:
+            selected_index_symbols = set(index_symbol) if index_symbol else {
+                "sh000300",
+                "sh000905",
+                "sh000852",
+            }
+            if benchmark_members_file is not None:
+                if len(selected_index_symbols) != 1:
+                    console.print("[red]--benchmark-members-file 需要配合且只配合一个 --index-symbol[/]")
+                    raise typer.Exit(code=1)
+                summaries.append(
+                    upsert_local_benchmark_index_members(
+                        session,
+                        next(iter(selected_index_symbols)),
+                        benchmark_members_file,
+                        dry_run=dry_run,
+                    )
+                )
+            else:
+                summaries.append(
+                    upsert_akshare_benchmark_index_members(
+                        session,
+                        selected_index_symbols,
+                        dry_run=dry_run,
+                    )
+                )
+        if "stock-industry" in selected_entities:
+            if industry_file is not None:
+                summaries.append(
+                    upsert_local_stock_industry_membership(
+                        session,
+                        industry_file,
+                        dry_run=dry_run,
+                    )
+                )
+            else:
+                summaries.append(
+                    upsert_akshare_stock_industry_membership(
+                        session,
+                        set(industry_symbol) if industry_symbol else None,
+                        request_interval_seconds=max(request_interval, 0.0),
+                        max_retries=max(retry, 0),
+                        industry_batch_size=max(industry_batch_size, 0),
+                        symbol_cache_dir=settings.cache_dir_absolute,
+                        dry_run=dry_run,
+                    )
+                )
+        if "benchmark-industry" in selected_entities:
+            selected_index_symbols = set(index_symbol) if index_symbol else {
+                "sh000300",
+                "sh000905",
+                "sh000852",
+            }
+            summaries.append(
+                upsert_benchmark_industry_weights(
+                    session,
+                    selected_index_symbols,
+                    target_date=end_date,
+                    dry_run=dry_run,
+                )
+            )
+        if "benchmark-validation-import" in selected_entities:
+            summaries.extend(
+                import_benchmark_validation_database(
+                    session,
+                    benchmark_validation_db,
+                    dry_run=dry_run,
+                )
+            )
+        if "holding-industry-backfill" in selected_entities:
+            summaries.append(
+                backfill_fund_holding_industries(
+                    session,
+                    set(fund_code) if fund_code else selected_codes,
+                    report_date=holding_report_date,
+                    overwrite=overwrite_holding_industry,
                     dry_run=dry_run,
                 )
             )

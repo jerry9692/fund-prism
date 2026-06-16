@@ -131,6 +131,8 @@ class BaseDataAdapter(ABC):
             "holder_structure",
             "stock_daily",
             "index_daily",
+            "benchmark_index_member",
+            "stock_industry_membership",
             "fund_announcements",
         ]
         return entity_type in supported

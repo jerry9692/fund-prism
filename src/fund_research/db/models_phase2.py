@@ -8,7 +8,20 @@ registry, so Alembic, application code, and tests all see the same schema.
 from datetime import date, datetime
 from typing import Any
 
-from sqlalchemy import JSON, Boolean, Date, DateTime, Float, ForeignKey, Integer, String, Text
+from sqlalchemy import (
+    JSON,
+    BigInteger,
+    Boolean,
+    Date,
+    DateTime,
+    Float,
+    ForeignKey,
+    Index,
+    Integer,
+    String,
+    Text,
+    UniqueConstraint,
+)
 from sqlalchemy.orm import Mapped, mapped_column
 
 from fund_research.db.models import Base, id_column
@@ -135,7 +148,11 @@ class ExperimentResult(Base):
     __tablename__ = "experiment_result"
 
     id: Mapped[int] = id_column()
-    experiment_id: Mapped[int] = mapped_column(ForeignKey("algorithm_experiment.id"), index=True)
+    experiment_id: Mapped[int] = mapped_column(
+        BigInteger,
+        ForeignKey("algorithm_experiment.id"),
+        index=True,
+    )
     fund_code: Mapped[str] = mapped_column(String(20))
     calc_date: Mapped[date] = mapped_column(Date)
     is_success: Mapped[bool] = mapped_column(Boolean, default=True)
@@ -160,6 +177,114 @@ class ReviewerAnnotation(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.now)
 
 
+class BenchmarkIndexMember(Base):
+    """指数成分与权重快照。"""
+
+    __tablename__ = "benchmark_index_member"
+
+    id: Mapped[int] = id_column()
+    benchmark_symbol: Mapped[str] = mapped_column(String(20), index=True)
+    index_code: Mapped[str] = mapped_column(String(20))
+    index_name: Mapped[str | None] = mapped_column(String(100))
+    snapshot_date: Mapped[date] = mapped_column(Date, index=True)
+    stock_code: Mapped[str] = mapped_column(String(20), index=True)
+    stock_name: Mapped[str | None] = mapped_column(String(100))
+    exchange: Mapped[str | None] = mapped_column(String(20))
+    weight_pct: Mapped[float | None] = mapped_column(Float)
+    source_name: Mapped[str] = mapped_column(String(80))
+    source_level: Mapped[str] = mapped_column(String(10))
+    raw_payload_hash: Mapped[str | None] = mapped_column(String(64))
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.now)
+
+    __table_args__ = (
+        UniqueConstraint(
+            "benchmark_symbol",
+            "snapshot_date",
+            "stock_code",
+            name="uq_benchmark_member_symbol_date_stock",
+        ),
+        Index("ix_benchmark_member_symbol_date", "benchmark_symbol", "snapshot_date"),
+        Index("ix_benchmark_member_stock_date", "stock_code", "snapshot_date"),
+    )
+
+
+class StockIndustryMembership(Base):
+    """股票行业归属快照。"""
+
+    __tablename__ = "stock_industry_membership"
+
+    id: Mapped[int] = id_column()
+    stock_code: Mapped[str] = mapped_column(String(20), index=True)
+    stock_name: Mapped[str | None] = mapped_column(String(100))
+    classification_type: Mapped[str] = mapped_column(String(30), index=True)
+    classification_version: Mapped[str | None] = mapped_column(String(20))
+    level: Mapped[int] = mapped_column(Integer)
+    industry_code: Mapped[str | None] = mapped_column(String(20))
+    industry_name: Mapped[str] = mapped_column(String(50), index=True)
+    parent_industry_code: Mapped[str | None] = mapped_column(String(20))
+    effective_date: Mapped[date] = mapped_column(Date, index=True)
+    source_name: Mapped[str] = mapped_column(String(80))
+    source_level: Mapped[str] = mapped_column(String(10))
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.now)
+
+    __table_args__ = (
+        UniqueConstraint(
+            "stock_code",
+            "classification_type",
+            "level",
+            "effective_date",
+            name="uq_stock_industry_stock_type_level_date",
+        ),
+        Index(
+            "ix_stock_industry_stock_type_date",
+            "stock_code",
+            "classification_type",
+            "effective_date",
+        ),
+        Index(
+            "ix_stock_industry_type_level_name",
+            "classification_type",
+            "level",
+            "industry_name",
+        ),
+    )
+
+
+class BenchmarkIndustryWeight(Base):
+    """由指数成分权重和股票行业归属聚合得到的基准行业权重。"""
+
+    __tablename__ = "benchmark_industry_weight"
+
+    id: Mapped[int] = id_column()
+    benchmark_symbol: Mapped[str] = mapped_column(String(20), index=True)
+    snapshot_date: Mapped[date] = mapped_column(Date, index=True)
+    classification_type: Mapped[str] = mapped_column(String(30))
+    classification_level: Mapped[int] = mapped_column(Integer)
+    industry_code: Mapped[str | None] = mapped_column(String(20))
+    industry_name: Mapped[str] = mapped_column(String(50))
+    weight_pct: Mapped[float] = mapped_column(Float)
+    member_count: Mapped[int] = mapped_column(Integer)
+    unmapped_weight_pct: Mapped[float | None] = mapped_column(Float)
+    coverage_pct: Mapped[float | None] = mapped_column(Float)
+    source_member_snapshot: Mapped[date | None] = mapped_column(Date)
+    source_industry_snapshot: Mapped[date | None] = mapped_column(Date)
+    algorithm_version: Mapped[str] = mapped_column(String(20))
+    warnings: Mapped[dict[str, Any] | None] = mapped_column(JSON)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.now)
+
+    __table_args__ = (
+        UniqueConstraint(
+            "benchmark_symbol",
+            "snapshot_date",
+            "classification_type",
+            "classification_level",
+            "industry_name",
+            name="uq_benchmark_industry_symbol_date_type_level_name",
+        ),
+        Index("ix_benchmark_industry_symbol_date", "benchmark_symbol", "snapshot_date"),
+    )
+
+
 SimulatedHoldingResultV2 = SimulatedHoldingResult
 DynamicAttributionResultV2 = DynamicAttributionResult
 ScoringResultV2 = ScoringResult
@@ -167,3 +292,6 @@ ScoringBacktestV2 = ScoringBacktest
 AlgorithmExperimentV2 = AlgorithmExperiment
 ExperimentResultV2 = ExperimentResult
 ReviewerAnnotationV2 = ReviewerAnnotation
+BenchmarkIndexMemberV2 = BenchmarkIndexMember
+StockIndustryMembershipV2 = StockIndustryMembership
+BenchmarkIndustryWeightV2 = BenchmarkIndustryWeight

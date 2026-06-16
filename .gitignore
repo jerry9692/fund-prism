@@ -73,3 +73,4 @@ temp/
 # User data (never commit)
 data/raw/
 data/external/
+data/local/

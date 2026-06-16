@@ -1,5 +1,6 @@
 """Data update workflow tests."""
 
+import sqlite3
 from datetime import date
 from pathlib import Path
 
@@ -11,6 +12,9 @@ from sqlalchemy.orm import Session
 from fund_research.core.enums import DataSourceLevel, DataSourceType
 from fund_research.data.adapters.base import FetchResult
 from fund_research.data.update import (
+    backfill_fund_holding_industries,
+    import_benchmark_validation_database,
+    upsert_akshare_benchmark_index_members,
     upsert_akshare_fund_dividends,
     upsert_akshare_fund_fees,
     upsert_akshare_fund_holdings,
@@ -24,9 +28,15 @@ from fund_research.data.update import (
     upsert_akshare_index_daily,
     upsert_akshare_official_pdf_evidence,
     upsert_akshare_stock_daily,
+    upsert_akshare_stock_industry_membership,
+    upsert_benchmark_industry_weights,
+    upsert_local_benchmark_index_members,
+    upsert_local_stock_industry_membership,
     upsert_sample_funds,
 )
 from fund_research.db.models import (
+    BenchmarkIndexMember,
+    BenchmarkIndustryWeight,
     DataSourceSnapshot,
     EvidenceRecord,
     FundCompany,
@@ -39,6 +49,7 @@ from fund_research.db.models import (
     FundScale,
     HolderStructure,
     StockDaily,
+    StockIndustryMembership,
     StyleExposureResult,
     TaskLog,
 )
@@ -266,6 +277,70 @@ class FakeAkshareAdapter:
             ],
         )
 
+    def fetch_index_members_weight(self, symbol: str) -> FetchResult:
+        return self._result(
+            "benchmark_index_member",
+            [
+                {
+                    "benchmark_symbol": symbol,
+                    "index_code": "000300",
+                    "index_name": "沪深300",
+                    "snapshot_date": "2026-06-01",
+                    "stock_code": "600519",
+                    "stock_name": "贵州茅台",
+                    "exchange": "SH",
+                    "weight_pct": "5.25",
+                },
+                {
+                    "benchmark_symbol": symbol,
+                    "index_code": "000300",
+                    "index_name": "沪深300",
+                    "snapshot_date": "2026-06-01",
+                    "stock_code": "000001",
+                    "stock_name": "平安银行",
+                    "exchange": "SZ",
+                    "weight_pct": "1.50",
+                },
+            ],
+        )
+
+    def fetch_sw_industry_membership(
+        self,
+        symbols: set[str] | None = None,
+        *,
+        request_interval_seconds: float = 0.0,
+        max_retries: int = 0,
+    ) -> FetchResult:
+        result = self._result(
+            "stock_industry_membership",
+            [
+                {
+                    "stock_code": "600519",
+                    "stock_name": "贵州茅台",
+                    "classification_type": "SW",
+                    "classification_version": "2021",
+                    "level": 1,
+                    "industry_code": "801120",
+                    "industry_name": "食品饮料",
+                    "parent_industry_code": None,
+                    "effective_date": "2026-06-01",
+                },
+                {
+                    "stock_code": "000001",
+                    "stock_name": "平安银行",
+                    "classification_type": "SW",
+                    "classification_version": "2021",
+                    "level": 1,
+                    "industry_code": "801780",
+                    "industry_name": "银行",
+                    "parent_industry_code": None,
+                    "effective_date": "2026-06-01",
+                },
+            ],
+        )
+        result.source_level = DataSourceLevel.C
+        return result
+
     def fetch_announcements(self, fund_code: str) -> FetchResult:
         return self._result(
             "fund_announcements",
@@ -277,6 +352,63 @@ class FakeAkshareAdapter:
                 }
             ],
         )
+
+
+class BatchedStockIndustryAdapter(FakeAkshareAdapter):
+    """Fake adapter that returns symbol-specific stock industry rows."""
+
+    def __init__(self) -> None:
+        self.calls: list[set[str]] = []
+
+    def _sw_industry_symbols(self) -> list[str]:
+        return ["801120.SI", "801780.SI"]
+
+    def fetch_sw_industry_membership(
+        self,
+        symbols: set[str] | None = None,
+        *,
+        request_interval_seconds: float = 0.0,
+        max_retries: int = 0,
+    ) -> FetchResult:
+        selected_symbols = set(symbols or [])
+        self.calls.append(selected_symbols)
+        rows_by_symbol = {
+            "801120.SI": {
+                "stock_code": "600519",
+                "stock_name": "贵州茅台",
+                "classification_type": "SW",
+                "classification_version": "2021",
+                "level": 1,
+                "industry_code": "801120",
+                "industry_name": "食品饮料",
+                "parent_industry_code": None,
+                "effective_date": "2026-06-01",
+            },
+            "801780.SI": {
+                "stock_code": "000001",
+                "stock_name": "平安银行",
+                "classification_type": "SW",
+                "classification_version": "2021",
+                "level": 1,
+                "industry_code": "801780",
+                "industry_name": "银行",
+                "parent_industry_code": None,
+                "effective_date": "2026-06-01",
+            },
+        }
+        result = self._result(
+            "stock_industry_membership",
+            [rows_by_symbol[symbol] for symbol in sorted(selected_symbols)],
+        )
+        result.source_level = DataSourceLevel.C
+        return result
+
+
+class CachedOnlyStockIndustryAdapter(BatchedStockIndustryAdapter):
+    """Fake adapter whose live SW symbol list endpoint is unavailable."""
+
+    def _sw_industry_symbols(self) -> list[str]:
+        raise RuntimeError("live endpoint unavailable")
 
 
 class NoPDFAnnouncementAdapter(FakeAkshareAdapter):
@@ -814,6 +946,672 @@ def test_upsert_akshare_index_daily_passes_date_window(test_session: Session) ->
     assert summary.inserted == 1
     assert adapter.seen_start == date(2024, 1, 1)
     assert adapter.seen_end == date(2024, 1, 31)
+
+
+def test_upsert_akshare_benchmark_index_members_writes_weight_snapshots(
+    test_session: Session,
+) -> None:
+    """Benchmark member updates should upsert CSIndex constituent weights."""
+    adapter = FakeAkshareAdapter()
+
+    summary = upsert_akshare_benchmark_index_members(
+        test_session,
+        {"sh000300"},
+        adapter=adapter,
+    )
+    rows = test_session.scalars(
+        select(BenchmarkIndexMember).order_by(BenchmarkIndexMember.stock_code)
+    ).all()
+    snapshot = test_session.scalar(
+        select(DataSourceSnapshot).where(DataSourceSnapshot.entity_type == "benchmark_index_member")
+    )
+
+    assert summary.inserted == 2
+    assert len(rows) == 2
+    assert rows[0].benchmark_symbol == "sh000300"
+    assert rows[0].snapshot_date == date(2026, 6, 1)
+    assert rows[0].source_name == "akshare.index_stock_cons_weight_csindex"
+    assert rows[0].source_level == DataSourceLevel.B.value
+    assert rows[1].stock_code == "600519"
+    assert rows[1].weight_pct == 5.25
+    assert snapshot is not None
+
+    second = upsert_akshare_benchmark_index_members(
+        test_session,
+        {"sh000300"},
+        adapter=adapter,
+    )
+    row_count = test_session.scalar(select(func.count()).select_from(BenchmarkIndexMember))
+    assert second.updated == 2
+    assert row_count == 2
+
+
+def test_upsert_local_benchmark_index_members_imports_csv_and_cleans_codes(
+    test_session: Session,
+    tmp_path: Path,
+) -> None:
+    """Local benchmark member files should import constituent weights."""
+    member_file = tmp_path / "000300closeweight.csv"
+    member_file.write_text(
+        "\n".join([
+            "日期,指数代码,指数名称,成分券代码,成分券名称,交易所,权重",
+            "2026-06-01,000300,沪深300,600519.SH,贵州茅台,上海证券交易所,5.25",
+            "2026-06-01,000300,沪深300,000001.SZ,平安银行,深圳证券交易所,1.50",
+        ]),
+        encoding="utf-8",
+    )
+
+    summary = upsert_local_benchmark_index_members(
+        test_session,
+        "sh000300",
+        member_file,
+    )
+    rows = test_session.scalars(
+        select(BenchmarkIndexMember).order_by(BenchmarkIndexMember.stock_code)
+    ).all()
+    snapshot = test_session.scalar(
+        select(DataSourceSnapshot).where(DataSourceSnapshot.entity_type == "benchmark_index_member")
+    )
+
+    assert summary.requested == 2
+    assert summary.inserted == 2
+    assert summary.warnings == []
+    assert [row.stock_code for row in rows] == ["000001", "600519"]
+    assert rows[0].source_name == "local_file:000300closeweight.csv"
+    assert rows[0].source_level == DataSourceLevel.LOCAL.value
+    assert rows[1].weight_pct == 5.25
+    assert snapshot is not None
+    assert snapshot.source_type == DataSourceType.LOCAL_FILE.value
+
+
+def test_upsert_local_benchmark_index_members_reimport_updates_existing_rows(
+    test_session: Session,
+    tmp_path: Path,
+) -> None:
+    """Re-importing a local benchmark member file should update existing rows."""
+    member_file = tmp_path / "000300closeweight.csv"
+    member_file.write_text(
+        "\n".join([
+            "snapshot_date,index_code,index_name,stock_code,stock_name,exchange,weight_pct",
+            "2026-06-01,000300,沪深300,600519,贵州茅台,SH,5.25",
+        ]),
+        encoding="utf-8",
+    )
+
+    first = upsert_local_benchmark_index_members(test_session, "sh000300", member_file)
+    second = upsert_local_benchmark_index_members(test_session, "sh000300", member_file)
+    row_count = test_session.scalar(select(func.count()).select_from(BenchmarkIndexMember))
+
+    assert first.inserted == 1
+    assert second.updated == 1
+    assert row_count == 1
+
+
+def test_upsert_local_benchmark_index_members_imports_xlsx(
+    test_session: Session,
+    tmp_path: Path,
+) -> None:
+    """Local benchmark member imports should also accept XLSX files."""
+    member_file = tmp_path / "000300closeweight.xlsx"
+    pd.DataFrame([{
+        "日期": "2026-06-01",
+        "指数代码": "000300",
+        "指数名称": "沪深300",
+        "成分券代码": "000001.SZ",
+        "成分券名称": "平安银行",
+        "交易所": "深圳证券交易所",
+        "权重": 1.5,
+    }]).to_excel(member_file, index=False)
+
+    summary = upsert_local_benchmark_index_members(test_session, "sh000300", member_file)
+    row = test_session.scalar(select(BenchmarkIndexMember))
+
+    assert summary.inserted == 1
+    assert row is not None
+    assert row.stock_code == "000001"
+    assert row.weight_pct == 1.5
+
+
+def test_upsert_local_benchmark_index_members_warns_for_missing_required_columns(
+    test_session: Session,
+    tmp_path: Path,
+) -> None:
+    """Rows without snapshot date, stock code, or weight should be skipped."""
+    member_file = tmp_path / "bad_closeweight.csv"
+    member_file.write_text(
+        "\n".join([
+            "日期,指数代码,成分券代码,成分券名称",
+            "2026-06-01,000300,600519,贵州茅台",
+        ]),
+        encoding="utf-8",
+    )
+
+    summary = upsert_local_benchmark_index_members(test_session, "sh000300", member_file)
+    row_count = test_session.scalar(select(func.count()).select_from(BenchmarkIndexMember))
+
+    assert summary.requested == 1
+    assert summary.skipped == 1
+    assert row_count == 0
+    assert any("缺少必要字段" in warning for warning in summary.warnings or [])
+
+
+def test_upsert_akshare_stock_industry_membership_writes_sw_level_one_rows(
+    test_session: Session,
+) -> None:
+    """Stock industry membership updates should persist SW level-one snapshots."""
+    adapter = FakeAkshareAdapter()
+
+    summary = upsert_akshare_stock_industry_membership(
+        test_session,
+        {"801120.SI"},
+        adapter=adapter,
+    )
+    rows = test_session.scalars(
+        select(StockIndustryMembership).order_by(StockIndustryMembership.stock_code)
+    ).all()
+    snapshot = test_session.scalar(
+        select(DataSourceSnapshot).where(
+            DataSourceSnapshot.entity_type == "stock_industry_membership"
+        )
+    )
+
+    assert summary.inserted == 2
+    assert len(rows) == 2
+    assert rows[0].stock_code == "000001"
+    assert rows[0].classification_type == "SW"
+    assert rows[0].level == 1
+    assert rows[0].industry_name == "银行"
+    assert rows[0].source_level == DataSourceLevel.C.value
+    assert rows[1].industry_name == "食品饮料"
+    assert snapshot is not None
+
+    second = upsert_akshare_stock_industry_membership(
+        test_session,
+        {"801120.SI"},
+        adapter=adapter,
+    )
+    row_count = test_session.scalar(select(func.count()).select_from(StockIndustryMembership))
+    assert second.updated == 2
+    assert row_count == 2
+
+
+def test_upsert_akshare_stock_industry_membership_batches_and_caches_symbols(
+    test_session: Session,
+    tmp_path: Path,
+) -> None:
+    """Full stock-industry updates should batch commits and cache the SW symbol list."""
+    adapter = BatchedStockIndustryAdapter()
+
+    summary = upsert_akshare_stock_industry_membership(
+        test_session,
+        None,
+        adapter=adapter,
+        industry_batch_size=1,
+        symbol_cache_dir=tmp_path,
+    )
+    rows = test_session.scalars(
+        select(StockIndustryMembership).order_by(StockIndustryMembership.stock_code)
+    ).all()
+    cache_path = tmp_path / "stock_industry" / "sw_level_one_symbols.json"
+
+    assert summary.requested == 2
+    assert summary.inserted == 2
+    assert adapter.calls == [{"801120.SI"}, {"801780.SI"}]
+    assert len(rows) == 2
+    assert cache_path.exists()
+    assert "801120.SI" in cache_path.read_text(encoding="utf-8")
+    assert "801780.SI" in cache_path.read_text(encoding="utf-8")
+
+
+def test_upsert_akshare_stock_industry_membership_uses_cached_symbols_on_live_failure(
+    test_session: Session,
+    tmp_path: Path,
+) -> None:
+    """A cached SW symbol list should let stock-industry resume when live listing fails."""
+    cache_path = tmp_path / "stock_industry" / "sw_level_one_symbols.json"
+    cache_path.parent.mkdir(parents=True)
+    cache_path.write_text(
+        '{"symbols": ["801120.SI"], "source": "test"}',
+        encoding="utf-8",
+    )
+    adapter = CachedOnlyStockIndustryAdapter()
+
+    summary = upsert_akshare_stock_industry_membership(
+        test_session,
+        None,
+        adapter=adapter,
+        industry_batch_size=1,
+        symbol_cache_dir=tmp_path,
+    )
+
+    assert summary.requested == 1
+    assert summary.inserted == 1
+    assert adapter.calls == [{"801120.SI"}]
+    assert any("使用本地缓存" in warning for warning in summary.warnings or [])
+
+
+def test_upsert_local_stock_industry_membership_imports_csv_and_cleans_codes(
+    test_session: Session,
+    tmp_path: Path,
+) -> None:
+    """Local stock-industry files should import auditable SW level-one mappings."""
+    industry_file = tmp_path / "stock_industry_sw.csv"
+    industry_file.write_text(
+        "\n".join([
+            "stock_code,stock_name,industry_name,effective_date,source_name",
+            "600519.SH,贵州茅台,食品饮料,2026-06-01,manual_sw_sample",
+            "000001.SZ,平安银行,银行,2026-06-01,manual_sw_sample",
+        ]),
+        encoding="utf-8",
+    )
+
+    summary = upsert_local_stock_industry_membership(test_session, industry_file)
+    rows = test_session.scalars(
+        select(StockIndustryMembership).order_by(StockIndustryMembership.stock_code)
+    ).all()
+    snapshot = test_session.scalar(
+        select(DataSourceSnapshot).where(
+            DataSourceSnapshot.entity_type == "stock_industry_membership"
+        )
+    )
+
+    assert summary.requested == 2
+    assert summary.inserted == 2
+    assert summary.warnings == []
+    assert [row.stock_code for row in rows] == ["000001", "600519"]
+    assert rows[0].source_name == "manual_sw_sample"
+    assert rows[0].source_level == DataSourceLevel.LOCAL.value
+    assert snapshot is not None
+    assert snapshot.source_type == DataSourceType.LOCAL_FILE.value
+
+
+def test_upsert_local_stock_industry_membership_reimport_updates_existing_rows(
+    test_session: Session,
+    tmp_path: Path,
+) -> None:
+    """Re-importing the same local industry file should update instead of duplicating."""
+    industry_file = tmp_path / "stock_industry_sw.csv"
+    industry_file.write_text(
+        "\n".join([
+            "stock_code,stock_name,industry_name,effective_date",
+            "600519.SH,贵州茅台,食品饮料,2026-06-01",
+        ]),
+        encoding="utf-8",
+    )
+
+    first = upsert_local_stock_industry_membership(test_session, industry_file)
+    second = upsert_local_stock_industry_membership(test_session, industry_file)
+    row_count = test_session.scalar(select(func.count()).select_from(StockIndustryMembership))
+
+    assert first.inserted == 1
+    assert second.updated == 1
+    assert row_count == 1
+
+
+def test_upsert_local_stock_industry_membership_imports_xlsx(
+    test_session: Session,
+    tmp_path: Path,
+) -> None:
+    """Local stock-industry imports should also accept XLSX mapping files."""
+    industry_file = tmp_path / "stock_industry_sw.xlsx"
+    pd.DataFrame([{
+        "stock_code": "000001.SZ",
+        "stock_name": "平安银行",
+        "industry_name": "银行",
+        "effective_date": "2026-06-01",
+    }]).to_excel(industry_file, index=False)
+
+    summary = upsert_local_stock_industry_membership(test_session, industry_file)
+    row = test_session.scalar(select(StockIndustryMembership))
+
+    assert summary.inserted == 1
+    assert row is not None
+    assert row.stock_code == "000001"
+    assert row.industry_name == "银行"
+
+
+def test_upsert_local_stock_industry_membership_warns_for_missing_required_columns(
+    test_session: Session,
+    tmp_path: Path,
+) -> None:
+    """Rows without stock code or industry name should be skipped with warnings."""
+    industry_file = tmp_path / "bad_stock_industry_sw.csv"
+    industry_file.write_text(
+        "\n".join([
+            "stock_code,stock_name,effective_date",
+            "600519.SH,贵州茅台,2026-06-01",
+        ]),
+        encoding="utf-8",
+    )
+
+    summary = upsert_local_stock_industry_membership(test_session, industry_file)
+    row_count = test_session.scalar(select(func.count()).select_from(StockIndustryMembership))
+
+    assert summary.requested == 1
+    assert summary.skipped == 1
+    assert row_count == 0
+    assert any("缺少必要字段" in warning for warning in summary.warnings or [])
+
+
+def test_upsert_benchmark_industry_weights_aggregates_member_weights(
+    test_session: Session,
+) -> None:
+    """Benchmark industry aggregation should sum member weights by latest industry snapshot."""
+    snapshot_date = date(2026, 6, 1)
+    test_session.add_all([
+        BenchmarkIndexMember(
+            benchmark_symbol="sh000300",
+            index_code="000300",
+            index_name="沪深300",
+            snapshot_date=snapshot_date,
+            stock_code="600519",
+            stock_name="贵州茅台",
+            exchange="SH",
+            weight_pct=50.0,
+            source_name="akshare.index_stock_cons_weight_csindex",
+            source_level=DataSourceLevel.B.value,
+        ),
+        BenchmarkIndexMember(
+            benchmark_symbol="sh000300",
+            index_code="000300",
+            index_name="沪深300",
+            snapshot_date=snapshot_date,
+            stock_code="000001",
+            stock_name="平安银行",
+            exchange="SZ",
+            weight_pct=30.0,
+            source_name="akshare.index_stock_cons_weight_csindex",
+            source_level=DataSourceLevel.B.value,
+        ),
+        BenchmarkIndexMember(
+            benchmark_symbol="sh000300",
+            index_code="000300",
+            index_name="沪深300",
+            snapshot_date=snapshot_date,
+            stock_code="000002",
+            stock_name="万科A",
+            exchange="SZ",
+            weight_pct=20.0,
+            source_name="akshare.index_stock_cons_weight_csindex",
+            source_level=DataSourceLevel.B.value,
+        ),
+        StockIndustryMembership(
+            stock_code="600519",
+            stock_name="贵州茅台",
+            classification_type="SW",
+            classification_version="2021",
+            level=1,
+            industry_code="801120",
+            industry_name="食品饮料",
+            effective_date=snapshot_date,
+            source_name="akshare.sw_index_third_cons",
+            source_level=DataSourceLevel.C.value,
+        ),
+        StockIndustryMembership(
+            stock_code="000001",
+            stock_name="平安银行",
+            classification_type="SW",
+            classification_version="2021",
+            level=1,
+            industry_code="801780",
+            industry_name="银行",
+            effective_date=snapshot_date,
+            source_name="akshare.sw_index_third_cons",
+            source_level=DataSourceLevel.C.value,
+        ),
+        StockIndustryMembership(
+            stock_code="000002",
+            stock_name="万科A",
+            classification_type="SW",
+            classification_version="2021",
+            level=1,
+            industry_code="801780",
+            industry_name="银行",
+            effective_date=snapshot_date,
+            source_name="akshare.sw_index_third_cons",
+            source_level=DataSourceLevel.C.value,
+        ),
+    ])
+    test_session.commit()
+
+    summary = upsert_benchmark_industry_weights(
+        test_session,
+        {"sh000300"},
+        target_date=snapshot_date,
+    )
+    rows = test_session.scalars(
+        select(BenchmarkIndustryWeight).order_by(BenchmarkIndustryWeight.industry_name)
+    ).all()
+
+    assert summary.inserted == 2
+    assert {row.industry_name: row.weight_pct for row in rows} == {
+        "食品饮料": 50.0,
+        "银行": 50.0,
+    }
+    assert all(row.coverage_pct == 100.0 for row in rows)
+    assert all(row.unmapped_weight_pct == 0.0 for row in rows)
+    assert all(row.warnings is None for row in rows)
+
+    second = upsert_benchmark_industry_weights(
+        test_session,
+        {"sh000300"},
+        target_date=snapshot_date,
+    )
+    row_count = test_session.scalar(select(func.count()).select_from(BenchmarkIndustryWeight))
+    assert second.updated == 2
+    assert row_count == 2
+
+
+def test_upsert_benchmark_industry_weights_warns_on_low_mapping_coverage(
+    test_session: Session,
+) -> None:
+    """Low industry mapping coverage should be persisted as warnings for later gating."""
+    snapshot_date = date(2026, 6, 1)
+    test_session.add_all([
+        BenchmarkIndexMember(
+            benchmark_symbol="sh000300",
+            index_code="000300",
+            snapshot_date=snapshot_date,
+            stock_code="600519",
+            weight_pct=80.0,
+            source_name="akshare.index_stock_cons_weight_csindex",
+            source_level=DataSourceLevel.B.value,
+        ),
+        BenchmarkIndexMember(
+            benchmark_symbol="sh000300",
+            index_code="000300",
+            snapshot_date=snapshot_date,
+            stock_code="000001",
+            weight_pct=20.0,
+            source_name="akshare.index_stock_cons_weight_csindex",
+            source_level=DataSourceLevel.B.value,
+        ),
+        StockIndustryMembership(
+            stock_code="600519",
+            classification_type="SW",
+            level=1,
+            industry_name="食品饮料",
+            effective_date=snapshot_date,
+            source_name="akshare.sw_index_third_cons",
+            source_level=DataSourceLevel.C.value,
+        ),
+    ])
+    test_session.commit()
+
+    summary = upsert_benchmark_industry_weights(
+        test_session,
+        {"sh000300"},
+        target_date=snapshot_date,
+    )
+    row = test_session.scalar(select(BenchmarkIndustryWeight))
+
+    assert summary.inserted == 1
+    assert any("覆盖率不足" in warning for warning in summary.warnings)
+    assert row is not None
+    assert row.weight_pct == 100.0
+    assert row.coverage_pct == 80.0
+    assert row.unmapped_weight_pct == 20.0
+    assert row.warnings is not None
+    assert "行业映射覆盖率低于门槛" in row.warnings["items"][0]
+
+
+def test_import_benchmark_validation_database_copies_three_tables(
+    test_session: Session,
+    tmp_path: Path,
+) -> None:
+    """A validated SQLite snapshot should be importable into the active DB."""
+    source_db = tmp_path / "benchmark_validation.sqlite"
+    connection = sqlite3.connect(source_db)
+    try:
+        connection.executescript(
+            """
+            CREATE TABLE benchmark_index_member (
+                benchmark_symbol TEXT,
+                index_code TEXT,
+                index_name TEXT,
+                snapshot_date TEXT,
+                stock_code TEXT,
+                stock_name TEXT,
+                exchange TEXT,
+                weight_pct REAL,
+                source_name TEXT,
+                source_level TEXT,
+                raw_payload_hash TEXT
+            );
+            CREATE TABLE stock_industry_membership (
+                stock_code TEXT,
+                stock_name TEXT,
+                classification_type TEXT,
+                classification_version TEXT,
+                level INTEGER,
+                industry_code TEXT,
+                industry_name TEXT,
+                parent_industry_code TEXT,
+                effective_date TEXT,
+                source_name TEXT,
+                source_level TEXT
+            );
+            CREATE TABLE benchmark_industry_weight (
+                benchmark_symbol TEXT,
+                snapshot_date TEXT,
+                classification_type TEXT,
+                classification_level INTEGER,
+                industry_code TEXT,
+                industry_name TEXT,
+                weight_pct REAL,
+                member_count INTEGER,
+                unmapped_weight_pct REAL,
+                coverage_pct REAL,
+                source_member_snapshot TEXT,
+                source_industry_snapshot TEXT,
+                algorithm_version TEXT,
+                warnings TEXT
+            );
+            """
+        )
+        connection.execute(
+            "INSERT INTO benchmark_index_member VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                "sh000300",
+                "000300",
+                "沪深300",
+                "2026-05-29",
+                "600519",
+                "贵州茅台",
+                "SH",
+                5.25,
+                "validation",
+                "B",
+                "abc",
+            ),
+        )
+        connection.execute(
+            "INSERT INTO stock_industry_membership VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                "600519",
+                "贵州茅台",
+                "SW",
+                "2021",
+                1,
+                "801120",
+                "食品饮料",
+                None,
+                "2021-07-30",
+                "validation",
+                "B",
+            ),
+        )
+        connection.execute(
+            "INSERT INTO benchmark_industry_weight VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                "sh000300",
+                "2026-05-29",
+                "SW",
+                1,
+                "801120",
+                "食品饮料",
+                100.0,
+                1,
+                0.0,
+                100.0,
+                "2026-05-29",
+                "2021-07-30",
+                "benchmark_industry_weight:0.1.0",
+                None,
+            ),
+        )
+        connection.commit()
+    finally:
+        connection.close()
+
+    summaries = import_benchmark_validation_database(test_session, source_db)
+
+    assert [summary.inserted for summary in summaries] == [1, 1, 1]
+    assert test_session.scalar(select(func.count()).select_from(BenchmarkIndexMember)) == 1
+    assert test_session.scalar(select(func.count()).select_from(StockIndustryMembership)) == 1
+    assert test_session.scalar(select(func.count()).select_from(BenchmarkIndustryWeight)) == 1
+
+    second = import_benchmark_validation_database(test_session, source_db)
+    assert [summary.updated for summary in second] == [1, 1, 1]
+
+
+def test_backfill_fund_holding_industries_from_membership(
+    test_session: Session,
+) -> None:
+    """Disclosed holdings should get industry names from stock industry membership."""
+    test_session.add_all([
+        FundDisclosedHoldings(
+            fund_code="000001",
+            report_date=date(2026, 3, 31),
+            asset_type="股票",
+            security_code="600519",
+            security_name="贵州茅台",
+            weight_pct=5.0,
+            data_source_level="LOCAL",
+        ),
+        StockIndustryMembership(
+            stock_code="600519",
+            stock_name="贵州茅台",
+            classification_type="SW",
+            classification_version="2021",
+            level=1,
+            industry_code="801120",
+            industry_name="食品饮料",
+            effective_date=date(2021, 7, 30),
+            source_name="validation",
+            source_level=DataSourceLevel.B.value,
+        ),
+    ])
+    test_session.commit()
+
+    summary = backfill_fund_holding_industries(test_session, {"000001"})
+    holding = test_session.scalar(select(FundDisclosedHoldings))
+
+    assert summary.requested == 1
+    assert summary.updated == 1
+    assert summary.skipped == 0
+    assert holding is not None
+    assert holding.industry == "食品饮料"
 
 
 def test_upsert_akshare_official_pdf_evidence_writes_evidence(

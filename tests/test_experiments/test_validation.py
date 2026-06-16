@@ -5,7 +5,7 @@ from pathlib import Path
 
 from sqlalchemy.orm import Session
 
-from fund_research.db.models import FundDisclosedHoldings, FundNAV, StockDaily
+from fund_research.db.models import BenchmarkIndustryWeight, FundDisclosedHoldings, FundNAV, StockDaily
 from fund_research.experiments.validation import (
     render_p2b_validation_markdown,
     run_p2b_validation_report,
@@ -42,20 +42,38 @@ def _seed_p2b_fund(test_session: Session, fund_code: str, daily_return: float) -
 
 
 def _seed_stock_daily(test_session: Session) -> None:
-    for index in range(2):
+    for stock_code in ("000000", "000001", "sh000300"):
         price = 100.0
         for day in range(40):
             if day > 0:
                 price *= 1.01
             test_session.add(
                 StockDaily(
-                    stock_code=f"00000{index}",
+                    stock_code=stock_code,
                     trade_date=date(2024, 1, 1) + timedelta(days=day),
                     close_price=price,
                     daily_return=None,
                     data_source_level="LOCAL",
                 )
             )
+    for industry in ("tech", "finance"):
+        test_session.add(
+            BenchmarkIndustryWeight(
+                benchmark_symbol="sh000300",
+                snapshot_date=date(2024, 1, 1),
+                classification_type="SW",
+                classification_level=1,
+                industry_name=industry,
+                weight_pct=50.0,
+                member_count=1,
+                unmapped_weight_pct=0.0,
+                coverage_pct=100.0,
+                source_member_snapshot=date(2024, 1, 1),
+                source_industry_snapshot=date(2024, 1, 1),
+                algorithm_version="test",
+                warnings=[],
+            )
+        )
 
 
 def test_run_p2b_validation_report_builds_auditable_batch_report(test_session: Session) -> None:
@@ -79,7 +97,8 @@ def test_run_p2b_validation_report_builds_auditable_batch_report(test_session: S
     assert report["pipeline_gate"]["status"] == "pass"
     assert report["productization_gate"]["status"] == "needs_review"
     assert report["readiness_summary"]["simulated_holding"]["level"] == "candidate"
-    assert report["readiness_summary"]["dynamic_attribution"]["level"] == "experiment_only"
+    assert report["readiness_summary"]["dynamic_attribution"]["level"] == "candidate"
+    assert report["readiness_summary"]["dynamic_attribution"]["productization_allowed"] is False
 
     sim_report = report["algorithms"]["simulated_holding"]
     assert sim_report["experiment_summary"]["fund_count"] == 2

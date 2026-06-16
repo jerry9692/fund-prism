@@ -159,6 +159,7 @@ export interface ExperimentResultItem {
   is_success: boolean;
   metrics: Record<string, unknown> | null;
   error_message: string | null;
+  warnings?: string[] | null;
 }
 
 export interface ExperimentDetail {
