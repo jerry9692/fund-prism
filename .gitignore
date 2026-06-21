@@ -60,6 +60,8 @@ dmypy.json
 # OS
 .DS_Store
 Thumbs.db
+# Windows reserved device names that tools sometimes create as stray files
+nul
 
 # Logs
 logs/
