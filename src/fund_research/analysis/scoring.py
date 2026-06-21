@@ -14,6 +14,7 @@ References:
 """
 
 from dataclasses import dataclass, field
+from math import erfc, sqrt
 
 import pandas as pd
 
@@ -293,31 +294,166 @@ def compute_ic(
     ic_mean = float(ics.mean()) if len(ics) > 0 else None
     ic_ir = float(ics.mean() / ics.std()) if len(ics) > 0 and ics.std() > 0 else None
 
-    # Stratified monotonicity by calc_date, then aggregate each score bucket.
+    grouped_metrics = compute_grouped_forward_metrics(merged)
+    group_returns = grouped_metrics["group_metrics"].get("future_return", {})
+
+    return {
+        "ic_mean": round(ic_mean, 6) if ic_mean is not None else None,
+        "ic_ir": round(ic_ir, 4) if ic_ir is not None else None,
+        "monotonicity": grouped_metrics["monotonicity_checks"].get("future_return"),
+        "group_returns": group_returns,
+        "group_metrics": grouped_metrics["group_metrics"],
+        "monotonicity_checks": grouped_metrics["monotonicity_checks"],
+        "top_bottom_tests": grouped_metrics["top_bottom_tests"],
+        "group_curves": grouped_metrics["group_curves"],
+        "ic_count": len(ics),
+        "warnings": [],
+    }
+
+
+def compute_grouped_forward_metrics(merged: pd.DataFrame, group_count: int = 5) -> dict:
+    """Compute score-bucket forward metrics and monotonicity checks.
+
+    `future_return` and `future_sharpe` should rise with score. `future_max_drawdown`
+    is stored as a positive drawdown magnitude, so it should fall with score.
+    """
+    required = {"fund_code", "calc_date", "score"}
+    if merged.empty or not required.issubset(merged.columns):
+        return {
+            "group_metrics": {},
+            "monotonicity_checks": {},
+            "top_bottom_tests": {},
+            "group_curves": {},
+        }
+
+    data = merged.copy()
+
     def _bucket(date_group: pd.DataFrame) -> pd.Series:
         if date_group["score"].nunique() < 2:
             return pd.Series([pd.NA] * len(date_group), index=date_group.index)
         return pd.qcut(
             date_group["score"].rank(method="first"),
-            5,
+            group_count,
             labels=False,
             duplicates="drop",
         )
 
-    merged["group"] = merged.groupby("calc_date", group_keys=False).apply(_bucket, include_groups=False)
-    grouped = merged.dropna(subset=["group"]).copy()
-    group_returns = grouped.groupby("group")["future_return"].mean()
-    monotonic = (
-        group_returns.is_monotonic_increasing and group_returns.iloc[-1] > group_returns.iloc[0]
-        if len(group_returns) >= 2
-        else False
+    data["group"] = data.groupby("calc_date", group_keys=False).apply(
+        _bucket,
+        include_groups=False,
     )
+    grouped = data.dropna(subset=["group"]).copy()
+    if grouped.empty:
+        return {
+            "group_metrics": {},
+            "monotonicity_checks": {},
+            "top_bottom_tests": {},
+            "group_curves": {},
+        }
+
+    metric_columns = [
+        column
+        for column in ("future_return", "future_max_drawdown", "future_sharpe")
+        if column in grouped.columns
+    ]
+    group_metrics: dict[str, dict[str, float]] = {}
+    monotonicity_checks: dict[str, bool] = {}
+    top_bottom_tests: dict[str, dict[str, float | int | bool | None]] = {}
+    group_curves: dict[str, dict[str, list[dict[str, float | str]]]] = {}
+    for column in metric_columns:
+        series = grouped.groupby("group")[column].mean().dropna()
+        values = {str(int(k)): round(float(v), 6) for k, v in series.to_dict().items()}
+        group_metrics[column] = values
+        if len(series) >= 2:
+            if column == "future_max_drawdown":
+                monotonicity_checks[column] = bool(
+                    series.is_monotonic_decreasing and series.iloc[-1] < series.iloc[0]
+                )
+            else:
+                monotonicity_checks[column] = bool(
+                    series.is_monotonic_increasing and series.iloc[-1] > series.iloc[0]
+                )
+        else:
+            monotonicity_checks[column] = False
+
+        if column == "future_return":
+            by_date_group = (
+                grouped.groupby(["calc_date", "group"])[column]
+                .mean()
+                .reset_index()
+                .sort_values(["calc_date", "group"])
+            )
+            top_bottom_tests[column] = _top_bottom_one_sided_test(by_date_group)
+            group_curves[column] = _group_return_curves(by_date_group)
 
     return {
-        "ic_mean": round(ic_mean, 6) if ic_mean is not None else None,
-        "ic_ir": round(ic_ir, 4) if ic_ir is not None else None,
-        "monotonicity": bool(monotonic),
-        "group_returns": {str(k): round(float(v), 6) for k, v in group_returns.to_dict().items()},
-        "ic_count": len(ics),
-        "warnings": [],
+        "group_metrics": group_metrics,
+        "monotonicity_checks": monotonicity_checks,
+        "top_bottom_tests": top_bottom_tests,
+        "group_curves": group_curves,
     }
+
+
+def _top_bottom_one_sided_test(grouped_returns: pd.DataFrame) -> dict[str, float | int | bool | None]:
+    """Test whether top score bucket future return beats bottom bucket."""
+    if grouped_returns.empty:
+        return {"spread_mean": None, "one_sided_p_value": None, "period_count": 0, "passed": False}
+
+    spreads: list[float] = []
+    for _calc_date, frame in grouped_returns.groupby("calc_date"):
+        frame = frame.dropna(subset=["group", "future_return"])
+        if frame.empty:
+            continue
+        bottom = frame.loc[frame["group"].idxmin(), "future_return"]
+        top = frame.loc[frame["group"].idxmax(), "future_return"]
+        spreads.append(float(top) - float(bottom))
+
+    if not spreads:
+        return {"spread_mean": None, "one_sided_p_value": None, "period_count": 0, "passed": False}
+
+    spread_series = pd.Series(spreads, dtype="float64")
+    spread_mean = float(spread_series.mean())
+    p_value = _one_sided_positive_p_value(spread_series)
+    return {
+        "spread_mean": round(spread_mean, 6),
+        "one_sided_p_value": round(float(p_value), 6) if p_value is not None else None,
+        "period_count": int(len(spread_series)),
+        "passed": bool(spread_mean > 0 and (p_value is None or p_value <= 0.10)),
+    }
+
+
+def _one_sided_positive_p_value(values: pd.Series) -> float | None:
+    clean = pd.to_numeric(values, errors="coerce").dropna()
+    if len(clean) < 2:
+        return None
+    std = float(clean.std(ddof=1))
+    if std == 0:
+        return 0.0 if float(clean.mean()) > 0 else 1.0
+    t_stat = float(clean.mean()) / (std / sqrt(len(clean)))
+    try:
+        from scipy import stats
+
+        return float(stats.t.sf(t_stat, df=len(clean) - 1))
+    except Exception:
+        return 0.5 * erfc(t_stat / sqrt(2.0))
+
+
+def _group_return_curves(grouped_returns: pd.DataFrame) -> dict[str, list[dict[str, float | str]]]:
+    """Build cumulative future-return curves for score buckets."""
+    curves: dict[str, list[dict[str, float | str]]] = {}
+    if grouped_returns.empty:
+        return curves
+
+    for group, frame in grouped_returns.groupby("group"):
+        cumulative = 1.0
+        points: list[dict[str, float | str]] = []
+        for row in frame.sort_values("calc_date").itertuples(index=False):
+            period_return = float(getattr(row, "future_return"))
+            cumulative *= 1.0 + period_return
+            points.append({
+                "calc_date": str(getattr(row, "calc_date")),
+                "period_return": round(period_return, 6),
+                "cumulative_return": round(cumulative - 1.0, 6),
+            })
+        curves[str(int(group))] = points
+    return curves

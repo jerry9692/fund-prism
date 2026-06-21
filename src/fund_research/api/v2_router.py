@@ -82,7 +82,10 @@ class ScoringBacktestRequest(BaseModel):
     backtest_end: date
     preset: str = "均衡型"
     category: str = "混合型-偏股"
+    weights: dict[str, float] | None = None
     min_funds_per_date: int = 5
+    forward_months: int = Field(default=12, ge=1, le=24)
+    min_forward_observations: int = Field(default=60, ge=1)
 
 
 class ScoringRequest(BaseModel):
@@ -986,6 +989,7 @@ def scoring_backtest_endpoint(
                 started,
             )
 
+        score_version = f"{body.algorithm_version}-bt-{uuid4().hex[:8]}"
         exp = create_experiment(
             db,
             experiment_name=body.experiment_name,
@@ -994,7 +998,11 @@ def scoring_backtest_endpoint(
             parameters={
                 "preset": body.preset,
                 "category": body.category,
+                "weights": body.weights or {},
+                "score_version": score_version,
                 "min_funds_per_date": body.min_funds_per_date,
+                "forward_months": body.forward_months,
+                "min_forward_observations": body.min_forward_observations,
             },
             sample_fund_codes=body.fund_codes,
             backtest_start=body.backtest_start,
@@ -1021,7 +1029,7 @@ def scoring_backtest_endpoint(
 
         backtest_row = db.scalars(
             select(DbScoringBacktest)
-            .order_by(DbScoringBacktest.created_at.desc())
+            .where(DbScoringBacktest.score_version == score_version)
             .limit(1)
         ).first()
 
@@ -1036,13 +1044,17 @@ def scoring_backtest_endpoint(
                     "fund_count": fund_count,
                     "success_count": success_count,
                     "failure_count": fund_count - success_count,
+                    "score_version": score_version,
                     "ic_mean": backtest_row.ic_mean if backtest_row else None,
                     "ic_ir": backtest_row.ic_ir if backtest_row else None,
                     "monotonicity": backtest_row.monotonicity_check if backtest_row else None,
                     "group_results": backtest_row.group_results if backtest_row else None,
+                    "detail": backtest_row.detail if backtest_row else None,
                 },
                 metadata={"tool": "scoring_backtest", "platform_version": __version__},
-                conclusion_status=conclusion,
+                conclusion_status=ConclusionStatus.OBSERVATION
+                if conclusion == ConclusionStatus.COMPUTED
+                else conclusion,
             ),
             started,
         )
@@ -1085,21 +1097,13 @@ def scoring_endpoint(
                 "preset": body.preset,
                 "category": body.category,
                 "weights": body.weights or {},
+                "score_version": run_id,
             },
             sample_fund_codes=body.fund_codes,
         )
         update_experiment_status(db, exp.id, "running")
 
         results = dispatch_run(db, exp)
-
-        # Stamp the just-created ScoringResult rows with the unique run_id.
-        scored_codes = {r["fund_code"] for r in results if r["is_success"]}
-        if scored_codes:
-            db.query(DbScoringResult).filter(
-                DbScoringResult.fund_code.in_(scored_codes),
-                DbScoringResult.score_version == "0.1.0",
-            ).update({"score_version": run_id}, synchronize_session="fetch")
-            db.commit()
 
         fund_count = len(results)
         success_count = sum(1 for r in results if r["is_success"])
@@ -1114,11 +1118,26 @@ def scoring_endpoint(
                 "percentile_rank": fs.percentile_rank,
                 "deduction_reasons": fs.deduction_reasons,
                 "contains_estimated": fs.contains_estimated,
+                "conclusion_status": fs.conclusion_status,
+                "warnings": fs.warnings or [],
             }
             for fs in db.scalars(
                 select(DbScoringResult).where(DbScoringResult.score_version == run_id)
             ).all()
         ]
+        contains_estimated = any(item["contains_estimated"] for item in fund_scores)
+        warnings = []
+        if contains_estimated:
+            warnings.append("评分包含 estimated 维度，仅作为实验/观察结果")
+        if success_count == 0:
+            warnings.append("没有生成有效评分结果")
+        conclusion_status = (
+            ConclusionStatus.NEEDS_REVIEW
+            if success_count == 0
+            else ConclusionStatus.OBSERVATION
+            if contains_estimated or success_count < fund_count
+            else ConclusionStatus.COMPUTED
+        )
 
         return _log(
             db,
@@ -1133,7 +1152,8 @@ def scoring_endpoint(
                     "experiment_id": str(exp.id),
                 },
                 metadata={"tool": "scoring", "platform_version": __version__},
-                conclusion_status=ConclusionStatus.COMPUTED if success_count == fund_count else ConclusionStatus.OBSERVATION,
+                warnings=warnings,
+                conclusion_status=conclusion_status,
             ),
             started,
         )
@@ -1146,77 +1166,6 @@ def scoring_endpoint(
             APIResponse(
                 data=None,
                 metadata={"tool": "scoring"},
-                warnings=[str(exc)],
-                conclusion_status=ConclusionStatus.NEEDS_REVIEW,
-            ),
-            started,
-        )
-
-
-@v2_router.get("/analysis/scoring/{score_version}")
-def get_scoring_endpoint(
-    score_version: str,
-    db: SessionDep,
-) -> APIResponse[dict]:
-    """Retrieve scoring results for a specific score_version."""
-    started = perf_counter()
-    try:
-        rows = db.scalars(
-            select(DbScoringResult).where(DbScoringResult.score_version == score_version)
-        ).all()
-
-        if not rows:
-            return _log(
-                db,
-                "get_scoring",
-                {"score_version": score_version},
-                APIResponse(
-                    data=None,
-                    metadata={"tool": "get_scoring"},
-                    warnings=[f"未找到评分版本: {score_version}"],
-                    conclusion_status=ConclusionStatus.NEEDS_REVIEW,
-                ),
-                started,
-            )
-
-        fund_scores = [
-            {
-                "fund_code": row.fund_code,
-                "total_score": row.total_score,
-                "sub_scores": row.sub_scores,
-                "percentile_rank": row.percentile_rank,
-                "deduction_reasons": row.deduction_reasons,
-                "contains_estimated": row.contains_estimated,
-                "calc_date": str(row.calc_date) if row.calc_date else None,
-            }
-            for row in rows
-        ]
-        fund_scores.sort(key=lambda x: x["total_score"] or 0, reverse=True)
-
-        return _log(
-            db,
-            "get_scoring",
-            {"score_version": score_version},
-            APIResponse(
-                data={
-                    "score_version": score_version,
-                    "fund_count": len(rows),
-                    "fund_scores": fund_scores,
-                },
-                metadata={"tool": "get_scoring", "platform_version": __version__},
-                conclusion_status=ConclusionStatus.COMPUTED,
-            ),
-            started,
-        )
-    except Exception as exc:
-        db.rollback()
-        return _log(
-            db,
-            "get_scoring",
-            {"score_version": score_version},
-            APIResponse(
-                data=None,
-                metadata={"tool": "get_scoring"},
                 warnings=[str(exc)],
                 conclusion_status=ConclusionStatus.NEEDS_REVIEW,
             ),
@@ -1332,6 +1281,84 @@ def get_scoring_backtest_endpoint(
             APIResponse(
                 data=None,
                 metadata={"tool": "get_scoring_backtest"},
+                warnings=[str(exc)],
+                conclusion_status=ConclusionStatus.NEEDS_REVIEW,
+            ),
+            started,
+        )
+
+
+@v2_router.get("/analysis/scoring/{score_version}")
+def get_scoring_endpoint(
+    score_version: str,
+    db: SessionDep,
+) -> APIResponse[dict]:
+    """Retrieve scoring results for a specific score_version."""
+    started = perf_counter()
+    try:
+        rows = db.scalars(
+            select(DbScoringResult).where(DbScoringResult.score_version == score_version)
+        ).all()
+
+        if not rows:
+            return _log(
+                db,
+                "get_scoring",
+                {"score_version": score_version},
+                APIResponse(
+                    data=None,
+                    metadata={"tool": "get_scoring"},
+                    warnings=[f"未找到评分版本: {score_version}"],
+                    conclusion_status=ConclusionStatus.NEEDS_REVIEW,
+                ),
+                started,
+            )
+
+        fund_scores = [
+            {
+                "fund_code": row.fund_code,
+                "total_score": row.total_score,
+                "sub_scores": row.sub_scores,
+                "percentile_rank": row.percentile_rank,
+                "deduction_reasons": row.deduction_reasons,
+                "contains_estimated": row.contains_estimated,
+                "conclusion_status": row.conclusion_status,
+                "warnings": row.warnings or [],
+                "calc_date": str(row.calc_date) if row.calc_date else None,
+            }
+            for row in rows
+        ]
+        fund_scores.sort(key=lambda x: x["total_score"] or 0, reverse=True)
+        contains_estimated = any(item["contains_estimated"] for item in fund_scores)
+        warnings = ["评分包含 estimated 维度，仅作为实验/观察结果"] if contains_estimated else []
+
+        return _log(
+            db,
+            "get_scoring",
+            {"score_version": score_version},
+            APIResponse(
+                data={
+                    "score_version": score_version,
+                    "fund_count": len(rows),
+                    "fund_scores": fund_scores,
+                },
+                metadata={"tool": "get_scoring", "platform_version": __version__},
+                warnings=warnings,
+                conclusion_status=ConclusionStatus.OBSERVATION
+                if contains_estimated
+                else ConclusionStatus.COMPUTED,
+            ),
+            started,
+        )
+    except Exception as exc:
+        db.rollback()
+        return _log(
+            db,
+            "get_scoring",
+            {"score_version": score_version},
+            APIResponse(
+                data=None,
+                metadata={"tool": "get_scoring"},
                 warnings=[str(exc)],
                 conclusion_status=ConclusionStatus.NEEDS_REVIEW,
             ),

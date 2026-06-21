@@ -12,6 +12,9 @@ from fund_research.db.models import (
     BenchmarkIndustryWeight,
     ExperimentResult,
     FundDisclosedHoldings,
+    FundNAV,
+    ScoringBacktest,
+    ScoringResult,
     StockDaily,
 )
 
@@ -424,3 +427,74 @@ def test_record_experiment_result_rejects_missing_experiment(
     assert response.status_code == 200
     assert payload["conclusion_status"] == "needs_review"
     assert test_session.query(ExperimentResult).count() == 0
+
+
+def test_list_scoring_backtests_route_is_not_captured_by_score_version(
+    test_client: TestClient,
+    test_session: Session,
+) -> None:
+    test_session.add(
+        ScoringBacktest(
+            score_version="score-bt-test",
+            backtest_date=date(2026, 6, 16),
+            group_count=5,
+            group_results={"future_return": {"0": 0.01, "4": 0.05}},
+            monotonicity_check=True,
+            ic_mean=0.12,
+            ic_ir=0.8,
+            detail={"experiment_id": 1},
+        )
+    )
+    test_session.commit()
+
+    response = test_client.get("/api/v2/analysis/scoring/backtest")
+
+    payload = response.json()
+    assert response.status_code == 200
+    assert payload["conclusion_status"] == "computed"
+    assert payload["data"]["total"] == 1
+    assert payload["data"]["backtests"][0]["score_version"] == "score-bt-test"
+
+
+def test_scoring_endpoint_keeps_estimated_scores_observational(
+    test_client: TestClient,
+    test_session: Session,
+) -> None:
+    for fund_index, fund_code in enumerate(("000001", "000002")):
+        nav = 1.0
+        for day in range(90):
+            daily_return = 0.001 + fund_index * 0.0002 if day > 0 else None
+            if daily_return is not None:
+                nav *= 1 + daily_return
+            test_session.add(
+                FundNAV(
+                    fund_code=fund_code,
+                    trade_date=date(2024, 1, 1) + timedelta(days=day),
+                    unit_nav=nav,
+                    daily_return=daily_return,
+                    data_source_level="LOCAL",
+                )
+            )
+    test_session.commit()
+
+    response = test_client.post(
+        "/api/v2/analysis/scoring",
+        json={"fund_codes": ["000001", "000002"]},
+    )
+
+    payload = response.json()
+    assert response.status_code == 200
+    assert payload["conclusion_status"] == "observation"
+    assert payload["warnings"] == ["评分包含 estimated 维度，仅作为实验/观察结果"]
+    score_version = payload["data"]["score_version"]
+    assert score_version != "0.1.0"
+
+    rows = test_session.query(ScoringResult).all()
+    assert {row.score_version for row in rows} == {score_version}
+    assert all(row.contains_estimated for row in rows)
+    assert all(row.conclusion_status == "needs_review" for row in rows)
+
+    get_response = test_client.get(f"/api/v2/analysis/scoring/{score_version}")
+    get_payload = get_response.json()
+    assert get_response.status_code == 200
+    assert get_payload["conclusion_status"] == "observation"

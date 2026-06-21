@@ -2,6 +2,11 @@ import { useEffect, useState } from "react";
 import { api, type ScoringBacktestItem, type ScoringBacktestDetail } from "../api/client";
 
 const PRESET_OPTIONS = ["均衡型", "稳健型", "进取型"];
+const METRIC_LABELS: Record<string, string> = {
+  future_return: "未来收益",
+  future_max_drawdown: "最大回撤",
+  future_sharpe: "夏普",
+};
 
 export default function ScoringBacktestPage() {
   const [backtests, setBacktests] = useState<ScoringBacktestItem[]>([]);
@@ -64,6 +69,8 @@ export default function ScoringBacktestPage() {
         backtest_start: backtestStart,
         backtest_end: backtestEnd,
         preset,
+        forward_months: 12,
+        min_forward_observations: 60,
       });
       if (body.data === null) {
         setErrorMessage(`回测失败: ${body.warnings.join("; ") || "未知错误"}`);
@@ -138,7 +145,7 @@ export default function ScoringBacktestPage() {
           <table className="data-table">
             <thead>
               <tr>
-                <th>ID</th><th>版本</th><th>日期</th><th>评估期数</th>
+                <th>ID</th><th>版本</th><th>日期</th><th>分组数</th>
                 <th>IC Mean</th><th>IC IR</th><th>单调性</th><th>创建时间</th>
               </tr>
             </thead>
@@ -208,18 +215,39 @@ export default function ScoringBacktestPage() {
 
               {detail.group_results && Object.keys(detail.group_results).length > 0 && (
                 <div style={{ marginBottom: 16 }}>
-                  <h4 style={{ marginBottom: 8 }}>分组收益</h4>
-                  <table className="data-table" style={{ maxWidth: 400 }}>
+                  <h4 style={{ marginBottom: 8 }}>分组指标</h4>
+                  <table className="data-table" style={{ maxWidth: 680 }}>
                     <thead>
-                      <tr><th>分组</th><th>平均未来收益</th></tr>
+                      <tr>
+                        <th>指标</th>
+                        {["0", "1", "2", "3", "4"].map((group) => (
+                          <th key={group}>Q{Number(group) + 1}</th>
+                        ))}
+                        <th>单调性</th>
+                      </tr>
                     </thead>
                     <tbody>
                       {Object.entries(detail.group_results)
-                        .sort(([a], [b]) => Number(a) - Number(b))
-                        .map(([group, ret]) => (
-                          <tr key={group}>
-                            <td>Q{Number(group) + 1}</td>
-                            <td className="mono-cell">{(ret * 100).toFixed(2)}%</td>
+                        .map(([metric, groups]) => (
+                          <tr key={metric}>
+                            <td>{METRIC_LABELS[metric] ?? metric}</td>
+                            {["0", "1", "2", "3", "4"].map((group) => {
+                              const value = groups[group];
+                              return (
+                                <td key={group} className="mono-cell">
+                                  {value == null
+                                    ? "—"
+                                    : metric === "future_sharpe"
+                                      ? value.toFixed(2)
+                                      : `${(value * 100).toFixed(2)}%`}
+                                </td>
+                              );
+                            })}
+                            <td>
+                              <span className={`badge badge-${detail.detail?.monotonicity_checks?.[metric] ? "computed" : "needs_review"}`}>
+                                {detail.detail?.monotonicity_checks?.[metric] ? "通过" : "未通过"}
+                              </span>
+                            </td>
                           </tr>
                         ))}
                     </tbody>
@@ -232,6 +260,8 @@ export default function ScoringBacktestPage() {
                   <h4 style={{ marginBottom: 8 }}>元数据</h4>
                   <div style={{ fontSize: 12, color: "var(--color-text-secondary)" }}>
                     <div>IC 期数: {String(detail.detail.ic_count ?? "—")}</div>
+                    <div>前瞻月份: {String(detail.detail.forward_months ?? "—")}</div>
+                    <div>评估日期数: {String(detail.detail.eval_date_count ?? "—")}</div>
                     {(() => {
                       const raw = detail.detail.warnings;
                       if (Array.isArray(raw) && raw.length > 0) {
