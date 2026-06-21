@@ -1487,8 +1487,15 @@ def _run_scoring_single_point(
     fund_codes: list[str],
 ) -> list[dict]:
     """Score every fund using all available NAV history (single snapshot)."""
+    params = exp.parameters or {}
+    preset = str(params.get("preset") or "均衡型")
+    category = str(params.get("category") or "混合型-偏股")
+    raw_weights = params.get("weights")
+    weights = raw_weights if isinstance(raw_weights, dict) and raw_weights else None
+    score_version = str(params.get("score_version") or exp.algorithm_version)
     results: list[dict] = []
     metrics_rows = []
+    sample_years: dict[str, float] = {}
 
     for fund_code in _progress_iter(fund_codes, "准备 scoring"):
         try:
@@ -1516,6 +1523,7 @@ def _run_scoring_single_point(
                 results.append(_failure_result(fund_code, "净值指标不足"))
                 continue
 
+            sample_years[fund_code] = _sample_years_from_nav(nav_rows)
             metrics_rows.append({
                 "fund_code": fund_code,
                 "return": nav_metrics.metrics.get("annualized_return") or 0.0,
@@ -1535,11 +1543,14 @@ def _run_scoring_single_point(
         try:
             scoring = score_funds(
                 pd.DataFrame(metrics_rows),
-                preset="均衡型",
-                category="混合型-偏股",
+                weights=weights,
+                preset=preset,
+                category=category,
                 contains_estimated={"trading"},
                 allow_estimated=True,
+                sample_years_map=sample_years,
             )
+            scoring.score_version = score_version
             for fund_score in scoring.fund_scores:
                 is_success = fund_score.total_score > 0
                 warn_msgs = scoring.warnings if not is_success else []
@@ -1568,6 +1579,9 @@ def _run_scoring_single_point(
                         ],
                         "allow_estimated": True,
                         "estimated_dimensions": ["trading"],
+                        "score_version": score_version,
+                        "weight_config": scoring.weight_config,
+                        "sample_years": fund_score.sample_years,
                     },
                     warnings=warn_msgs,
                 )
@@ -1595,7 +1609,8 @@ def _run_scoring_single_point(
 
 _QUARTER_ENDS = ((3, 31), (6, 30), (9, 30), (12, 31))
 _MIN_LOOKBACK_DAYS = 252  # ~1 trading year
-_FORWARD_MONTHS = 3
+_DEFAULT_FORWARD_MONTHS = 12
+_DEFAULT_MIN_FORWARD_OBSERVATIONS = 60
 
 
 def _quarterly_dates(start: date_type, end: date_type) -> list[date_type]:
@@ -1618,7 +1633,14 @@ def _run_scoring_backtest(
     params = exp.parameters or {}
     preset = str(params.get("preset") or "均衡型")
     category = str(params.get("category") or "混合型-偏股")
+    raw_weights = params.get("weights")
+    weights = raw_weights if isinstance(raw_weights, dict) and raw_weights else None
+    score_version = str(params.get("score_version") or exp.algorithm_version)
     min_funds_per_date = int(params.get("min_funds_per_date") or 5)
+    forward_months = int(params.get("forward_months") or _DEFAULT_FORWARD_MONTHS)
+    min_forward_observations = int(
+        params.get("min_forward_observations") or _DEFAULT_MIN_FORWARD_OBSERVATIONS
+    )
 
     eval_dates = _quarterly_dates(exp.backtest_start, exp.backtest_end)  # type: ignore[arg-type]
     if len(eval_dates) < 2:
@@ -1633,9 +1655,10 @@ def _run_scoring_backtest(
     backtest_warnings: list[str] = []
 
     for eval_date in _progress_iter(eval_dates, "评分回测"):
-        forward_end = _add_months(eval_date, _FORWARD_MONTHS)
+        forward_end = _add_months(eval_date, forward_months)
 
         period_metrics: list[dict] = []
+        period_sample_years: dict[str, float] = {}
         for fund_code in fund_codes:
             try:
                 nav_rows = db.scalars(
@@ -1670,8 +1693,11 @@ def _run_scoring_backtest(
                     .where(FundNAV.trade_date <= forward_end)
                     .order_by(FundNAV.trade_date)
                 ).all()
-                future_return = _compound_nav_return(future_nav)
+                forward_metrics = _forward_nav_metrics(future_nav)
+                if forward_metrics["observation_count"] < min_forward_observations:
+                    continue
 
+                period_sample_years[fund_code] = _sample_years_from_nav(nav_rows)
                 period_metrics.append({
                     "fund_code": fund_code,
                     "return": nav_metrics.metrics.get("annualized_return") or 0.0,
@@ -1686,7 +1712,7 @@ def _run_scoring_backtest(
                 future_return_rows.append({
                     "fund_code": fund_code,
                     "calc_date": eval_date,
-                    "future_return": future_return,
+                    **forward_metrics,
                 })
                 per_fund_results.setdefault(fund_code, {"fund_code": fund_code, "eval_count": 0})
                 per_fund_results[fund_code]["eval_count"] += 1
@@ -1700,10 +1726,12 @@ def _run_scoring_backtest(
 
         date_scoring = score_funds(
             pd.DataFrame(period_metrics),
+            weights=weights,
             preset=preset,
             category=category,
             contains_estimated={"trading"},
             allow_estimated=True,
+            sample_years_map=period_sample_years,
         )
         for fs in date_scoring.fund_scores:
             scores_rows.append({
@@ -1723,8 +1751,16 @@ def _run_scoring_backtest(
     future_df = pd.DataFrame(future_return_rows)
     ic_result = compute_ic(scores_df, future_df)
 
-    _persist_scoring_backtest(db, exp, ic_result, len(eval_dates))
-    _persist_scoring_backtest_scores(db, exp, scores_rows, preset, category)
+    _persist_scoring_backtest(
+        db,
+        exp,
+        ic_result,
+        score_version=score_version,
+        eval_date_count=len(eval_dates),
+        forward_months=forward_months,
+        min_forward_observations=min_forward_observations,
+    )
+    _persist_scoring_backtest_scores(db, exp, scores_rows, score_version, preset, category)
 
     results: list[dict] = []
     for fund_code in fund_codes:
@@ -1747,7 +1783,10 @@ def _run_scoring_backtest(
                     "ic_mean": ic_result.get("ic_mean"),
                     "ic_ir": ic_result.get("ic_ir"),
                     "monotonicity": ic_result.get("monotonicity"),
+                    "monotonicity_checks": ic_result.get("monotonicity_checks"),
+                    "group_metrics": ic_result.get("group_metrics"),
                     "ic_count": ic_result.get("ic_count"),
+                    "forward_months": forward_months,
                     "eval_periods": pf["eval_count"] if pf else 0,
                 },
             },
@@ -1784,25 +1823,77 @@ def _compound_nav_return(nav_rows: list[FundNAV]) -> float:
     return float(prod - 1.0)
 
 
+def _sample_years_from_nav(nav_rows: list[FundNAV]) -> float:
+    """Estimate available NAV history length in years."""
+    if len(nav_rows) < 2:
+        return 0.0
+    dates = [row.trade_date for row in nav_rows if row.trade_date is not None]
+    if len(dates) < 2:
+        return 0.0
+    return round((max(dates) - min(dates)).days / 365.25, 2)
+
+
+def _forward_nav_metrics(nav_rows: list[FundNAV]) -> dict[str, float | int | None]:
+    """Compute forward one-year style metrics for scoring backtests."""
+    ordered = sorted(nav_rows, key=lambda row: row.trade_date)
+    daily_returns = [
+        float(row.daily_return)
+        for row in ordered
+        if row.daily_return is not None
+    ]
+    future_return = _compound_nav_return(ordered)
+    nav_values = pd.Series(
+        [float(row.unit_nav) for row in ordered if row.unit_nav is not None],
+        dtype="float64",
+    )
+    max_drawdown = None
+    if not nav_values.empty:
+        running_max = nav_values.cummax()
+        drawdowns = nav_values / running_max - 1.0
+        max_drawdown = abs(float(drawdowns.min()))
+
+    sharpe = None
+    returns = pd.Series(daily_returns, dtype="float64").dropna()
+    if len(returns) >= 2 and returns.std() > 0:
+        sharpe = float(returns.mean() / returns.std() * np.sqrt(252))
+
+    return {
+        "future_return": future_return,
+        "future_max_drawdown": max_drawdown,
+        "future_sharpe": sharpe,
+        "observation_count": len(daily_returns),
+    }
+
+
 def _persist_scoring_backtest(
     db: Session,
     exp: AlgorithmExperiment,
     ic_result: dict,
+    *,
+    score_version: str,
     eval_date_count: int,
+    forward_months: int,
+    min_forward_observations: int,
 ) -> None:
     """Persist one ScoringBacktest row summarising the IC run."""
     db.add(DbScoringBacktest(
-        score_version=exp.algorithm_version,
+        score_version=score_version,
         backtest_date=date_type.today(),
-        group_count=eval_date_count,
-        group_results=ic_result.get("group_returns") or {},
-        monotonicity_check=ic_result.get("monotonicity"),
+        group_count=5,
+        group_results=ic_result.get("group_metrics") or {"future_return": ic_result.get("group_returns") or {}},
+        monotonicity_check=all((ic_result.get("monotonicity_checks") or {}).values())
+        if ic_result.get("monotonicity_checks")
+        else ic_result.get("monotonicity"),
         ic_mean=ic_result.get("ic_mean"),
         ic_ir=ic_result.get("ic_ir"),
         detail={
             "ic_count": ic_result.get("ic_count"),
             "warnings": ic_result.get("warnings") or [],
             "experiment_id": exp.id,
+            "eval_date_count": eval_date_count,
+            "forward_months": forward_months,
+            "min_forward_observations": min_forward_observations,
+            "monotonicity_checks": ic_result.get("monotonicity_checks") or {},
         },
     ))
 
@@ -1811,6 +1902,7 @@ def _persist_scoring_backtest_scores(
     db: Session,
     exp: AlgorithmExperiment,
     scores_rows: list[dict],
+    score_version: str,
     preset: str,
     category: str,
 ) -> None:
@@ -1820,7 +1912,7 @@ def _persist_scoring_backtest_scores(
         db.add(DbScoringResult(
             fund_code=row["fund_code"],
             calc_date=row["calc_date"],
-            score_version=exp.algorithm_version,
+            score_version=score_version,
             algorithm_version=exp.algorithm_version,
             weight_config=weight_config,
             total_score=row["score"],
@@ -1828,8 +1920,8 @@ def _persist_scoring_backtest_scores(
             percentile_rank=0.0,
             contains_estimated=True,
             confidence="low",
-            conclusion_status="backtest",
-            warnings=["回测评分：仅使用 return/risk 两个已验证维度"],
+            conclusion_status="needs_review",
+            warnings=["回测评分：仅用于实验验证，不进入默认排名"],
         ))
 
 

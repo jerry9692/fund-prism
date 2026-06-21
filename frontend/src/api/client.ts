@@ -293,6 +293,8 @@ export interface FundScoreItem {
   percentile_rank: number;
   deduction_reasons: string[];
   contains_estimated: boolean;
+  conclusion_status?: string;
+  warnings?: string[];
   calc_date?: string | null;
 }
 
@@ -322,8 +324,15 @@ export interface ScoringBacktestItem {
 }
 
 export interface ScoringBacktestDetail extends ScoringBacktestItem {
-  group_results: Record<string, number> | null;
-  detail: Record<string, unknown> | null;
+  group_results: Record<string, Record<string, number>> | null;
+  detail: {
+    ic_count?: number;
+    warnings?: unknown[];
+    eval_date_count?: number;
+    forward_months?: number;
+    min_forward_observations?: number;
+    monotonicity_checks?: Record<string, boolean>;
+  } | null;
 }
 
 // ---- Generic fetch wrapper ----
@@ -493,12 +502,15 @@ export const api = {
     backtest_end: string;
     preset?: string;
     category?: string;
+    weights?: Record<string, number>;
+    forward_months?: number;
+    min_forward_observations?: number;
   }) =>
     request<ScoringData & {
       ic_mean: number | null;
       ic_ir: number | null;
       monotonicity: boolean | null;
-      group_results: Record<string, number> | null;
+      group_results: Record<string, Record<string, number>> | null;
     }>("/api/v2/analysis/scoring/backtest", {
       method: "POST",
       body: JSON.stringify(body),

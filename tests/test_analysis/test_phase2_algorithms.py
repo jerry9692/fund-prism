@@ -324,6 +324,43 @@ class TestScoring:
         assert result["ic_count"] == 3
         assert result["ic_mean"] is not None and result["ic_mean"] > 0.5
         assert result["monotonicity"] is True
+        assert result["group_metrics"]["future_return"]
+
+    def test_compute_ic_reports_grouped_forward_risk_metrics(self):
+        """Grouped backtests include 1Y return, drawdown, and Sharpe monotonicity."""
+        from fund_research.analysis.scoring import compute_ic
+
+        rows = []
+        future_rows = []
+        for d in range(3):
+            calc_date = date(2024, (d * 3 + 3), 30)
+            for f in range(20):
+                score = float(f)
+                rows.append({
+                    "fund_code": f"{f:06d}",
+                    "calc_date": calc_date,
+                    "score": score,
+                })
+                future_rows.append({
+                    "fund_code": f"{f:06d}",
+                    "calc_date": calc_date,
+                    "future_return": score / 100.0,
+                    "future_max_drawdown": (20 - f) / 100.0,
+                    "future_sharpe": score / 10.0,
+                })
+
+        result = compute_ic(pd.DataFrame(rows), pd.DataFrame(future_rows))
+
+        assert set(result["group_metrics"]) == {
+            "future_return",
+            "future_max_drawdown",
+            "future_sharpe",
+        }
+        assert result["monotonicity_checks"] == {
+            "future_return": True,
+            "future_max_drawdown": True,
+            "future_sharpe": True,
+        }
 
     def test_compute_ic_insufficient_data(self):
         """Less than 10 merged rows → null results with warning."""
