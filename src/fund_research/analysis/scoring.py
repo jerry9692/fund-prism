@@ -311,6 +311,152 @@ def compute_ic(
     }
 
 
+def compute_scoring_backtest(
+    scores: pd.DataFrame,
+    future_returns: pd.DataFrame,
+    *,
+    group_count: int = 5,
+    min_samples: int = 2,
+) -> dict:
+    """Compute a compact, multi-metric scoring backtest summary.
+
+    A convenience entry point that bundles rank IC, score-bucketed forward
+    metrics, return monotonicity, and a top-minus-bottom one-sided sign test.
+    Unlike :func:`compute_ic`, this function does not impose a minimum sample
+    floor so it can be used for small validation samples.
+
+    ``scores`` columns: fund_code, calc_date, score.
+    ``future_returns`` columns: fund_code, calc_date, plus any of
+    ``future_return`` / ``future_max_drawdown`` / ``future_sharpe``.
+    """
+    empty = {
+        "sample_count": 0,
+        "ic_mean": None,
+        "ic_ir": None,
+        "monotonicity": None,
+        "group_returns": {},
+        "group_results": {},
+        "monotonicity_by_metric": {},
+        "top_bottom_return_spread": None,
+        "top_bottom_one_sided_p_value": None,
+        "group_count": 0,
+        "warnings": ["backtest data is empty"],
+    }
+    if scores.empty or future_returns.empty:
+        return empty
+
+    merged = scores.merge(future_returns, on=["fund_code", "calc_date"], how="inner")
+    if len(merged) < min_samples:
+        return {
+            **empty,
+            "sample_count": int(len(merged)),
+            "warnings": [f"backtest sample too small: {len(merged)}/{min_samples}"],
+        }
+
+    # Rank IC per evaluation date (Spearman between score and future return).
+    ics = (
+        merged.groupby("calc_date")
+        .apply(lambda g: g["score"].corr(g["future_return"], method="spearman"))
+        .dropna()
+    )
+    ic_mean = float(ics.mean()) if len(ics) > 0 else None
+    ic_std = float(ics.std()) if len(ics) > 1 else 0.0
+    ic_ir = float(ics.mean() / ic_std) if ic_std > 0 else None
+
+    # Score-bucket each evaluation date into at most ``group_count`` quantiles.
+    def _bucket(date_group: pd.DataFrame) -> pd.Series:
+        if date_group["score"].nunique() < 2:
+            return pd.Series([pd.NA] * len(date_group), index=date_group.index)
+        return pd.qcut(
+            date_group["score"].rank(method="first"),
+            min(group_count, len(date_group)),
+            labels=False,
+            duplicates="drop",
+        )
+
+    merged["group"] = pd.NA
+    for _calc_date, date_group in merged.groupby("calc_date"):
+        merged.loc[date_group.index, "group"] = _bucket(date_group)
+    grouped = merged.dropna(subset=["group"]).copy()
+
+    metric_columns = [
+        column
+        for column in ("future_return", "future_max_drawdown", "future_sharpe")
+        if column in grouped.columns
+    ]
+    # First key = score bucket, second key = metric. Every forward metric is
+    # expected to rise with the score (drawdown is stored as a signed value,
+    # so a smaller loss is a larger, i.e. better, number).
+    group_results: dict[str, dict[str, float]] = {}
+    monotonicity_by_metric: dict[str, bool | None] = {}
+    metric_by_group: dict[str, dict[str, float]] = {column: {} for column in metric_columns}
+    for column in metric_columns:
+        series = grouped.groupby("group")[column].mean().dropna()
+        for k, value in series.to_dict().items():
+            metric_by_group[column][str(int(k))] = round(float(value), 6)
+        if len(series) >= 2:
+            monotonicity_by_metric[column] = bool(
+                series.is_monotonic_increasing and series.iloc[-1] > series.iloc[0]
+            )
+        else:
+            monotonicity_by_metric[column] = None
+    for bucket in sorted({bucket for values in metric_by_group.values() for bucket in values}):
+        group_results[bucket] = {
+            column: values[bucket]
+            for column, values in metric_by_group.items()
+            if bucket in values
+        }
+
+    group_returns = metric_by_group.get("future_return", {})
+
+    # Top-minus-bottom one-sided sign test across evaluation dates.
+    spreads: list[float] = []
+    for _calc_date, frame in merged.groupby("calc_date"):
+        frame = frame.dropna(subset=["group", "future_return"])
+        if frame.empty:
+            continue
+        bottom = frame.loc[frame["group"].idxmin(), "future_return"]
+        top = frame.loc[frame["group"].idxmax(), "future_return"]
+        spreads.append(float(top) - float(bottom))
+    spread_mean = float(pd.Series(spreads).mean()) if spreads else None
+    one_sided_p_value = _sign_test_positive_p_value(spreads)
+
+    return {
+        "sample_count": int(len(merged)),
+        "ic_mean": round(ic_mean, 6) if ic_mean is not None else None,
+        "ic_ir": round(ic_ir, 4) if ic_ir is not None else None,
+        "monotonicity": monotonicity_by_metric.get("future_return"),
+        "group_returns": group_returns,
+        "group_results": group_results,
+        "monotonicity_by_metric": monotonicity_by_metric,
+        "top_bottom_return_spread": round(spread_mean, 6) if spread_mean is not None else None,
+        "top_bottom_one_sided_p_value": round(float(one_sided_p_value), 6)
+        if one_sided_p_value is not None
+        else None,
+        "group_count": len(group_returns),
+        "warnings": [],
+    }
+
+
+def _sign_test_positive_p_value(spreads: list[float]) -> float | None:
+    """One-sided sign-test p-value that the top score bucket beats the bottom.
+
+    Counts periods where the top-minus-bottom spread is positive and returns
+    ``P(X >= positives | n, p=0.5)`` under the binomial null. With a single
+    positive period this is 0.5, matching the documented sign-test semantics.
+    """
+    clean = [float(value) for value in spreads if value is not None]
+    n = len(clean)
+    if n == 0:
+        return None
+    positives = sum(1 for value in clean if value > 0)
+    # Binomial tail P(X >= positives | n, 0.5) = sum_{k=positives..n} C(n,k) / 2^n.
+    from math import comb
+
+    tail = sum(comb(n, k) for k in range(positives, n + 1)) / (2 ** n)
+    return float(tail)
+
+
 def compute_grouped_forward_metrics(merged: pd.DataFrame, group_count: int = 5) -> dict:
     """Compute score-bucket forward metrics and monotonicity checks.
 

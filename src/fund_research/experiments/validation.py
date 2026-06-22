@@ -260,6 +260,16 @@ def _build_gate_checks(
         report.get("overall_conclusion") != "fail"
         for report in algorithm_reports.values()
     )
+    scoring_report = algorithm_reports.get("scoring", {})
+    scoring_stats = scoring_report.get("aggregate_stats", {})
+    scoring_backtest_required = "scoring" in selected_algorithms
+    scoring_backtest_available = (
+        not scoring_backtest_required
+        or (
+            scoring_stats.get("scoring_backtest_available") is True
+            and int(scoring_stats.get("scoring_backtest_sample_count") or 0) > 0
+        )
+    )
     failed_algorithms = [
         algorithm
         for algorithm, report in algorithm_reports.items()
@@ -294,6 +304,15 @@ def _build_gate_checks(
                 "all selected algorithms are not fail"
                 if algorithm_thresholds_passed
                 else f"failed={', '.join(failed_algorithms)}"
+            ),
+        },
+        {
+            "name": "scoring_backtest",
+            "passed": scoring_backtest_available,
+            "detail": (
+                "scoring backtest is available"
+                if scoring_backtest_available
+                else "scoring selected but no future-return backtest was produced"
             ),
         },
         {
@@ -344,16 +363,31 @@ def _algorithm_readiness(algorithm: str, report: dict[str, Any]) -> dict[str, An
             "reason": "uses proxy benchmark/sector returns; formal attribution needs real benchmark data",
         }
     if algorithm == "scoring":
+        stats = report.get("aggregate_stats", {})
         verified_counts = [
             (row.get("diagnostics") or {}).get("verified_dimension_count") or 0
             for row in rows
         ]
         min_verified = min(verified_counts) if verified_counts else 0
-        if overall != "pass" or min_verified < 4:
+        has_backtest = (
+            stats.get("scoring_backtest_available") is True
+            and int(stats.get("scoring_backtest_sample_count") or 0) > 0
+        )
+        if not has_backtest:
             return {
                 "level": "experiment_only",
                 "productization_allowed": False,
                 "reason": f"only {min_verified} verified scoring dimensions; score backtest still required",
+            }
+        if overall != "pass" or min_verified < 4:
+            return {
+                "level": "candidate",
+                "productization_allowed": False,
+                "reason": (
+                    f"score backtest available on "
+                    f"{stats.get('scoring_backtest_sample_count')} samples, "
+                    f"but only {min_verified} verified scoring dimensions"
+                ),
             }
     if algorithm == "simulated_holding":
         method = next(

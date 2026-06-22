@@ -186,10 +186,7 @@ def compute_team(db: Session, fund_code: str) -> float | None:
     avg_tenure = float(np.mean(tenures))
     if avg_tenure <= 0:
         return 0.0
-    if avg_tenure <= 5:
-        score = avg_tenure / 5.0
-    else:
-        score = 1.0
+    score = avg_tenure / 5.0 if avg_tenure <= 5 else 1.0
 
     # Penalty for excessive manager count
     if len(current) > 3:

@@ -1,6 +1,6 @@
 # Phase 2 Gap Analysis
 
-Date: 2026-06-14
+Date: 2026-06-17
 
 This note compares the current Phase 2 implementation with the v0.4 overall
 requirements and `docs/phase2/requirements.md`. It is intentionally conservative:
@@ -14,25 +14,28 @@ The implementation is still aligned with v0.4.
   tables with non-factual conclusion status.
 - Dynamic attribution refuses to use future benchmark snapshots or proxy benchmark
   industry weights.
+- Scoring backtests now persist grouped 12-month forward return, drawdown,
+  Sharpe, IC, top-minus-bottom spread, and one-sided sign-test diagnostics.
 - Experiment readiness now explains why a fund/report date cannot run.
 - Raw third-party data stays local and ignored by git.
 - Experiment CRUD, runner, validation report, CLI/API readiness, and result
   recording are in place.
 
-The main drift is priority, not principle: recent work focused heavily on real
-benchmark data for dynamic attribution, while Phase 2 still needs stronger
-simulated holding backtests, scoring backtests, manual review, and controlled UI.
+The main drift is priority, not principle: recent work has now covered real
+benchmark data and the scoring backtest loop, while Phase 2 still needs stronger
+simulated holding backtests, scoring formula improvement, manual review, and
+controlled UI.
 
-Estimated Phase 2 completion: about 52%.
+Estimated Phase 2 completion: about 58%.
 
 ## Completion Breakdown
 
 | Area | Estimate | Notes |
 | --- | ---: | --- |
 | P2A experiment foundation | 90-95% | CRUD, runner, API, failure recording, tests are mostly ready. |
-| P2B algorithm validation | 50-60% | Algorithms run, but simulated holding and scoring need validation-grade backtests. |
-| P2C controlled product views | 25-35% | Backend readiness exists; frontend and review flows are still thin. |
-| Final Phase 2 acceptance | 15-20% | Needs full realistic loop, frontend checks, and check-data acceptance. |
+| P2B algorithm validation | 60-65% | Scoring backtest is auditable but failed productization monotonicity; simulated holding still needs stronger validation. |
+| P2C controlled product views | 30-40% | Backend readiness exists; scoring backtest page exposes more diagnostics, but review flows are still thin. |
+| Final Phase 2 acceptance | 20-25% | Needs full realistic loop, frontend checks, and check-data acceptance. |
 
 ## Completed Since P2C
 
@@ -49,6 +52,14 @@ Estimated Phase 2 completion: about 52%.
   - `simulated_holding_result`
   - `dynamic_attribution_result`
   - `scoring_result`
+- Scoring backtest MVP:
+  - 12-month forward grouped backtest
+  - grouped return / max drawdown / Sharpe
+  - Spearman IC mean and IC IR
+  - top-minus-bottom return spread and one-sided sign-test p-value
+  - `scoring_backtest` persistence
+  - frontend detail table for grouped diagnostics
+  - documented 30-fund local validation in `docs/phase2/scoring-backtest-validation.md`
 
 ## Remaining Acceptance Gaps
 
@@ -87,17 +98,20 @@ Next acceptance target:
 
 ### Scoring
 
-Current scoring isolates unverified estimated dimensions, which is correct. It
-still needs a real backtest before it can become a default product conclusion.
+Current scoring isolates estimated dimensions and now has an auditable real-data
+backtest loop. The 2026-06-17 30-fund validation completed successfully at the
+pipeline level but failed the productization signal: the highest-score group did
+not outperform the lowest-score group.
 
 Next acceptance target:
 
-- Build a deterministic-only scoring version first.
-- Use NAV-derived return/risk/drawdown plus stable metadata dimensions when
-  available.
-- Run grouped future-return and IC backtests.
-- Persist `scoring_backtest` rows.
-- Keep scores experimental until monotonicity and sample coverage are acceptable.
+- Rework the score formula and weight policy before product use.
+- Prefer deterministic dimensions first; keep estimated dimensions explicitly
+  marked and excluded from high-confidence output.
+- Re-run the 30-fund 12-month grouped backtest until high-score groups pass
+  return monotonicity and top-minus-bottom validation.
+- Keep scores experimental until monotonicity, sample coverage, and statistical
+  diagnostics are acceptable.
 
 ### Manual Review
 
@@ -125,6 +139,6 @@ Next acceptance target:
 1. Commit the current readiness/result-persistence/doc updates.
 2. Run full backend tests and lint.
 3. Build simulated holding validation with a small real sample before expanding.
-4. Add scoring backtest MVP and persist `scoring_backtest`.
+4. Improve the scoring formula and rerun the documented 30-fund 12-month backtest.
 5. Add manual review API/UI.
 6. Improve frontend information architecture, then polish visuals.

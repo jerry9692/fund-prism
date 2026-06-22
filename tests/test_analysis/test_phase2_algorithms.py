@@ -272,6 +272,33 @@ class TestScoring:
         assert "return 数据缺失" in by_code["B"].deduction_reasons
         assert by_code["B"].total_score <= 50 - 2.5
 
+    def test_compute_scoring_backtest_groups_future_returns(self):
+        from fund_research.analysis.scoring import compute_scoring_backtest
+
+        scores = pd.DataFrame({
+            "fund_code": [f"{i:06d}" for i in range(6)],
+            "calc_date": [date(2024, 6, 30)] * 6,
+            "score": [10, 20, 30, 40, 50, 60],
+        })
+        future_returns = pd.DataFrame({
+            "fund_code": [f"{i:06d}" for i in range(6)],
+            "calc_date": [date(2024, 6, 30)] * 6,
+            "future_return": [-0.03, -0.01, 0.0, 0.02, 0.04, 0.06],
+            "future_max_drawdown": [-0.12, -0.10, -0.08, -0.06, -0.04, -0.02],
+            "future_sharpe": [-0.5, -0.2, 0.0, 0.4, 0.8, 1.2],
+        })
+
+        result = compute_scoring_backtest(scores, future_returns, group_count=3)
+
+        assert result["sample_count"] == 6
+        assert result["ic_mean"] == 1.0
+        assert result["monotonicity"] is True
+        assert len(result["group_returns"]) == 3
+        assert result["group_results"]["2"]["future_sharpe"] > result["group_results"]["0"]["future_sharpe"]
+        assert result["monotonicity_by_metric"]["future_max_drawdown"] is True
+        assert result["top_bottom_return_spread"] > 0
+        assert result["top_bottom_one_sided_p_value"] == 0.5
+
     def test_compute_ic_random(self):
         """Random scores show near-zero IC."""
         from fund_research.analysis.scoring import compute_ic

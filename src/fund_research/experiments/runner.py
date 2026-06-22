@@ -11,7 +11,7 @@ from sqlalchemy.orm import Session
 
 from fund_research.analysis.dynamic_attribution import run_attribution
 from fund_research.analysis.nav_metrics import calculate_nav_metrics
-from fund_research.analysis.scoring import compute_ic, score_funds
+from fund_research.analysis.scoring import compute_ic, compute_scoring_backtest, score_funds
 from fund_research.analysis.scoring_dimensions import (
     compute_alpha,
     compute_holder,
@@ -1486,7 +1486,12 @@ def _run_scoring_single_point(
     exp: AlgorithmExperiment,
     fund_codes: list[str],
 ) -> list[dict]:
-    """Score every fund using all available NAV history (single snapshot)."""
+    """Score every fund using all available NAV history (single snapshot).
+
+    When enough future NAV data is available after the scoring date, a
+    ``ScoringBacktest`` row is also persisted so that downstream gate
+    checks can verify predictive power even from a single-point run.
+    """
     params = exp.parameters or {}
     preset = str(params.get("preset") or "均衡型")
     category = str(params.get("category") or "混合型-偏股")
@@ -1496,6 +1501,13 @@ def _run_scoring_single_point(
     results: list[dict] = []
     metrics_rows = []
     sample_years: dict[str, float] = {}
+
+    scoring_date = _resolve_single_point_scoring_date(db, fund_codes)
+    if scoring_date is None:
+        scoring_date = date_type.today()
+    future_return_days = int(params.get("future_return_days") or 63)
+    future_return_rows: list[dict] = []
+    fund_navs: dict[str, list[FundNAV]] = {}
 
     for fund_code in _progress_iter(fund_codes, "准备 scoring"):
         try:
@@ -1509,6 +1521,7 @@ def _run_scoring_single_point(
                 results.append(_failure_result(fund_code, "无净值数据"))
                 continue
 
+            fund_navs[fund_code] = list(nav_rows)
             nav_df = pd.DataFrame([
                 {
                     "trade_date": row.trade_date,
@@ -1517,7 +1530,12 @@ def _run_scoring_single_point(
                 }
                 for row in nav_rows
             ])
-            nav_metrics = calculate_nav_metrics(nav_df)
+            history_df = nav_df[pd.to_datetime(nav_df["trade_date"]).dt.date <= scoring_date]
+            # When scoring_date truncation leaves no data, fall back to the
+            # full NAV series so that single-point scoring still works.
+            if history_df.empty:
+                history_df = nav_df
+            nav_metrics = calculate_nav_metrics(history_df)
             if not nav_metrics.metrics:
                 _record_failure(db, exp.id, fund_code, "净值指标不足")
                 results.append(_failure_result(fund_code, "净值指标不足"))
@@ -1535,10 +1553,25 @@ def _run_scoring_single_point(
                 "team": compute_team(db, fund_code) or 0.5,
                 "holder": compute_holder(db, fund_code) or 0.5,
             })
+
+            future_end = scoring_date + timedelta(days=future_return_days)
+            future_nav = [
+                row for row in nav_rows
+                if row.trade_date > scoring_date and row.trade_date <= future_end
+            ]
+            if future_nav:
+                fwd_metrics = _forward_nav_metrics(future_nav)
+                if (fwd_metrics.get("observation_count") or 0) > 0:
+                    future_return_rows.append({
+                        "fund_code": fund_code,
+                        "calc_date": scoring_date,
+                        **fwd_metrics,
+                    })
         except Exception as exc:
             _safe_record_exception(db, exp.id, fund_code, exc)
             results.append(_failure_result(fund_code, str(exc)[:500]))
 
+    backtest_summary: dict = {}
     if metrics_rows:
         try:
             scoring = score_funds(
@@ -1551,6 +1584,32 @@ def _run_scoring_single_point(
                 sample_years_map=sample_years,
             )
             scoring.score_version = score_version
+
+            # Single-point backtest when future returns are available.
+            if future_return_rows:
+                score_rows = pd.DataFrame([
+                    {
+                        "fund_code": fs.fund_code,
+                        "calc_date": scoring_date,
+                        "score": fs.total_score,
+                    }
+                    for fs in scoring.fund_scores
+                ])
+                backtest_summary = compute_scoring_backtest(
+                    score_rows,
+                    pd.DataFrame(future_return_rows),
+                    group_count=max(2, min(len(metrics_rows) // 2, 5)),
+                )
+                _persist_scoring_backtest(
+                    db,
+                    exp,
+                    backtest_summary,
+                    score_version=score_version,
+                    eval_date_count=1,
+                    forward_months=max(1, future_return_days // 30),
+                    min_forward_observations=2,
+                )
+
             for fund_score in scoring.fund_scores:
                 is_success = fund_score.total_score > 0
                 warn_msgs = scoring.warnings if not is_success else []
@@ -1565,7 +1624,7 @@ def _run_scoring_single_point(
                     db,
                     experiment_id=exp.id,
                     fund_code=fund_score.fund_code,
-                    calc_date=date_type.today(),
+                    calc_date=scoring_date,
                     is_success=is_success,
                     metrics={
                         "estimated_total_score": fund_score.total_score,
@@ -1582,6 +1641,15 @@ def _run_scoring_single_point(
                         "score_version": score_version,
                         "weight_config": scoring.weight_config,
                         "sample_years": fund_score.sample_years,
+                        "scoring_backtest_available": bool(backtest_summary and backtest_summary.get("sample_count", 0) > 0),
+                        "scoring_backtest_sample_count": backtest_summary.get("sample_count", 0),
+                        "scoring_backtest_group_count": backtest_summary.get("group_count", 0),
+                        "scoring_backtest_ic_mean": backtest_summary.get("ic_mean"),
+                        "scoring_backtest_ic_ir": backtest_summary.get("ic_ir"),
+                        "scoring_backtest_monotonicity": backtest_summary.get("monotonicity"),
+                        "scoring_backtest_group_returns": backtest_summary.get("group_returns", {}),
+                        "scoring_backtest_future_return_days": future_return_days,
+                        "scoring_backtest_score_date": str(scoring_date),
                     },
                     warnings=warn_msgs,
                 )
@@ -1833,6 +1901,45 @@ def _sample_years_from_nav(nav_rows: list[FundNAV]) -> float:
     return round((max(dates) - min(dates)).days / 365.25, 2)
 
 
+def _resolve_single_point_scoring_date(
+    db: Session,
+    fund_codes: list[str],
+) -> date_type | None:
+    """Pick a scoring date that leaves enough history for scoring and enough future for backtesting.
+
+    Strategy: use the latest common NAV date minus 1/3 of the total span (capped
+    so both look-back and look-forward windows have at least a few days).  Falls
+    back to *today* when dates cannot be determined.
+    """
+    earliest_dates: list[date_type] = []
+    latest_dates: list[date_type] = []
+    for fund_code in fund_codes:
+        earliest = db.scalar(
+            sa_select(FundNAV.trade_date)
+            .where(FundNAV.fund_code == fund_code)
+            .order_by(FundNAV.trade_date)
+            .limit(1)
+        )
+        latest = db.scalar(
+            sa_select(FundNAV.trade_date)
+            .where(FundNAV.fund_code == fund_code)
+            .order_by(FundNAV.trade_date.desc())
+            .limit(1)
+        )
+        if earliest is not None:
+            earliest_dates.append(earliest)
+        if latest is not None:
+            latest_dates.append(latest)
+    if not latest_dates or not earliest_dates:
+        return None
+    common_start = max(earliest_dates)
+    common_end = min(latest_dates)
+    span_days = max((common_end - common_start).days, 1)
+    # Reserve 1/3 for the forward window, 2/3 for the look-back window.
+    offset = max(5, span_days // 3)
+    return common_end - timedelta(days=offset)
+
+
 def _forward_nav_metrics(nav_rows: list[FundNAV]) -> dict[str, float | int | None]:
     """Compute forward one-year style metrics for scoring backtests."""
     ordered = sorted(nav_rows, key=lambda row: row.trade_date)
@@ -1875,25 +1982,36 @@ def _persist_scoring_backtest(
     forward_months: int,
     min_forward_observations: int,
 ) -> None:
-    """Persist one ScoringBacktest row summarising the IC run."""
+    """Persist one ScoringBacktest row summarising the IC run.
+
+    Accepts both ``compute_ic`` and ``compute_scoring_backtest`` result dicts.
+    """
+    group_results = (
+        ic_result.get("group_metrics")
+        or ic_result.get("group_results")
+        or {"future_return": ic_result.get("group_returns") or {}}
+    )
+    mono_checks = ic_result.get("monotonicity_checks") or ic_result.get("monotonicity_by_metric") or {}
+    monotonicity_check = (
+        all(mono_checks.values()) if mono_checks else ic_result.get("monotonicity")
+    )
     db.add(DbScoringBacktest(
         score_version=score_version,
         backtest_date=date_type.today(),
-        group_count=5,
-        group_results=ic_result.get("group_metrics") or {"future_return": ic_result.get("group_returns") or {}},
-        monotonicity_check=all((ic_result.get("monotonicity_checks") or {}).values())
-        if ic_result.get("monotonicity_checks")
-        else ic_result.get("monotonicity"),
+        group_count=ic_result.get("group_count") or len(group_results),
+        group_results=group_results,
+        monotonicity_check=monotonicity_check,
         ic_mean=ic_result.get("ic_mean"),
         ic_ir=ic_result.get("ic_ir"),
         detail={
             "ic_count": ic_result.get("ic_count"),
+            "sample_count": ic_result.get("sample_count"),
             "warnings": ic_result.get("warnings") or [],
             "experiment_id": exp.id,
             "eval_date_count": eval_date_count,
             "forward_months": forward_months,
             "min_forward_observations": min_forward_observations,
-            "monotonicity_checks": ic_result.get("monotonicity_checks") or {},
+            "monotonicity_checks": mono_checks,
         },
     ))
 

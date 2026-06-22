@@ -243,6 +243,7 @@ def build_validation_report(db: Session, experiment_id: int) -> dict:
     mean_recall = round(float(np.mean(recalls)), 4) if recalls else None
     mean_ic = round(float(np.mean(ics)), 4) if ics else None
     success_rate = round(ok / n, 4) if n > 0 else 0.0
+    scoring_backtest = _scoring_backtest_summary(results) if exp.algorithm_name == "scoring" else {}
 
     if success_rate >= 0.8 and mean_te is not None and mean_te < 0.05:
         overall, cs = "pass", "estimated"
@@ -270,6 +271,7 @@ def build_validation_report(db: Session, experiment_id: int) -> dict:
             "mean_estimated_top10_recall": mean_recall,
             "mean_estimated_industry_correlation": mean_ic,
             "success_rate": success_rate,
+            **scoring_backtest,
         },
         "per_fund": per_fund,
         "overall_conclusion": overall,
@@ -288,6 +290,52 @@ def _compact_metrics(metrics: dict) -> dict:
         else:
             compact[key] = value
     return compact
+
+
+def _scoring_backtest_summary(results: list[ExperimentResult]) -> dict:
+    """Extract the shared scoring backtest summary from scoring result metrics."""
+    for result in results:
+        metrics = result.metrics or {}
+        nested = metrics.get("scoring_backtest")
+        if isinstance(nested, dict):
+            sample_count = nested.get("sample_count") or nested.get("ic_count") or nested.get("eval_periods") or 0
+            return {
+                "scoring_backtest_available": sample_count > 0,
+                "scoring_backtest_sample_count": sample_count,
+                "scoring_backtest_group_count": nested.get("group_count"),
+                "scoring_backtest_ic_mean": nested.get("ic_mean"),
+                "scoring_backtest_ic_ir": nested.get("ic_ir"),
+                "scoring_backtest_monotonicity": nested.get("monotonicity"),
+                "scoring_backtest_monotonicity_by_metric": nested.get("monotonicity_by_metric"),
+                "scoring_backtest_group_returns": nested.get("group_returns"),
+                "scoring_backtest_group_results": nested.get("group_results"),
+                "scoring_backtest_top_bottom_return_spread": nested.get("top_bottom_return_spread"),
+                "scoring_backtest_one_sided_p_value": nested.get("top_bottom_one_sided_p_value"),
+                "scoring_backtest_future_return_days": nested.get("future_return_days"),
+                "scoring_backtest_future_return_months": nested.get("future_return_months"),
+                "scoring_backtest_score_date": nested.get("score_date"),
+            }
+        if "scoring_backtest_available" not in metrics:
+            continue
+        return {
+            "scoring_backtest_available": metrics.get("scoring_backtest_available"),
+            "scoring_backtest_sample_count": metrics.get("scoring_backtest_sample_count"),
+            "scoring_backtest_group_count": metrics.get("scoring_backtest_group_count"),
+            "scoring_backtest_ic_mean": metrics.get("scoring_backtest_ic_mean"),
+            "scoring_backtest_ic_ir": metrics.get("scoring_backtest_ic_ir"),
+            "scoring_backtest_monotonicity": metrics.get("scoring_backtest_monotonicity"),
+            "scoring_backtest_monotonicity_by_metric": metrics.get("scoring_backtest_monotonicity_by_metric"),
+            "scoring_backtest_group_returns": metrics.get("scoring_backtest_group_returns"),
+            "scoring_backtest_group_results": metrics.get("scoring_backtest_group_results"),
+            "scoring_backtest_top_bottom_return_spread": metrics.get("scoring_backtest_top_bottom_return_spread"),
+            "scoring_backtest_one_sided_p_value": metrics.get("scoring_backtest_one_sided_p_value"),
+            "scoring_backtest_future_return_days": metrics.get("scoring_backtest_future_return_days"),
+            "scoring_backtest_score_date": metrics.get("scoring_backtest_score_date"),
+        }
+    return {
+        "scoring_backtest_available": False,
+        "scoring_backtest_sample_count": 0,
+    }
 
 
 def _diagnostics_for_algorithm(algorithm_name: str, metrics: dict) -> dict:
@@ -315,6 +363,7 @@ def _diagnostics_for_algorithm(algorithm_name: str, metrics: dict) -> dict:
             "normalized_report_count": len(metrics.get("normalized_weight_sum_by_report") or {}),
         }
     if algorithm_name == "scoring":
+        nested_backtest = metrics.get("scoring_backtest") if isinstance(metrics.get("scoring_backtest"), dict) else {}
         return {
             "estimated_total_score": metrics.get("estimated_total_score"),
             "estimated_percentile_rank": metrics.get("estimated_percentile_rank"),
@@ -324,5 +373,34 @@ def _diagnostics_for_algorithm(algorithm_name: str, metrics: dict) -> dict:
             "estimated_dimensions": metrics.get("estimated_dimensions"),
             "excluded_estimated_dimensions": metrics.get("estimated_dimensions"),
             "estimated_deduction_reasons": metrics.get("estimated_deduction_reasons"),
+            "scoring_backtest_available": metrics.get("scoring_backtest_available") or bool(nested_backtest),
+            "scoring_backtest_sample_count": (
+                metrics.get("scoring_backtest_sample_count")
+                or nested_backtest.get("sample_count")
+                or nested_backtest.get("ic_count")
+                or nested_backtest.get("eval_periods")
+            ),
+            "scoring_backtest_ic_mean": metrics.get("scoring_backtest_ic_mean") or nested_backtest.get("ic_mean"),
+            "scoring_backtest_monotonicity": (
+                metrics.get("scoring_backtest_monotonicity")
+                if metrics.get("scoring_backtest_monotonicity") is not None
+                else nested_backtest.get("monotonicity")
+            ),
+            "scoring_backtest_monotonicity_by_metric": (
+                metrics.get("scoring_backtest_monotonicity_by_metric")
+                or nested_backtest.get("monotonicity_by_metric")
+            ),
+            "scoring_backtest_top_bottom_return_spread": (
+                metrics.get("scoring_backtest_top_bottom_return_spread")
+                or nested_backtest.get("top_bottom_return_spread")
+            ),
+            "scoring_backtest_one_sided_p_value": (
+                metrics.get("scoring_backtest_one_sided_p_value")
+                or nested_backtest.get("top_bottom_one_sided_p_value")
+            ),
+            "scoring_backtest_score_date": (
+                metrics.get("scoring_backtest_score_date")
+                or nested_backtest.get("score_date")
+            ),
         }
     return {}

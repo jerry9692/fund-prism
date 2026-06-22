@@ -5,7 +5,13 @@ from pathlib import Path
 
 from sqlalchemy.orm import Session
 
-from fund_research.db.models import BenchmarkIndustryWeight, FundDisclosedHoldings, FundNAV, StockDaily
+from fund_research.db.models import (
+    BenchmarkIndustryWeight,
+    FundDisclosedHoldings,
+    FundNAV,
+    ScoringBacktest,
+    StockDaily,
+)
 from fund_research.experiments.validation import (
     render_p2b_validation_markdown,
     run_p2b_validation_report,
@@ -99,6 +105,7 @@ def test_run_p2b_validation_report_builds_auditable_batch_report(test_session: S
     assert report["readiness_summary"]["simulated_holding"]["level"] == "candidate"
     assert report["readiness_summary"]["dynamic_attribution"]["level"] == "candidate"
     assert report["readiness_summary"]["dynamic_attribution"]["productization_allowed"] is False
+    assert any(check["name"] == "scoring_backtest" for check in report["gate_checks"])
 
     sim_report = report["algorithms"]["simulated_holding"]
     assert sim_report["experiment_summary"]["fund_count"] == 2
@@ -108,11 +115,15 @@ def test_run_p2b_validation_report_builds_auditable_batch_report(test_session: S
     assert sim_report["per_fund"][0]["diagnostics"]["matched_stock_count"] == 2
 
     scoring_report = report["algorithms"]["scoring"]
+    assert scoring_report["aggregate_stats"]["scoring_backtest_available"] is True
+    assert scoring_report["aggregate_stats"]["scoring_backtest_sample_count"] == 2
+    assert test_session.query(ScoringBacktest).count() == 1
     assert scoring_report["per_fund"][0]["diagnostics"]["allow_estimated"] is True
     assert scoring_report["per_fund"][0]["diagnostics"]["verified_dimension_count"] >= 7
     assert "return" in scoring_report["per_fund"][0]["diagnostics"]["verified_dimensions"]
     assert "risk" in scoring_report["per_fund"][0]["diagnostics"]["verified_dimensions"]
     assert "scale" in scoring_report["per_fund"][0]["diagnostics"]["verified_dimensions"]
+    assert scoring_report["per_fund"][0]["diagnostics"]["scoring_backtest_available"] is True
     assert "estimated_dimensions" in scoring_report["per_fund"][0]["diagnostics"]
 
 
