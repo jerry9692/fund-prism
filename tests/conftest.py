@@ -18,15 +18,18 @@ from fund_research.db.models import Base
 
 
 @pytest.fixture(autouse=True)
-def _silence_loguru_stderr() -> Generator[None, None, None]:
+def _silence_loguru_stderr(monkeypatch: pytest.MonkeyPatch) -> Generator[None, None, None]:
     """Disable loguru's stderr handler during tests.
 
     The CLI callback calls setup_logging() which adds a loguru handler
     writing to sys.stderr. On CI (Linux, no TTY) this colored output
     gets captured by click's CliRunner and pollutes result.output,
-    causing help-text assertions to fail. This fixture removes all
-    loguru handlers before each test and restores them after.
+    causing help-text assertions to fail. Patching setup_logging to a
+    no-op prevents the handler from being added in the first place.
     """
+    from fund_research.cli import main as cli_main
+
+    monkeypatch.setattr(cli_main, "setup_logging", lambda *args, **kwargs: None)
     logger.remove()
     yield
     logger.remove()
