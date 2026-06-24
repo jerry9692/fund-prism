@@ -1,5 +1,7 @@
 import { useEffect, useState } from "react";
 import { api, type ScoringBacktestItem, type ScoringBacktestDetail } from "../api/client";
+import ChartWrapper from "../components/ChartWrapper";
+import MetricCard from "../components/MetricCard";
 
 const PRESET_OPTIONS = ["均衡型", "稳健型", "进取型"];
 const METRIC_LABELS: Record<string, string> = {
@@ -187,36 +189,35 @@ export default function ScoringBacktestPage() {
           </div>
           {detailLoading ? <p>加载中...</p> : detail ? (
             <div>
-              <div className="summary-row" style={{ marginBottom: 16, gap: 24 }}>
-                <div>
-                  <span style={{ color: "var(--color-text-secondary)" }}>IC Mean</span>
-                  <strong style={{ marginLeft: 8 }}>
-                    {detail.ic_mean != null ? detail.ic_mean.toFixed(4) : "—"}
-                  </strong>
-                </div>
-                <div>
-                  <span style={{ color: "var(--color-text-secondary)" }}>IC IR</span>
-                  <strong style={{ marginLeft: 8 }}>
-                    {detail.ic_ir != null ? detail.ic_ir.toFixed(4) : "—"}
-                  </strong>
-                </div>
-                <div>
-                  <span style={{ color: "var(--color-text-secondary)" }}>单调性</span>
-                  <span className={`badge badge-${detail.monotonicity_check ? "computed" : "needs_review"}`}
-                        style={{ marginLeft: 8 }}>
-                    {detail.monotonicity_check ? "通过" : detail.monotonicity_check === false ? "未通过" : "—"}
-                  </span>
-                </div>
-                <div>
-                  <span style={{ color: "var(--color-text-secondary)" }}>评估期数</span>
-                  <strong style={{ marginLeft: 8 }}>{detail.group_count}</strong>
-                </div>
+              <div className="metric-grid" style={{ marginBottom: 16 }}>
+                <MetricCard
+                  label="IC Mean"
+                  value={detail.ic_mean != null ? detail.ic_mean.toFixed(4) : "—"}
+                  conclusionStatus={detail.ic_mean != null && detail.ic_mean > 0 ? "computed" : "needs_review"}
+                  hint={detail.ic_mean != null && detail.ic_mean > 0 ? "正向预测力" : "无预测力或反向"}
+                />
+                <MetricCard
+                  label="IC IR"
+                  value={detail.ic_ir != null ? detail.ic_ir.toFixed(4) : "—"}
+                  conclusionStatus={detail.ic_ir != null && detail.ic_ir > 0.5 ? "computed" : "needs_review"}
+                  hint={detail.ic_ir != null && detail.ic_ir > 0.5 ? "稳定性良好" : "稳定性不足"}
+                />
+                <MetricCard
+                  label="单调性"
+                  value={detail.monotonicity_check ? "通过" : detail.monotonicity_check === false ? "未通过" : "—"}
+                  conclusionStatus={detail.monotonicity_check ? "computed" : "needs_review"}
+                />
+                <MetricCard
+                  label="评估期数"
+                  value={detail.group_count}
+                  hint="分组数量"
+                />
               </div>
 
               {detail.group_results && Object.keys(detail.group_results).length > 0 && (
-                <div style={{ marginBottom: 16 }}>
-                  <h4 style={{ marginBottom: 8 }}>分组指标</h4>
-                  <table className="data-table" style={{ maxWidth: 680 }}>
+                <>
+                  <h4 style={{ marginBottom: 8 }}>分组指标表格</h4>
+                  <table className="data-table" style={{ maxWidth: 680, marginBottom: 16 }}>
                     <thead>
                       <tr>
                         <th>指标</th>
@@ -252,7 +253,43 @@ export default function ScoringBacktestPage() {
                         ))}
                     </tbody>
                   </table>
-                </div>
+
+                  {/* Group return bar chart */}
+                  {detail.group_results.future_return && (
+                    <ChartWrapper
+                      type="bar"
+                      title="分组未来收益（Q1=最低分, Q5=最高分）"
+                      labels={["Q1", "Q2", "Q3", "Q4", "Q5"].slice(0, Object.keys(detail.group_results.future_return).length)}
+                      series={[{
+                        label: "未来收益",
+                        values: ["0", "1", "2", "3", "4"]
+                          .map((g) => detail.group_results!.future_return[g])
+                          .filter((v) => v != null) as number[],
+                      }]}
+                      yLabel="收益率"
+                      formatY={(v) => `${(v * 100).toFixed(1)}%`}
+                      height={260}
+                    />
+                  )}
+
+                  {/* Group Sharpe bar chart */}
+                  {detail.group_results.future_sharpe && (
+                    <ChartWrapper
+                      type="bar"
+                      title="分组未来夏普比率"
+                      labels={["Q1", "Q2", "Q3", "Q4", "Q5"].slice(0, Object.keys(detail.group_results.future_sharpe).length)}
+                      series={[{
+                        label: "夏普比率",
+                        values: ["0", "1", "2", "3", "4"]
+                          .map((g) => detail.group_results!.future_sharpe[g])
+                          .filter((v) => v != null) as number[],
+                      }]}
+                      yLabel="Sharpe"
+                      formatY={(v) => v.toFixed(2)}
+                      height={220}
+                    />
+                  )}
+                </>
               )}
 
               {detail.detail && (
