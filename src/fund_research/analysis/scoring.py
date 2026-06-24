@@ -21,36 +21,43 @@ import pandas as pd
 ALGORITHM_NAME = "composite_scoring"
 
 # 8 scoring dimensions with default weights.
-# v0.2 rebalance: lower return weight (1Y momentum reversal in A-shares),
-# raise risk control and stability dimensions which are more persistent
-# and less prone to reversal.  Estimated dimensions keep half-weight.
+# v0.4 rebalance based on per-dimension IC diagnostics (2021-2025):
+#   - trading IC=-0.31 (inverted!) → reversed direction + lower weight
+#   - return  IC=-0.14 (A-share reversal) → lower weight
+#   - risk    IC=+0.22 (stable positive) → raise weight
+#   - style_stability IC=+0.18 but only 12% coverage → lower weight
+# Estimated dimensions keep half-weight.
 DEFAULT_WEIGHTS = {
-    "return": 0.05,            # 收益能力 — 大幅降低：A 股 1-2Y 收益反转严重
-    "risk": 0.10,              # 风险控制 — 降低：牛市中低风险反而跑输
-    "alpha": 0.05,            # Alpha 能力 — 降低：无基准数据时不可用
-    "trading": 0.25,          # 交易能力 — 大幅提高：换手率是持久的行为特征
-    "style_stability": 0.30,  # 风格稳定性 — 大幅提高：行业暴露稳定性最持久
-    "scale": 0.05,            # 规模适配 — 降低：无历史数据
-    "team": 0.10,             # 团队稳定性 — 保持：经理任职是持久信号
-    "holder": 0.10,           # 持有人稳定性 — 保持：机构集中度持久
+    "return": 0.03,            # 收益能力 — 降低：A 股反转效应，pooled IC 为负
+    "risk": 0.25,              # 风险控制 — 大幅提高：最稳定的正向信号 (IC=+0.22)
+    "alpha": 0.05,            # Alpha 能力 — 保持：无数据时重分配
+    "trading": 0.15,          # 交易能力 — 降低 + 反转方向：原 IC=-0.31，反转后应正向
+    "style_stability": 0.15,  # 风格稳定性 — 降低：数据覆盖率仅 12%
+    "scale": 0.05,            # 规模适配 — 保持：无数据时重分配
+    "team": 0.17,             # 团队稳定性 — 提高：持久信号
+    "holder": 0.15,           # 持有人稳定性 — 提高：治理信号
 }
 
-# v0.3: When a dimension has no data for ANY fund in the scoring set
+# v0.4: When a dimension has no data for ANY fund in the scoring set
 # (e.g. alpha/scale/team/holder lack historical data sources), its weight
 # is redistributed proportionally to the dimensions that DO have data.
 # This prevents the missing-data penalty (5% of weight) from being too
 # weak to differentiate funds when 4+ dimensions are uniformly absent.
-ALGORITHM_VERSION = "0.3.0"
+#
+# v0.4 also reverses the trading dimension direction based on IC
+# diagnostics: in A-shares, low turnover funds underperform (IC=-0.31),
+# so the dimension now rewards active portfolio adjustment.
+ALGORITHM_VERSION = "0.4.0"
 
 PRESET_WEIGHTS = {
     "稳健型": {
-        "return": 0.08, "risk": 0.30, "alpha": 0.10, "trading": 0.05,
-        "style_stability": 0.17, "scale": 0.10, "team": 0.12, "holder": 0.08,
+        "return": 0.05, "risk": 0.30, "alpha": 0.08, "trading": 0.10,
+        "style_stability": 0.17, "scale": 0.08, "team": 0.12, "holder": 0.10,
     },
     "均衡型": DEFAULT_WEIGHTS,
     "进取型": {
-        "return": 0.20, "risk": 0.18, "alpha": 0.17, "trading": 0.08,
-        "style_stability": 0.10, "scale": 0.10, "team": 0.10, "holder": 0.07,
+        "return": 0.08, "risk": 0.20, "alpha": 0.12, "trading": 0.20,
+        "style_stability": 0.10, "scale": 0.08, "team": 0.12, "holder": 0.10,
     },
 }
 

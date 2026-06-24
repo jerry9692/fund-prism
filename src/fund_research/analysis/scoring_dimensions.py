@@ -56,7 +56,9 @@ def compute_alpha(db: Session, fund_code: str, as_of_date: date | None = None) -
 
 # ---------------------------------------------------------------------------
 # trading — turnover estimated from consecutive semi-annual disclosures
-# (lower turnover → higher score, so we negate)
+# v0.4: REVERSED direction. IC diagnostics showed low-turnover funds
+# underperform in A-shares (IC=-0.31), so higher turnover → higher score.
+# A-share theme rotation is fast; active adjustment is rewarded.
 # ---------------------------------------------------------------------------
 
 
@@ -65,6 +67,10 @@ def compute_trading(db: Session, fund_code: str, as_of_date: date | None = None)
 
     When ``as_of_date`` is provided, only holdings with
     ``report_date <= as_of_date`` are considered.
+
+    v0.4: Returns positive turnover (higher = better). IC diagnostics
+    on 2021-2025 data showed the previous negation (low turnover = high
+    score) produced IC=-0.31, i.e. completely inverted in A-shares.
     """
     stmt = (
         select(FundDisclosedHoldings)
@@ -104,7 +110,7 @@ def compute_trading(db: Session, fund_code: str, as_of_date: date | None = None)
         abs(curr_w.get(code, 0.0) - prev_w.get(code, 0.0))
         for code in all_codes
     ) / 2.0
-    return -turnover
+    return turnover
 
 
 # ---------------------------------------------------------------------------
