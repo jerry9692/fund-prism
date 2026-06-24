@@ -5,6 +5,11 @@ Each function accepts a DB session and fund_code, and returns a float
 (or None when data is unavailable).  All values are oriented so that
 "higher = better" — the scoring pipeline handles Z-score / percentile
 standardisation downstream.
+
+All functions accept an optional ``as_of_date`` parameter.  When provided,
+only data with ``report_date/calc_date/start_date <= as_of_date`` is used.
+This eliminates lookahead bias in backtests: scoring at eval_date T must
+only see information available at or before T.
 """
 
 from datetime import date
@@ -27,13 +32,21 @@ from fund_research.db.models import (
 # ---------------------------------------------------------------------------
 
 
-def compute_alpha(db: Session, fund_code: str) -> float | None:
-    row = db.scalar(
+def compute_alpha(db: Session, fund_code: str, as_of_date: date | None = None) -> float | None:
+    """Selection + allocation effect from the latest static attribution.
+
+    When ``as_of_date`` is provided, only attributions with
+    ``report_date <= as_of_date`` are considered, preventing lookahead bias.
+    """
+    stmt = (
         select(StaticAttributionResult)
         .where(StaticAttributionResult.fund_code == fund_code)
-        .order_by(StaticAttributionResult.report_date.desc())
-        .limit(1)
     )
+    if as_of_date is not None:
+        stmt = stmt.where(StaticAttributionResult.report_date <= as_of_date)
+    stmt = stmt.order_by(StaticAttributionResult.report_date.desc()).limit(1)
+
+    row = db.scalar(stmt)
     if row is None:
         return None
     sel = row.selection_effect or 0.0
@@ -47,14 +60,22 @@ def compute_alpha(db: Session, fund_code: str) -> float | None:
 # ---------------------------------------------------------------------------
 
 
-def compute_trading(db: Session, fund_code: str) -> float | None:
-    rows = db.scalars(
+def compute_trading(db: Session, fund_code: str, as_of_date: date | None = None) -> float | None:
+    """Turnover estimated from the two most recent disclosed holding periods.
+
+    When ``as_of_date`` is provided, only holdings with
+    ``report_date <= as_of_date`` are considered.
+    """
+    stmt = (
         select(FundDisclosedHoldings)
         .where(FundDisclosedHoldings.fund_code == fund_code)
         .where(FundDisclosedHoldings.asset_type == "股票")
-        .order_by(FundDisclosedHoldings.report_date.desc())
-        .limit(300)
-    ).all()
+    )
+    if as_of_date is not None:
+        stmt = stmt.where(FundDisclosedHoldings.report_date <= as_of_date)
+    stmt = stmt.order_by(FundDisclosedHoldings.report_date.desc()).limit(300)
+
+    rows = db.scalars(stmt).all()
     if len(rows) < 2:
         return None
 
@@ -92,14 +113,27 @@ def compute_trading(db: Session, fund_code: str) -> float | None:
 # ---------------------------------------------------------------------------
 
 
-def compute_style_stability(db: Session, fund_code: str) -> float | None:
-    rows = db.scalars(
+def compute_style_stability(db: Session, fund_code: str, as_of_date: date | None = None) -> float | None:
+    """Mean cross-factor std of style/industry exposure values over time.
+
+    When ``as_of_date`` is provided, only exposures with
+    ``calc_date <= as_of_date`` are considered.
+
+    Supports both ``exposure_type='style'`` (regression-based) and
+    ``exposure_type='industry'`` (disclosed industry allocation). The
+    latter is the primary source when AKShare industry allocation data
+    is available, since it does not require a separate style model.
+    """
+    stmt = (
         select(StyleExposureResult)
         .where(StyleExposureResult.fund_code == fund_code)
-        .where(StyleExposureResult.exposure_type == "style")
-        .order_by(StyleExposureResult.calc_date.desc())
-        .limit(12)
-    ).all()
+        .where(StyleExposureResult.exposure_type.in_(["style", "industry"]))
+    )
+    if as_of_date is not None:
+        stmt = stmt.where(StyleExposureResult.calc_date <= as_of_date)
+    stmt = stmt.order_by(StyleExposureResult.calc_date.desc()).limit(12)
+
+    rows = db.scalars(stmt).all()
     if len(rows) < 2:
         return None
 
@@ -124,16 +158,19 @@ def compute_style_stability(db: Session, fund_code: str) -> float | None:
 # "golden zone" ≈ 1–50 B CNY; very small or very large funds are penalised
 # ---------------------------------------------------------------------------
 
-_LOG_10_E = 4.342944819032518  # 10/ln(10) ≈ 4.3429 (not used currently)
 
+def compute_scale(db: Session, fund_code: str, as_of_date: date | None = None) -> float | None:
+    """Scale adequacy score based on the latest total NAV.
 
-def compute_scale(db: Session, fund_code: str) -> float | None:
-    rows = db.scalars(
-        select(FundScale)
-        .where(FundScale.fund_code == fund_code)
-        .order_by(FundScale.report_date.desc())
-        .limit(1)
-    ).all()
+    When ``as_of_date`` is provided, only scale records with
+    ``report_date <= as_of_date`` are considered.
+    """
+    stmt = select(FundScale).where(FundScale.fund_code == fund_code)
+    if as_of_date is not None:
+        stmt = stmt.where(FundScale.report_date <= as_of_date)
+    stmt = stmt.order_by(FundScale.report_date.desc()).limit(1)
+
+    rows = db.scalars(stmt).all()
     if not rows or rows[0].total_nav is None:
         return None
 
@@ -162,24 +199,47 @@ def compute_scale(db: Session, fund_code: str) -> float | None:
 # ---------------------------------------------------------------------------
 
 
-def compute_team(db: Session, fund_code: str) -> float | None:
-    rows = db.scalars(
-        select(FundManagerTenure)
-        .where(FundManagerTenure.fund_code == fund_code)
-        .order_by(FundManagerTenure.start_date.desc())
-    ).all()
+def compute_team(db: Session, fund_code: str, as_of_date: date | None = None) -> float | None:
+    """Average tenure of managers active at ``as_of_date``.
+
+    When ``as_of_date`` is provided, a manager is considered "current" if
+    ``start_date <= as_of_date`` and (``end_date is None`` or
+    ``end_date > as_of_date``).  Tenure is measured up to ``as_of_date``.
+    """
+    stmt = select(FundManagerTenure).where(FundManagerTenure.fund_code == fund_code)
+    if as_of_date is not None:
+        stmt = stmt.where(FundManagerTenure.start_date <= as_of_date)
+    stmt = stmt.order_by(FundManagerTenure.start_date.desc())
+
+    rows = db.scalars(stmt).all()
     if not rows:
         return None
 
-    current = [r for r in rows if r.is_current]
+    if as_of_date is not None:
+        # A manager is "current" at as_of_date if they started on or before
+        # it and have not yet ended (or the stored is_current flag is True
+        # and end_date is None / after as_of_date).
+        current = [
+            r for r in rows
+            if r.end_date is None or r.end_date > as_of_date
+        ]
+        ref_date = as_of_date
+    else:
+        current = [r for r in rows if r.is_current]
+        ref_date = date.today()
+
     if not current:
         return None
 
-    tenures = [
-        r.tenure_days / 365.25
-        for r in current
-        if r.tenure_days and r.tenure_days > 0
-    ]
+    tenures: list[float] = []
+    for r in current:
+        end = r.end_date or ref_date
+        if r.start_date is None:
+            continue
+        tenure_days = (end - r.start_date).days
+        if tenure_days > 0:
+            tenures.append(tenure_days / 365.25)
+
     if not tenures:
         return None
 
@@ -203,13 +263,18 @@ def compute_team(db: Session, fund_code: str) -> float | None:
 # ---------------------------------------------------------------------------
 
 
-def compute_holder(db: Session, fund_code: str) -> float | None:
-    row = db.scalar(
-        select(HolderStructure)
-        .where(HolderStructure.fund_code == fund_code)
-        .order_by(HolderStructure.report_date.desc())
-        .limit(1)
-    )
+def compute_holder(db: Session, fund_code: str, as_of_date: date | None = None) -> float | None:
+    """Holder structure composite score.
+
+    When ``as_of_date`` is provided, only holder structures with
+    ``report_date <= as_of_date`` are considered.
+    """
+    stmt = select(HolderStructure).where(HolderStructure.fund_code == fund_code)
+    if as_of_date is not None:
+        stmt = stmt.where(HolderStructure.report_date <= as_of_date)
+    stmt = stmt.order_by(HolderStructure.report_date.desc()).limit(1)
+
+    row = db.scalar(stmt)
     if row is None:
         return None
 

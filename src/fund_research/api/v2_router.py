@@ -24,10 +24,13 @@ from fund_research.core.enums import ConclusionStatus
 from fund_research.core.schemas import APIResponse
 from fund_research.db.models import (
     AlgorithmExperiment,
-    FundNAV,
-    ScoringBacktest as DbScoringBacktest,
-    ScoringResult as DbScoringResult,
     ToolAPICallLog,
+)
+from fund_research.db.models import (
+    ScoringBacktest as DbScoringBacktest,
+)
+from fund_research.db.models import (
+    ScoringResult as DbScoringResult,
 )
 from fund_research.db.session import get_session_factory
 from fund_research.experiments.manager import (

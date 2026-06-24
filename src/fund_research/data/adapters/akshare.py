@@ -92,6 +92,7 @@ COLUMN_MAP = {
     "股票代码": "stock_code",
     "股票名称": "stock_name",
     "行业名称": "industry_name",
+    "行业类别": "industry_name",
     "持仓占比": "weight_pct",
     "占净值比例": "weight_pct",
     "占净值比例(%)": "weight_pct",

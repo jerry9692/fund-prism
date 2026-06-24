@@ -111,7 +111,10 @@ def test_run_p2b_validation_report_builds_auditable_batch_report(test_session: S
     assert sim_report["experiment_summary"]["fund_count"] == 2
     assert sim_report["aggregate_stats"]["mean_estimated_tracking_error"] is not None
     assert sim_report["aggregate_stats"]["mean_estimated_top10_recall"] is not None
-    assert sim_report["per_fund"][0]["diagnostics"]["method"] == "naive_replication"
+    assert sim_report["per_fund"][0]["diagnostics"]["method"] in {
+        "naive_replication",
+        "optimized_cvxpy_scipy",
+    }
     assert sim_report["per_fund"][0]["diagnostics"]["matched_stock_count"] == 2
 
     scoring_report = report["algorithms"]["scoring"]

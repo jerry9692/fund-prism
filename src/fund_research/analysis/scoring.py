@@ -19,29 +19,38 @@ from math import erfc, sqrt
 import pandas as pd
 
 ALGORITHM_NAME = "composite_scoring"
-ALGORITHM_VERSION = "0.1.0"
 
-# 8 scoring dimensions with default weights (偏长期稳健)
+# 8 scoring dimensions with default weights.
+# v0.2 rebalance: lower return weight (1Y momentum reversal in A-shares),
+# raise risk control and stability dimensions which are more persistent
+# and less prone to reversal.  Estimated dimensions keep half-weight.
 DEFAULT_WEIGHTS = {
-    "return": 0.20,       # 收益能力
-    "risk": 0.20,         # 风险控制
-    "alpha": 0.15,        # Alpha 能力
-    "trading": 0.05,      # 交易能力 (estimated → weight × 0.5)
-    "style_stability": 0.15,  # 风格稳定性
-    "scale": 0.10,        # 规模适配
-    "team": 0.10,         # 团队稳定性
-    "holder": 0.05,       # 持有人稳定性
+    "return": 0.05,            # 收益能力 — 大幅降低：A 股 1-2Y 收益反转严重
+    "risk": 0.10,              # 风险控制 — 降低：牛市中低风险反而跑输
+    "alpha": 0.05,            # Alpha 能力 — 降低：无基准数据时不可用
+    "trading": 0.25,          # 交易能力 — 大幅提高：换手率是持久的行为特征
+    "style_stability": 0.30,  # 风格稳定性 — 大幅提高：行业暴露稳定性最持久
+    "scale": 0.05,            # 规模适配 — 降低：无历史数据
+    "team": 0.10,             # 团队稳定性 — 保持：经理任职是持久信号
+    "holder": 0.10,           # 持有人稳定性 — 保持：机构集中度持久
 }
+
+# v0.3: When a dimension has no data for ANY fund in the scoring set
+# (e.g. alpha/scale/team/holder lack historical data sources), its weight
+# is redistributed proportionally to the dimensions that DO have data.
+# This prevents the missing-data penalty (5% of weight) from being too
+# weak to differentiate funds when 4+ dimensions are uniformly absent.
+ALGORITHM_VERSION = "0.3.0"
 
 PRESET_WEIGHTS = {
     "稳健型": {
-        "return": 0.15, "risk": 0.25, "alpha": 0.10, "trading": 0.05,
-        "style_stability": 0.15, "scale": 0.15, "team": 0.10, "holder": 0.05,
+        "return": 0.08, "risk": 0.30, "alpha": 0.10, "trading": 0.05,
+        "style_stability": 0.17, "scale": 0.10, "team": 0.12, "holder": 0.08,
     },
     "均衡型": DEFAULT_WEIGHTS,
     "进取型": {
-        "return": 0.30, "risk": 0.15, "alpha": 0.20, "trading": 0.10,
-        "style_stability": 0.05, "scale": 0.10, "team": 0.05, "holder": 0.05,
+        "return": 0.20, "risk": 0.18, "alpha": 0.17, "trading": 0.08,
+        "style_stability": 0.10, "scale": 0.10, "team": 0.10, "holder": 0.07,
     },
 }
 
@@ -189,9 +198,33 @@ def score_funds(
     if missing_dims:
         warnings.append(f"缺少评分维度: {', '.join(missing_dims)}")
 
+    # v0.3: Dynamic weight redistribution for uniformly-absent dimensions.
+    # If a dimension is NaN for ALL funds in the scoring set (e.g. alpha/
+    # scale/team/holder have no historical data source), redistribute its
+    # weight proportionally to dimensions that have at least one non-NaN
+    # value. This ensures the score is driven by real differentiators
+    # rather than a flat 5% missing-data penalty.
+    effective_weights = dict(weights)
+    for dim in dims:
+        if data[dim].isna().all():
+            freed_weight = effective_weights.pop(dim, 0.0)
+            if freed_weight > 0:
+                available_dims = [d for d in dims if d != dim and not data[d].isna().all()]
+                total_available = sum(effective_weights.get(d, 0.0) for d in available_dims)
+                if total_available > 0:
+                    for d in available_dims:
+                        effective_weights[d] = effective_weights.get(d, 0.0) + freed_weight * (
+                            effective_weights.get(d, 0.0) / total_available
+                        )
+                warnings.append(
+                    f"维度 {dim} 在全部基金中无数据，权重 {freed_weight:.2f} 已重分配至可用维度"
+                )
+
     # Step 1-3: Winsorize → Z-score → Percentile
     scores_df = pd.DataFrame(index=data.index)
     for dim in dims:
+        if dim not in effective_weights:
+            continue
         col = data[dim].astype(float)
         w = winsorize(col)
         z = standardize_zscore(w)
@@ -199,17 +232,24 @@ def score_funds(
         scores_df[dim] = pct
 
     # Step 4-5: Weighted sum
+    # contains_estimated reflects the scoring configuration: if any of the
+    # original dimensions (before dynamic weight redistribution) were marked
+    # estimated, the result carries the estimated flag even when those
+    # dimensions were removed for having no data. This keeps the API
+    # warning ("评分包含 estimated 维度") truthful to the configuration.
+    config_has_estimated = any(dim in contains_estimated for dim in dims)
     fund_scores: list[FundScore] = []
     for fund_code in scores_df.index:
         sub: dict[str, float] = {}
         total = 0.0
         deductions: list[str] = []
-        has_est = False
+        has_est = config_has_estimated
 
         for dim in dims:
-            w = weights.get(dim, 0.0)
+            if dim not in effective_weights:
+                continue
+            w = effective_weights.get(dim, 0.0)
             if dim in contains_estimated:
-                has_est = True
                 if allow_estimated:
                     w *= 0.5  # estimated indicator → half weight
                     deductions.append(f"{dim} 含估计成分，权重减半")
@@ -255,7 +295,7 @@ def score_funds(
 
     return ScoringResult(
         score_version=ALGORITHM_VERSION,
-        weight_config=weights,
+        weight_config=effective_weights,
         fund_scores=fund_scores,
         category=category,
         fund_count=n,
@@ -594,10 +634,10 @@ def _group_return_curves(grouped_returns: pd.DataFrame) -> dict[str, list[dict[s
         cumulative = 1.0
         points: list[dict[str, float | str]] = []
         for row in frame.sort_values("calc_date").itertuples(index=False):
-            period_return = float(getattr(row, "future_return"))
+            period_return = float(row.future_return)
             cumulative *= 1.0 + period_return
             points.append({
-                "calc_date": str(getattr(row, "calc_date")),
+                "calc_date": str(row.calc_date),
                 "period_return": round(period_return, 6),
                 "cumulative_return": round(cumulative - 1.0, 6),
             })
