@@ -10,7 +10,6 @@ CLI 入口。
 
 import csv
 import json
-import sys
 from datetime import date
 from pathlib import Path
 from typing import Annotated
@@ -1543,10 +1542,6 @@ def main(
     log_file: str = typer.Option("./logs/fund_research.log", "--log-file", help="日志文件路径"),
 ) -> None:
     """fund-research CLI — AI-oriented 开源个人基金研究平台。"""
-    # Skip logging setup on --help to avoid interfering with help text output,
-    # especially in CI environments with narrow/no TTY.
-    if "--help" in sys.argv or "-h" in sys.argv:
-        return
     setup_logging(log_level=log_level, log_file=log_file)
 
 

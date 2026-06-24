@@ -8,12 +8,28 @@ from collections.abc import Generator
 
 import pytest
 from fastapi.testclient import TestClient
+from loguru import logger
 from sqlalchemy import Engine, create_engine
 from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import StaticPool
 
 from fund_research.api.app import create_app
 from fund_research.db.models import Base
+
+
+@pytest.fixture(autouse=True)
+def _silence_loguru_stderr() -> Generator[None, None, None]:
+    """Disable loguru's stderr handler during tests.
+
+    The CLI callback calls setup_logging() which adds a loguru handler
+    writing to sys.stderr. On CI (Linux, no TTY) this colored output
+    gets captured by click's CliRunner and pollutes result.output,
+    causing help-text assertions to fail. This fixture removes all
+    loguru handlers before each test and restores them after.
+    """
+    logger.remove()
+    yield
+    logger.remove()
 
 
 @pytest.fixture(scope="function")
