@@ -498,3 +498,187 @@ def test_scoring_endpoint_keeps_estimated_scores_observational(
     get_payload = get_response.json()
     assert get_response.status_code == 200
     assert get_payload["conclusion_status"] == "observation"
+
+
+# ============================================================
+# Reviewer Annotation tests
+# ============================================================
+
+
+def test_reviewer_annotation_crud_lifecycle(
+    test_client: TestClient,
+    test_session: Session,
+) -> None:
+    """Create, read, update, delete a reviewer annotation."""
+    # Create
+    create_resp = test_client.post(
+        "/api/v2/reviewer-annotations",
+        json={
+            "fund_code": "000001",
+            "annotation_type": "note",
+            "target_module": "scoring",
+            "detail": {"score_version": "0.3.0", "concern": "low coverage"},
+            "reason": "维度覆盖不足，需人工复核",
+        },
+    )
+    assert create_resp.status_code == 200
+    create_data = create_resp.json()["data"]
+    assert create_data["fund_code"] == "000001"
+    assert create_data["annotation_type"] == "note"
+    assert create_data["target_module"] == "scoring"
+    annotation_id = create_data["id"]
+
+    # Get by id
+    get_resp = test_client.get(f"/api/v2/reviewer-annotations/{annotation_id}")
+    assert get_resp.status_code == 200
+    assert get_resp.json()["data"]["id"] == annotation_id
+
+    # List with filter
+    list_resp = test_client.get(
+        "/api/v2/reviewer-annotations",
+        params={"fund_code": "000001", "annotation_type": "note"},
+    )
+    assert list_resp.status_code == 200
+    list_data = list_resp.json()["data"]
+    assert list_data["count"] >= 1
+    assert any(a["id"] == annotation_id for a in list_data["annotations"])
+
+    # Update
+    update_resp = test_client.patch(
+        f"/api/v2/reviewer-annotations/{annotation_id}",
+        json={
+            "annotation_type": "lock",
+            "reason": "锁定评分结果，等待数据补全后重新评估",
+        },
+    )
+    assert update_resp.status_code == 200
+    update_data = update_resp.json()["data"]
+    assert update_data["annotation_type"] == "lock"
+    assert "锁定" in update_data["reason"]
+
+    # Delete
+    del_resp = test_client.delete(f"/api/v2/reviewer-annotations/{annotation_id}")
+    assert del_resp.status_code == 200
+    assert del_resp.json()["data"]["deleted"] is True
+
+    # Confirm deleted
+    get_after_del = test_client.get(f"/api/v2/reviewer-annotations/{annotation_id}")
+    assert get_after_del.status_code == 200
+    assert get_after_del.json()["data"] is None
+
+
+def test_reviewer_annotation_rejects_invalid_type(
+    test_client: TestClient,
+    test_session: Session,
+) -> None:
+    """Invalid annotation_type should return needs_review with warning."""
+    resp = test_client.post(
+        "/api/v2/reviewer-annotations",
+        json={
+            "fund_code": "000001",
+            "annotation_type": "invalid_type",
+            "reason": "test",
+        },
+    )
+    assert resp.status_code == 200
+    payload = resp.json()
+    assert payload["conclusion_status"] == "needs_review"
+    assert any("annotation_type" in w for w in payload["warnings"])
+
+
+def test_reviewer_annotation_rejects_invalid_target_module(
+    test_client: TestClient,
+    test_session: Session,
+) -> None:
+    """Invalid target_module should return needs_review with warning."""
+    resp = test_client.post(
+        "/api/v2/reviewer-annotations",
+        json={
+            "fund_code": "000001",
+            "annotation_type": "note",
+            "target_module": "invalid_module",
+            "reason": "test",
+        },
+    )
+    assert resp.status_code == 200
+    payload = resp.json()
+    assert payload["conclusion_status"] == "needs_review"
+    assert any("target_module" in w for w in payload["warnings"])
+
+
+def test_fund_review_status_aggregates_annotations(
+    test_client: TestClient,
+    test_session: Session,
+) -> None:
+    """Fund review status should aggregate multiple annotations into effective_status."""
+    # Create an exclude annotation
+    test_client.post(
+        "/api/v2/reviewer-annotations",
+        json={
+            "fund_code": "000002",
+            "annotation_type": "exclude",
+            "target_module": "scoring",
+            "reason": "数据质量问题，排除出默认结论",
+        },
+    )
+    # Create a note annotation
+    test_client.post(
+        "/api/v2/reviewer-annotations",
+        json={
+            "fund_code": "000002",
+            "annotation_type": "note",
+            "reason": "已通知数据团队补全",
+        },
+    )
+
+    status_resp = test_client.get("/api/v2/reviewer-annotations/funds/000002/status")
+    assert status_resp.status_code == 200
+    status_data = status_resp.json()["data"]
+    assert status_data["fund_code"] == "000002"
+    assert status_data["annotation_count"] >= 2
+    assert status_data["is_excluded"] is True
+    assert status_data["effective_status"] == "excluded"
+
+
+def test_fund_review_status_open_when_no_annotations(
+    test_client: TestClient,
+    test_session: Session,
+) -> None:
+    """Fund with no annotations should have effective_status='open'."""
+    status_resp = test_client.get("/api/v2/reviewer-annotations/funds/999999/status")
+    assert status_resp.status_code == 200
+    status_data = status_resp.json()["data"]
+    assert status_data["annotation_count"] == 0
+    assert status_data["is_locked"] is False
+    assert status_data["is_excluded"] is False
+    assert status_data["is_approved"] is False
+    assert status_data["effective_status"] == "open"
+
+
+def test_fund_review_status_priority_exclude_over_lock(
+    test_client: TestClient,
+    test_session: Session,
+) -> None:
+    """exclude should take priority over lock in effective_status."""
+    test_client.post(
+        "/api/v2/reviewer-annotations",
+        json={
+            "fund_code": "000003",
+            "annotation_type": "lock",
+            "reason": "临时锁定",
+        },
+    )
+    test_client.post(
+        "/api/v2/reviewer-annotations",
+        json={
+            "fund_code": "000003",
+            "annotation_type": "exclude",
+            "reason": "最终排除",
+        },
+    )
+
+    status_resp = test_client.get("/api/v2/reviewer-annotations/funds/000003/status")
+    status_data = status_resp.json()["data"]
+    assert status_data["is_locked"] is True
+    assert status_data["is_excluded"] is True
+    assert status_data["effective_status"] == "excluded"
