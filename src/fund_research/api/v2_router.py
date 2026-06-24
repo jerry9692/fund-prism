@@ -1116,7 +1116,12 @@ def scoring_endpoint(
 
         fund_count = len(results)
         success_count = sum(1 for r in results if r["is_success"])
-        status = "completed" if success_count == fund_count else "completed_with_failures" if success_count > 0 else "failed"
+        if success_count == fund_count:
+            status = "completed"
+        elif success_count > 0:
+            status = "completed_with_failures"
+        else:
+            status = "failed"
         update_experiment_status(db, exp.id, status, f"评分完成: {success_count}/{fund_count}")
 
         fund_scores = [

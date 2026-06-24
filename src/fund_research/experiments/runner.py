@@ -1918,7 +1918,9 @@ def _run_scoring_single_point(
                         "score_version": score_version,
                         "weight_config": scoring.weight_config,
                         "sample_years": fund_score.sample_years,
-                        "scoring_backtest_available": bool(backtest_summary and backtest_summary.get("sample_count", 0) > 0),
+                        "scoring_backtest_available": bool(
+                            backtest_summary and backtest_summary.get("sample_count", 0) > 0
+                        ),
                         "scoring_backtest_sample_count": backtest_summary.get("sample_count", 0),
                         "scoring_backtest_group_count": backtest_summary.get("group_count", 0),
                         "scoring_backtest_ic_mean": backtest_summary.get("ic_mean"),

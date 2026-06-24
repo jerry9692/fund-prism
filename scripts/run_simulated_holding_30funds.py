@@ -37,7 +37,6 @@ def _classify_failure(error_message: str | None) -> str:
     """Map raw error messages to taxonomy categories."""
     if not error_message:
         return "unknown"
-    msg = error_message.lower()
     if "无净值" in error_message:
         return "no_nav_data"
     if "无持仓" in error_message:

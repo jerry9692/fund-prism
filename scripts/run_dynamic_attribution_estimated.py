@@ -64,7 +64,6 @@ def main() -> None:
             periods = metrics.get("period_count", 0)
             residual = metrics.get("estimated_total_residual")
             src = metrics.get("holdings_source", "?")
-            uses_est = metrics.get("uses_estimated_holdings")
             warning_count = len(r.warnings or [])
             res_str = f"{residual:.4f}" if residual is not None else "N/A"
             print(
