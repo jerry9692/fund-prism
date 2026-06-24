@@ -29,6 +29,8 @@ jobs:
 
       - name: Pytest
         run: pytest -q --no-cov
+        env:
+          COLUMNS: "200"
 
   frontend:
     name: Frontend (build)
