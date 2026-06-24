@@ -18,18 +18,26 @@ from fund_research.db.models import Base
 
 
 @pytest.fixture(autouse=True)
-def _silence_loguru_stderr(monkeypatch: pytest.MonkeyPatch) -> Generator[None, None, None]:
-    """Disable loguru's stderr handler during tests.
+def _configure_cli_test_env(monkeypatch: pytest.MonkeyPatch) -> Generator[None, None, None]:
+    """Configure a consistent CLI test environment.
 
-    The CLI callback calls setup_logging() which adds a loguru handler
-    writing to sys.stderr. On CI (Linux, no TTY) this colored output
-    gets captured by click's CliRunner and pollutes result.output,
-    causing help-text assertions to fail. Patching setup_logging to a
-    no-op prevents the handler from being added in the first place.
+    1. Patches setup_logging to no-op so loguru's stderr handler is never
+       added during CLI tests.
+    2. Patches typer's rich_utils to use a wide, non-forced terminal so
+       that Rich-formatted help output renders consistently across
+       platforms (Linux CI vs local Windows), avoiding truncated option
+       names and ANSI color codes mixing into result.output.
     """
     from fund_research.cli import main as cli_main
 
     monkeypatch.setattr(cli_main, "setup_logging", lambda *args, **kwargs: None)
+
+    import typer.rich_utils as tru
+
+    monkeypatch.setattr(tru, "FORCE_TERMINAL", False)
+    monkeypatch.setattr(tru, "MAX_WIDTH", 200)
+    monkeypatch.setattr(tru, "COLOR_SYSTEM", None)
+
     logger.remove()
     yield
     logger.remove()
