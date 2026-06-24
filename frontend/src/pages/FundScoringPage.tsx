@@ -1,6 +1,8 @@
 import { useEffect, useState } from "react";
 import { useParams } from "react-router-dom";
 import { api, type FundScoreItem } from "../api/client";
+import ChartWrapper from "../components/ChartWrapper";
+import MetricCard from "../components/MetricCard";
 
 const DIM_LABELS: Record<string, string> = {
   return: "收益能力",
@@ -14,27 +16,6 @@ const DIM_LABELS: Record<string, string> = {
 };
 
 const PRESET_OPTIONS = ["均衡型", "稳健型", "进取型"];
-
-function RadarBar({ score, label, dimLabel }: { score: number; label: string; dimLabel: string }) {
-  const pct = Math.max(0, Math.min(100, score));
-  return (
-    <div style={{ marginBottom: 8 }}>
-      <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12, marginBottom: 2 }}>
-        <span title={dimLabel || label}>{label}</span>
-        <span className="mono-cell">{pct.toFixed(1)}</span>
-      </div>
-      <div style={{ background: "var(--color-border)", borderRadius: 4, height: 8, overflow: "hidden" }}>
-        <div style={{
-          width: `${pct}%`,
-          height: "100%",
-          background: pct > 66 ? "var(--color-success)" : pct > 33 ? "var(--color-warning)" : "var(--color-danger)",
-          borderRadius: 4,
-          transition: "width 0.3s",
-        }} />
-      </div>
-    </div>
-  );
-}
 
 export default function FundScoringPage() {
   const { code } = useParams<{ code: string }>();
@@ -143,49 +124,51 @@ export default function FundScoringPage() {
         </div>
       ) : (
         <div>
-          {/* Fund score card */}
-          <div className="card" style={{ marginBottom: 16 }}>
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", flexWrap: "wrap", gap: 16 }}>
-              <div style={{ flex: "1 1 300px" }}>
-                <div style={{ display: "flex", alignItems: "baseline", gap: 12, marginBottom: 8 }}>
-                  <span className="mono-cell" style={{ fontSize: 14 }}>{fundScore.fund_code}</span>
-                  <span style={{ fontSize: 32, fontWeight: 700 }}>
-                    {fundScore.total_score.toFixed(1)}
-                  </span>
-                  <span style={{ color: "var(--color-text-secondary)", fontSize: 14 }}>/ 100</span>
-                  {fundScore.contains_estimated && (
-                    <span className="badge badge-observation">含估计成分</span>
-                  )}
-                </div>
-                <div style={{ color: "var(--color-text-secondary)", fontSize: 13, marginBottom: 16 }}>
-                  同类排名: 前 {(fundScore.percentile_rank * 100).toFixed(0)}%
-                </div>
-                {fundScore.deduction_reasons.length > 0 && (
-                  <div style={{ marginBottom: 12 }}>
-                    {fundScore.deduction_reasons.map((r) => (
-                      <div key={r} className="badge badge-needs_review" style={{ marginRight: 6, marginBottom: 4 }}>
-                        {r}
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </div>
-
-              {/* Sub-scores bars */}
-              <div style={{ flex: "1 1 280px" }}>
-                {Object.entries(fundScore.sub_scores)
-                  .sort(([, a], [, b]) => b - a)
-                  .map(([dim, score]) => (
-                    <RadarBar
-                      key={dim}
-                      score={score}
-                      label={DIM_LABELS[dim] || dim}
-                      dimLabel={DIM_LABELS[dim] || dim}
-                    />
-                  ))}
-              </div>
-            </div>
+          {/* Fund score summary cards */}
+          <div className="metric-grid" style={{ marginBottom: 16 }}>
+            <MetricCard
+              label="综合评分"
+              value={fundScore.total_score.toFixed(1)}
+              unit="/ 100"
+              conclusionStatus={fundScore.contains_estimated ? "observation" : "computed"}
+              hint={fundScore.contains_estimated ? "含估计成分" : "全量计算"}
+            />
+            <MetricCard
+              label="同类排名"
+              value={`前 ${(fundScore.percentile_rank * 100).toFixed(0)}%`}
+              conclusionStatus="computed"
+            />
+            <MetricCard
+              label="评分版本"
+              value={scoreVersion || "—"}
+              conclusionStatus="fact"
+            />
+            <MetricCard
+              label="扣分项"
+              value={fundScore.deduction_reasons.length}
+              unit="项"
+              conclusionStatus={fundScore.deduction_reasons.length > 0 ? "needs_review" : "computed"}
+              hint={fundScore.deduction_reasons.length > 0 ? fundScore.deduction_reasons.join("; ") : "无扣分"}
+            />
           </div>
+
+          {/* Sub-scores bar chart via ChartWrapper */}
+          <ChartWrapper
+            type="bar"
+            title="维度子评分"
+            labels={Object.entries(fundScore.sub_scores)
+              .sort(([, a], [, b]) => b - a)
+              .map(([dim]) => DIM_LABELS[dim] || dim)}
+            series={[{
+              label: "子评分",
+              values: Object.entries(fundScore.sub_scores)
+                .sort(([, a], [, b]) => b - a)
+                .map(([, score]) => score),
+            }]}
+            yLabel="评分"
+            formatY={(v) => v.toFixed(0)}
+            height={280}
+          />
 
           {/* All scored funds ranking table */}
           {scores.length > 1 && (
