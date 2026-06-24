@@ -1,6 +1,6 @@
 # Phase 2 Gap Analysis
 
-Date: 2026-06-17
+Date: 2026-06-17 (updated 2026-06-24)
 
 This note compares the current Phase 2 implementation with the v0.4 overall
 requirements and `docs/phase2/requirements.md`. It is intentionally conservative:
@@ -20,13 +20,19 @@ The implementation is still aligned with v0.4.
 - Raw third-party data stays local and ignored by git.
 - Experiment CRUD, runner, validation report, CLI/API readiness, and result
   recording are in place.
+- Scoring v0.3.0: dynamic weight redistribution, Calmar ratio, as_of_date fix,
+  contains_estimated config-level flag, conclusion_status considers sample
+  period and dimension coverage.
+- Simulated holding: 30-fund A/B comparison (optimized CVXPY/SciPy vs naive)
+  completed; optimized method reduces mean TE by 19% with comparable Top10
+  recall (~96%).
+- Reviewer annotation API: 6 endpoints (CRUD + fund status aggregation) for
+  manual review workflow (note/lock/exclude/approve).
 
-The main drift is priority, not principle: recent work has now covered real
-benchmark data and the scoring backtest loop, while Phase 2 still needs stronger
-simulated holding backtests, scoring formula improvement, manual review, and
-controlled UI.
+The main remaining work is frontend: manual review page and simulated holding
+page are still missing, and the API client lacks reviewer annotation methods.
 
-Estimated Phase 2 completion: about 58%.
+Estimated Phase 2 completion: about 68%.
 
 ## Completion Breakdown
 
@@ -115,13 +121,15 @@ Next acceptance target:
 
 ### Manual Review
 
-The `reviewer_annotation` table exists, but the workflow is not yet productized.
+The `reviewer_annotation` table exists and the API is now productized (6 endpoints
+under `/api/v2/reviewer-annotations`). The frontend page is still missing.
 
 Next acceptance target:
 
-- Add minimal API and UI for manual validation.
-- Allow reviewer notes, lock/exclude decisions, and evidence references.
-- Ensure review state can downgrade or block estimated conclusions.
+- Add the `/funds/:code/review` page in the frontend.
+- Wire the API client to the reviewer annotation endpoints.
+- Allow reviewer notes, lock/exclude decisions, and evidence references from the UI.
+- Ensure review state can downgrade or block estimated conclusions in the UI.
 
 ### Frontend
 
@@ -136,9 +144,13 @@ Next acceptance target:
 
 ## Recommended Next Work Order
 
-1. Commit the current readiness/result-persistence/doc updates.
-2. Run full backend tests and lint.
-3. Build simulated holding validation with a small real sample before expanding.
-4. Improve the scoring formula and rerun the documented 30-fund 12-month backtest.
-5. Add manual review API/UI.
-6. Improve frontend information architecture, then polish visuals.
+1. ~~Commit the current readiness/result-persistence/doc updates.~~ ✅
+2. ~~Run full backend tests and lint.~~ ✅
+3. ~~Build simulated holding validation with a small real sample before expanding.~~ ✅
+4. ~~Improve the scoring formula and rerun the documented 30-fund 12-month backtest.~~ ✅
+5. ~~Add manual review API/UI.~~ API ✅, UI pending
+6. Wire the API client to reviewer annotation endpoints and build the
+   `/funds/:code/review` page.
+7. Build the `/funds/:code/simulated` page to surface simulated holding results
+   with estimated labels and tracking error.
+8. Improve frontend information architecture, then polish visuals.

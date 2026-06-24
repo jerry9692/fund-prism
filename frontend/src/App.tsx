@@ -13,6 +13,8 @@ import ExperimentsPage from "./pages/ExperimentsPage";
 import P2BValidationPage from "./pages/P2BValidationPage";
 import ScoringBacktestPage from "./pages/ScoringBacktestPage";
 import FundScoringPage from "./pages/FundScoringPage";
+import FundReviewPage from "./pages/FundReviewPage";
+import SimulatedHoldingPage from "./pages/SimulatedHoldingPage";
 
 export default function App() {
   return (
@@ -32,6 +34,8 @@ export default function App() {
           <Route path="/experiments/p2b-report" element={<P2BValidationPage />} />
           <Route path="/scoring/backtest" element={<ScoringBacktestPage />} />
           <Route path="/funds/:code/scoring" element={<FundScoringPage />} />
+          <Route path="/funds/:code/review" element={<FundReviewPage />} />
+          <Route path="/funds/:code/simulated" element={<SimulatedHoldingPage />} />
         </Routes>
       </main>
       <DisclaimerFooter />

@@ -40,8 +40,11 @@ export default function FundDetailPage() {
         <div style={{ display: "flex", gap: 8 }}>
           <SubLink to={`/funds/${code}/holdings`} label="持仓" />
           <SubLink to={`/funds/${code}/exposure`} label="暴露与归因" />
+          <SubLink to={`/funds/${code}/scoring`} label="评分" />
+          <SubLink to={`/funds/${code}/simulated`} label="模拟持仓" />
           <SubLink to={`/funds/${code}/packet`} label="研究包" />
           <SubLink to={`/funds/${code}/diff`} label="对比" />
+          <SubLink to={`/funds/${code}/review`} label="校验" />
         </div>
       </div>
 

@@ -335,6 +335,78 @@ export interface ScoringBacktestDetail extends ScoringBacktestItem {
   } | null;
 }
 
+// ---- Reviewer Annotation types ----
+
+export type AnnotationType = "note" | "lock" | "exclude" | "approve";
+export type TargetModule = "scoring" | "simulated_holding" | "dynamic_attribution";
+export type EffectiveStatus = "excluded" | "locked" | "approved" | "open";
+
+export interface ReviewerAnnotation {
+  id: number;
+  fund_code: string;
+  annotation_type: AnnotationType;
+  target_module: TargetModule | null;
+  detail: Record<string, unknown>;
+  reason: string;
+  evidence_id: string | null;
+  created_at: string | null;
+}
+
+export interface ReviewerAnnotationListData {
+  annotations: ReviewerAnnotation[];
+  count: number;
+}
+
+export interface FundReviewStatus {
+  fund_code: string;
+  annotation_count: number;
+  is_locked: boolean;
+  is_excluded: boolean;
+  is_approved: boolean;
+  effective_status: EffectiveStatus;
+  annotations: ReviewerAnnotation[];
+}
+
+// ---- Simulated Holding types ----
+
+export interface SimulatedHoldingItem {
+  stock_code: string;
+  stock_name: string | null;
+  estimated_weight: number;
+  industry: string | null;
+  confidence: string | null;
+}
+
+export interface SimulatedHoldingResult {
+  id: number;
+  fund_code: string;
+  calc_date: string | null;
+  algorithm_name: string;
+  algorithm_version: string;
+  parameters: Record<string, unknown> | null;
+  holdings_detail: SimulatedHoldingItem[];
+  tracking_error: number | null;
+  daily_rmse: number | null;
+  industry_correlation: number | null;
+  top10_recall: number | null;
+  stock_weight_pct: number | null;
+  bond_weight_pct: number | null;
+  cash_weight_pct: number | null;
+  confidence: string | null;
+  conclusion_status: string;
+  is_backtest: boolean;
+  backtest_report_date: string | null;
+  warnings: string[] | null;
+  input_coverage: number | null;
+  created_at: string | null;
+}
+
+export interface SimulatedHoldingListData {
+  fund_code: string;
+  results: SimulatedHoldingResult[];
+  count: number;
+}
+
 // ---- Generic fetch wrapper ----
 
 async function request<T>(
@@ -523,4 +595,70 @@ export const api = {
 
   getScoringBacktest: (id: number) =>
     request<ScoringBacktestDetail>(`/api/v2/analysis/scoring/backtest/${id}`),
+
+  // ---- Reviewer Annotations ----
+
+  createReviewerAnnotation: (body: {
+    fund_code: string;
+    annotation_type: AnnotationType;
+    target_module?: TargetModule | null;
+    detail?: Record<string, unknown>;
+    reason: string;
+    evidence_id?: string | null;
+  }) =>
+    request<ReviewerAnnotation>("/api/v2/reviewer-annotations", {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+
+  listReviewerAnnotations: (params?: {
+    fund_code?: string;
+    annotation_type?: AnnotationType;
+    target_module?: TargetModule;
+    limit?: number;
+  }) => {
+    const search = params
+      ? "?" + new URLSearchParams(
+          Object.entries(params).filter(([, v]) => v != null) as [string, string][]
+        ).toString()
+      : "";
+    return request<ReviewerAnnotationListData>(
+      `/api/v2/reviewer-annotations${search}`
+    );
+  },
+
+  getReviewerAnnotation: (id: number) =>
+    request<ReviewerAnnotation>(`/api/v2/reviewer-annotations/${id}`),
+
+  updateReviewerAnnotation: (
+    id: number,
+    body: {
+      annotation_type?: AnnotationType;
+      detail?: Record<string, unknown>;
+      reason?: string;
+      evidence_id?: string | null;
+    }
+  ) =>
+    request<ReviewerAnnotation>(`/api/v2/reviewer-annotations/${id}`, {
+      method: "PATCH",
+      body: JSON.stringify(body),
+    }),
+
+  deleteReviewerAnnotation: (id: number) =>
+    request<{ deleted: boolean; annotation_id: number }>(
+      `/api/v2/reviewer-annotations/${id}`,
+      { method: "DELETE" }
+    ),
+
+  getFundReviewStatus: (fundCode: string) =>
+    request<FundReviewStatus>(
+      `/api/v2/reviewer-annotations/funds/${fundCode}/status`
+    ),
+
+  // ---- Simulated Holding ----
+
+  listSimulatedHolding: (fundCode: string, limit = 10) =>
+    request<SimulatedHoldingListData>(
+      `/api/v2/analysis/simulated-holding?fund_code=${fundCode}&limit=${limit}`
+    ),
 };

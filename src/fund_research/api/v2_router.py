@@ -35,6 +35,9 @@ from fund_research.db.models import (
 from fund_research.db.models import (
     ScoringResult as DbScoringResult,
 )
+from fund_research.db.models import (
+    SimulatedHoldingResult as DbSimulatedHoldingResult,
+)
 from fund_research.db.session import get_session_factory
 from fund_research.experiments.manager import (
     create_experiment,
@@ -1656,6 +1659,94 @@ def run_experiment_endpoint(
                 data=None,
                 metadata={"tool": "run_experiment"},
                 warnings=[str(exc)],
+                conclusion_status=ConclusionStatus.NEEDS_REVIEW,
+            ),
+            started,
+        )
+
+
+# ============================================================
+# Simulated Holding — query persisted results
+# ============================================================
+
+
+def _simulated_holding_to_dict(row: DbSimulatedHoldingResult) -> dict:
+    return {
+        "id": row.id,
+        "fund_code": row.fund_code,
+        "calc_date": row.calc_date.isoformat() if row.calc_date else None,
+        "algorithm_name": row.algorithm_name,
+        "algorithm_version": row.algorithm_version,
+        "parameters": row.parameters,
+        "holdings_detail": row.holdings_detail,
+        "tracking_error": row.tracking_error,
+        "daily_rmse": row.daily_rmse,
+        "industry_correlation": row.industry_correlation,
+        "top10_recall": row.top10_recall,
+        "stock_weight_pct": row.stock_weight_pct,
+        "bond_weight_pct": row.bond_weight_pct,
+        "cash_weight_pct": row.cash_weight_pct,
+        "confidence": row.confidence,
+        "conclusion_status": row.conclusion_status,
+        "is_backtest": row.is_backtest,
+        "backtest_report_date": (
+            row.backtest_report_date.isoformat()
+            if row.backtest_report_date
+            else None
+        ),
+        "warnings": row.warnings,
+        "input_coverage": row.input_coverage,
+        "created_at": row.created_at.isoformat() if row.created_at else None,
+    }
+
+
+@v2_router.get("/analysis/simulated-holding")
+def list_simulated_holding(
+    db: SessionDep,
+    fund_code: str = Query(..., min_length=1, max_length=20),
+    limit: int = Query(10, ge=1, le=50),
+) -> APIResponse[dict]:
+    """List the most recent simulated holding results for a fund.
+
+    Results are always ``conclusion_status=estimated`` — they are model
+    outputs, not disclosed facts. The frontend must display the estimated
+    label prominently.
+    """
+    started = perf_counter()
+    params = {"fund_code": fund_code, "limit": limit}
+    try:
+        rows = db.scalars(
+            select(DbSimulatedHoldingResult)
+            .where(DbSimulatedHoldingResult.fund_code == fund_code)
+            .order_by(DbSimulatedHoldingResult.calc_date.desc())
+            .limit(limit)
+        ).all()
+
+        return _log(
+            db,
+            "simulated_holding",
+            params,
+            APIResponse(
+                data={
+                    "fund_code": fund_code,
+                    "results": [_simulated_holding_to_dict(r) for r in rows],
+                    "count": len(rows),
+                },
+                metadata={"tool": "simulated_holding", "platform_version": __version__},
+                conclusion_status=ConclusionStatus.ESTIMATED,
+            ),
+            started,
+        )
+    except Exception as exc:
+        db.rollback()
+        return _log(
+            db,
+            "simulated_holding",
+            params,
+            APIResponse(
+                data=None,
+                metadata={"tool": "simulated_holding"},
+                warnings=[f"查询模拟持仓失败: {exc}"],
                 conclusion_status=ConclusionStatus.NEEDS_REVIEW,
             ),
             started,
