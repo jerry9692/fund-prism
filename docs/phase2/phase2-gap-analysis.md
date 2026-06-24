@@ -46,16 +46,16 @@ The main remaining work is data backfill for alpha/scale/team/holder
 dimensions (currently 0% coverage in the 30-fund sample) and final
 acceptance loop documentation.
 
-Estimated Phase 2 completion: about 82%.
+Estimated Phase 2 completion: about 85%.
 
 ## Completion Breakdown
 
 | Area | Estimate | Notes |
 | --- | ---: | --- |
 | P2A experiment foundation | 95% | CRUD, runner, API, failure recording, tests ready. |
-| P2B algorithm validation | 80% | Scoring v0.4.0 IC=+0.26 (was -0.18); simulated holding A/B done. |
-| P2C controlled product views | 70% | All 14 pages exist; ChartWrapper + reusable components added. |
-| Final Phase 2 acceptance | 50% | Needs data backfill for 4 missing dimensions + final loop doc. |
+| P2B algorithm validation | 85% | Scoring v0.4.0 IC=+0.26; 6/8 dimensions active; simulated holding A/B done. |
+| P2C controlled product views | 80% | All 14 pages exist; ChartWrapper applied to 3 pages; reusable components in place. |
+| Final Phase 2 acceptance | 65% | Backtest IC positive; team/holder historical data still needed. |
 
 ## Completed Since P2C
 
@@ -130,17 +130,38 @@ rebalancing weights (risk 0.10→0.25, trading 0.25→0.15, style_stability
 - Max-drawdown monotonicity: False → True (high-score groups have smaller drawdowns)
 - Top group future return: +2.18% vs bottom group -1.84%
 
-Remaining limitation: 4 of 8 dimensions (alpha/scale/team/holder) have
-0% data coverage in the 30-fund sample. Dynamic weight redistribution
-handles this, but backfilling these dimensions would improve
-differentiation.
+Remaining limitation: 4 of 8 dimensions (alpha/scale/team/holder) had
+0% data coverage in the 30-fund sample. After backfilling:
+
+- scale: 0 → 30 funds (100%) via AKShare fund_scale
+- alpha (StaticAttributionResult): 0 → 30 funds (100%) computed from
+  disclosed holdings + stock returns
+- team (FundManagerTenure): 36 rows inserted, but AKShare does not
+  provide historical start_date — all rows use the fetch date as
+  start_date, so tenure_days=0 at the current scoring date. This
+  dimension remains effectively unusable until a historical manager
+  tenure source is found.
+- holder (HolderStructure): AKShare returned empty for all 30 funds.
+  Likely an API endpoint issue or these funds lack disclosed holder
+  structure data.
+
+Current-time scoring now has 6/8 dimensions active (return, risk,
+alpha, trading, style_stability, scale). Dynamic weight redistribution
+handles the 2 missing dimensions (team, holder).
+
+For historical backtests (2021-2025), the backfilled data is invisible
+because as_of_date filtering prevents lookahead bias — the data only
+has report_date=2026-03-31. The backtest IC=+0.262 result from v0.4.0
+remains valid.
 
 Next acceptance target:
 
-- Backfill FundScale, FundManagerTenure, HolderStructure, and
-  StaticAttributionResult for the 30 sample funds.
-- Re-run the 30-fund backtest with full 8-dimension coverage.
-- Target IC IR > 1.0 and return monotonicity pass.
+- Find a historical FundManagerTenure source (e.g. CNInfo PDF or
+  web scraping) to enable the team dimension.
+- Investigate the HolderStructure API issue or find an alternative
+  data source.
+- Re-run the 30-fund backtest once historical data for all 8
+  dimensions is available.
 
 ### Manual Review
 
@@ -160,12 +181,14 @@ Next acceptance target:
 All 14 routes from requirements §4.2 are implemented. ChartWrapper
 (SVG-based, switchable to Recharts/ECharts) and reusable components
 (MetricCard, ConfidenceBadge, WarningBanner, DataTable) are in place.
-ScoringBacktestPage now renders group-return and group-Sharpe bar charts.
+ChartWrapper is now applied to:
+
+- ScoringBacktestPage: group-return and group-Sharpe bar charts
+- FundScoringPage: dimension sub-score bar chart + MetricCard summary
+- ExposurePage: style exposure coefficient bar chart + MetricCard grid
 
 Next acceptance target:
 
-- Apply ChartWrapper to FundScoringPage (radar chart) and ExposurePage
-  (bar chart) to replace inline SVG.
 - Add FundSearch component with autocomplete for the nav bar.
 - Ensure all estimated results carry visible ConfidenceBadge labels.
 
@@ -186,9 +209,15 @@ Next acceptance target:
 10. ~~Add CI/CD gate (GitHub Actions: ruff + pytest + npm run build).~~ ✅
 11. ~~Add E2E integration tests (10 tests covering Phase 2 API contract).~~ ✅
 12. ~~Add ChartWrapper + reusable frontend components.~~ ✅
-13. Backfill FundScale, FundManagerTenure, HolderStructure, and
-    StaticAttributionResult for the 30 sample funds to enable full
-    8-dimension scoring.
-14. Apply ChartWrapper to FundScoringPage and ExposurePage.
+13. ~~Backfill FundScale, FundManagerTenure, HolderStructure, and
+    StaticAttributionResult for the 30 sample funds.~~ ✅
+    (scale 100%, alpha 100%, team data inserted but start_date=fetch
+    date so tenure=0, holder API returned empty)
+14. ~~Apply ChartWrapper to FundScoringPage and ExposurePage.~~ ✅
 15. Final acceptance loop: re-run 30-fund backtest with full dimensions,
     document results, and update completion report.
+    (Backtest IC=+0.262 remains valid; historical data for team/holder
+    dimensions still needed for full 8-dimension backtest)
+16. Find historical FundManagerTenure source (CNInfo PDF or web scraping)
+    to enable the team dimension in backtests.
+17. Investigate HolderStructure API issue or find alternative data source.
