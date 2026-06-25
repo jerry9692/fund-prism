@@ -14,6 +14,15 @@ import requests
 from fund_research.core.enums import DataSourceLevel, DataSourceType
 from fund_research.data.adapters.base import BaseDataAdapter, FetchResult
 
+EASTMONEY_F10_HEADERS = {
+    "User-Agent": (
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+        "AppleWebKit/537.36 (KHTML, like Gecko) "
+        "Chrome/114.0.0.0 Safari/537.36"
+    ),
+    "Referer": "https://fundf10.eastmoney.com/",
+}
+
 COLUMN_MAP = {
     "基金代码": "fund_code",
     "基金名称": "fund_name",
@@ -65,6 +74,16 @@ COLUMN_MAP = {
     "条件或名称": "fee_name",
     "费用": "fee_value",
     "截止日期": "report_date",
+    "起始期": "start_date",
+    "截止期": "end_date",
+    "基金经理": "manager_names_raw",
+    "任职期间": "tenure_period_desc",
+    "任职回报": "tenure_return",
+    "公告日期": "report_date",
+    "机构持有比例": "institutional_pct",
+    "个人持有比例": "individual_pct",
+    "内部持有比例": "employee_pct",
+    "总份额（亿份）": "total_share_yi",
     "机构持有比列": "institutional_pct",
     "机构持有比例": "institutional_pct",
     "个人持有比列": "individual_pct",
@@ -529,29 +548,367 @@ class AkshareAdapter(BaseDataAdapter):
         """拉取基金最新规模快照。"""
         return self._call("fund_scale", self.ak.fund_individual_basic_info_xq, symbol=fund_code)
 
-    def fetch_holder_structure(self, fund_code: str) -> FetchResult:
-        """拉取基金持有人结构。"""
-        if hasattr(self.ak, "fund_individual_hold_info"):
-            return self._call(
-                "holder_structure", self.ak.fund_individual_hold_info, symbol=fund_code
-            )
-        message = (
-            "当前 AKShare fund_hold_structure_em 为全市场汇总接口，不含基金代码，"
-            "不能作为单基金持有人结构入库"
-        )
-        return FetchResult(
-            source_name=self.source_name,
-            source_type=self.source_type,
-            source_level=self.source_level,
-            entity_type="holder_structure",
-            is_success=False,
-            error_message=message,
-            data=pd.DataFrame(),
-            warnings=[message],
+    def fetch_fund_scale_history(self, fund_code: str) -> FetchResult:
+        """拉取基金季度规模变动历史（东方财富 F10 gmbd 接口，C级数据源）。
+
+        东方财富 F10 规模变动表提供自基金成立以来的季度申购/赎回/份额/净资产数据，
+        按季度披露。返回的 DataFrame 每行一个季度报告期。
+        """
+        import re as _re
+
+        started_at = perf_counter()
+        url = "https://fundf10.eastmoney.com/FundArchivesDatas.aspx"
+        max_retries = 3
+        for attempt in range(max_retries):
+            try:
+                resp = requests.get(
+                    url,
+                    headers=EASTMONEY_F10_HEADERS,
+                    params={"type": "gmbd", "code": fund_code, "per": 49, "page": 1},
+                    timeout=15,
+                )
+                resp.raise_for_status()
+                resp.encoding = "utf-8"
+                match = _re.search(r'content:"(.*?)",erro', resp.text, _re.DOTALL)
+                if not match:
+                    match = _re.search(r'content:"(.*?)"', resp.text, _re.DOTALL)
+                if not match or "<table" not in resp.text:
+                    if attempt < max_retries - 1:
+                        sleep(1.5 * (attempt + 1))
+                        continue
+                    return FetchResult(
+                        source_name="eastmoney_f10",
+                        source_type=DataSourceType.WEB_SCRAPING,
+                        source_level=DataSourceLevel.C,
+                        entity_type="fund_scale",
+                        is_success=True,
+                        data=pd.DataFrame(),
+                        record_count=0,
+                        field_count=0,
+                        coverage_rate=0.0,
+                        fetch_duration_ms=(perf_counter() - started_at) * 1000,
+                        warnings=[f"基金规模变动页面解析失败: {fund_code}"],
+                    )
+                html = match.group(1).replace("\\", "")
+                tables = []
+                if html and html.strip():
+                    try:
+                        tables = pd.read_html(StringIO(html))
+                    except ValueError:
+                        tables = []
+                if not tables:
+                    if attempt < max_retries - 1:
+                        sleep(1.5 * (attempt + 1))
+                        continue
+                    return FetchResult(
+                        source_name="eastmoney_f10",
+                        source_type=DataSourceType.WEB_SCRAPING,
+                        source_level=DataSourceLevel.C,
+                        entity_type="fund_scale",
+                        is_success=True,
+                        data=pd.DataFrame(),
+                        record_count=0,
+                        field_count=0,
+                        coverage_rate=0.0,
+                        fetch_duration_ms=(perf_counter() - started_at) * 1000,
+                        warnings=[f"基金规模变动暂无数据: {fund_code}"],
+                    )
+                raw = tables[0]
+                col_map = {
+                    "日期": "report_date",
+                    "期末总份额（亿份）": "total_share_yi",
+                    "期末净资产（亿元）": "total_nav_yi",
+                    "期间申购（亿份）": "subscribe_share_yi",
+                    "期间赎回（亿份）": "redeem_share_yi",
+                    "净资产变动率": "nav_change_pct",
+                }
+                standardized = raw.rename(columns=col_map)
+                standardized = _coalesce_duplicate_columns(standardized)
+                if "report_date" not in standardized.columns:
+                    if attempt < max_retries - 1:
+                        sleep(1.5 * (attempt + 1))
+                        continue
+                    return FetchResult(
+                        source_name="eastmoney_f10",
+                        source_type=DataSourceType.WEB_SCRAPING,
+                        source_level=DataSourceLevel.C,
+                        entity_type="fund_scale",
+                        is_success=True,
+                        data=pd.DataFrame(),
+                        record_count=0,
+                        field_count=0,
+                        coverage_rate=0.0,
+                        fetch_duration_ms=(perf_counter() - started_at) * 1000,
+                        warnings=[f"基金规模变动列名异常: {fund_code}"],
+                    )
+                standardized["report_date"] = pd.to_datetime(standardized["report_date"], errors="coerce")
+                standardized = standardized.dropna(subset=["report_date"])
+                for col in ("total_share_yi", "total_nav_yi", "subscribe_share_yi", "redeem_share_yi"):
+                    if col in standardized.columns:
+                        standardized[col] = pd.to_numeric(
+                            standardized[col].astype(str).str.replace(",", ""), errors="coerce"
+                        )
+                if "total_nav_yi" in standardized.columns:
+                    standardized["total_nav"] = standardized["total_nav_yi"]
+                if "total_share_yi" in standardized.columns:
+                    standardized["total_share"] = standardized["total_share_yi"]
+                if "subscribe_share_yi" in standardized.columns and "redeem_share_yi" in standardized.columns:
+                    sub = pd.to_numeric(
+                        standardized.get("subscribe_share_yi", pd.Series([0.0] * len(standardized))),
+                        errors="coerce",
+                    ).fillna(0)
+                    red = pd.to_numeric(
+                        standardized.get("redeem_share_yi", pd.Series([0.0] * len(standardized))),
+                        errors="coerce",
+                    ).fillna(0)
+                    standardized["share_change"] = sub - red
+                standardized["fund_code"] = fund_code
+                result = self._success_result_from_canonical(
+                    "fund_scale",
+                    standardized,
+                    started_at,
+                    source_level=DataSourceLevel.C,
+                )
+                result.source_name = "eastmoney_f10"
+                result.source_type = DataSourceType.WEB_SCRAPING
+                return result
+            except Exception as exc:
+                if attempt < max_retries - 1:
+                    sleep(1.5 * (attempt + 1))
+                    continue
+                return self._error_result("fund_scale", started_at, exc)
+        return self._error_result(
+            "fund_scale", started_at, RuntimeError(f"重试{max_retries}次后仍失败: {fund_code}")
         )
 
+    def fetch_holder_structure(self, fund_code: str) -> FetchResult:
+        """拉取基金持有人结构（东方财富 F10 AJAX 接口，C级数据源）。
+
+        原 AKShare ``fund_individual_hold_info`` 在当前版本不存在，
+        ``fund_hold_structure_em`` 为全市场汇总不含单基金代码。
+        改为直接请求东方财富 F10 的 FundArchivesDatas.aspx 接口，
+        返回该基金自成立以来的半年度持有人结构历史。
+        """
+        import re as _re
+
+        started_at = perf_counter()
+        url = "https://fundf10.eastmoney.com/FundArchivesDatas.aspx"
+        try:
+            resp = requests.get(
+                url,
+                headers=EASTMONEY_F10_HEADERS,
+                params={"type": "cyrjg", "code": fund_code},
+                timeout=15,
+            )
+            resp.raise_for_status()
+            resp.encoding = "utf-8"
+            match = _re.search(r'content:"(.*?)",summary', resp.text, _re.DOTALL)
+            if not match:
+                return self._error_result(
+                    "holder_structure",
+                    started_at,
+                    RuntimeError(f"无法解析持有人结构响应: {fund_code}"),
+                )
+            html = match.group(1).replace("\\", "")
+            tables: list[pd.DataFrame] = []
+            if html and html.strip():
+                try:
+                    tables = pd.read_html(StringIO(html))
+                except ValueError:
+                    tables = []
+            if not tables:
+                return FetchResult(
+                    source_name="eastmoney_f10",
+                    source_type=DataSourceType.WEB_SCRAPING,
+                    source_level=DataSourceLevel.C,
+                    entity_type="holder_structure",
+                    is_success=True,
+                    data=pd.DataFrame(),
+                    record_count=0,
+                    field_count=0,
+                    coverage_rate=0.0,
+                    fetch_duration_ms=(perf_counter() - started_at) * 1000,
+                    warnings=[f"持有人结构暂无数据: {fund_code}"],
+                )
+            raw = tables[0]
+            standardized = raw.rename(columns=COLUMN_MAP)
+            standardized = _coalesce_duplicate_columns(standardized)
+            if "announcement_date" in standardized.columns and "report_date" not in standardized.columns:
+                standardized = standardized.rename(columns={"announcement_date": "report_date"})
+            for col in ("institutional_pct", "individual_pct", "employee_pct"):
+                if col in standardized.columns:
+                    standardized[col] = (
+                        standardized[col]
+                        .astype(str)
+                        .str.replace("%", "", regex=False)
+                        .apply(pd.to_numeric, errors="coerce")
+                    )
+            if "total_share_yi" in standardized.columns:
+                standardized["total_share"] = (
+                    pd.to_numeric(standardized["total_share_yi"], errors="coerce") * 1e8
+                )
+            standardized["fund_code"] = fund_code
+            result = self._success_result_from_canonical(
+                "holder_structure",
+                standardized,
+                started_at,
+                source_level=DataSourceLevel.C,
+            )
+            result.source_name = "eastmoney_f10"
+            result.source_type = DataSourceType.WEB_SCRAPING
+            return result
+        except Exception as exc:
+            return self._error_result("holder_structure", started_at, exc)
+
+    def fetch_fund_manager_history(self, fund_code: str) -> FetchResult:
+        """拉取基金历任经理任期历史（东方财富 F10 jjjl 页面，C级数据源）。
+
+        东方财富 F10 基金经理变动表提供自基金成立以来的完整任期记录，
+        包括起始期、截止期、经理姓名（多人空格分隔）、任职回报。
+        返回的 DataFrame 每个经理-任期一行（多经理行会拆分为多行）。
+        """
+        started_at = perf_counter()
+        url = f"https://fundf10.eastmoney.com/jjjl_{fund_code}.html"
+        max_retries = 3
+        for attempt in range(max_retries):
+            try:
+                resp = requests.get(url, headers=EASTMONEY_F10_HEADERS, timeout=15)
+                resp.raise_for_status()
+                resp.encoding = "utf-8"
+                if "起始期" not in resp.text:
+                    if attempt < max_retries - 1:
+                        sleep(1.5 * (attempt + 1))
+                        continue
+                    return FetchResult(
+                        source_name="eastmoney_f10",
+                        source_type=DataSourceType.WEB_SCRAPING,
+                        source_level=DataSourceLevel.C,
+                        entity_type="fund_manager_tenure",
+                        is_success=True,
+                        data=pd.DataFrame(),
+                        record_count=0,
+                        field_count=0,
+                        coverage_rate=0.0,
+                        fetch_duration_ms=(perf_counter() - started_at) * 1000,
+                        warnings=[f"基金经理任期页内容异常（可能反爬）: {fund_code}"],
+                    )
+                tables = pd.read_html(StringIO(resp.text))
+                if len(tables) < 2:
+                    if attempt < max_retries - 1:
+                        sleep(1.5 * (attempt + 1))
+                        continue
+                    return FetchResult(
+                        source_name="eastmoney_f10",
+                        source_type=DataSourceType.WEB_SCRAPING,
+                        source_level=DataSourceLevel.C,
+                        entity_type="fund_manager_tenure",
+                        is_success=True,
+                        data=pd.DataFrame(),
+                        record_count=0,
+                        field_count=0,
+                        coverage_rate=0.0,
+                        fetch_duration_ms=(perf_counter() - started_at) * 1000,
+                        warnings=[f"基金经理任期表解析失败: {fund_code}"],
+                    )
+                raw = tables[1]
+                if "起始期" not in raw.columns:
+                    raw = tables[0]
+                if "起始期" not in raw.columns:
+                    if attempt < max_retries - 1:
+                        sleep(1.5 * (attempt + 1))
+                        continue
+                    return FetchResult(
+                        source_name="eastmoney_f10",
+                        source_type=DataSourceType.WEB_SCRAPING,
+                        source_level=DataSourceLevel.C,
+                        entity_type="fund_manager_tenure",
+                        is_success=True,
+                        data=pd.DataFrame(),
+                        record_count=0,
+                        field_count=0,
+                        coverage_rate=0.0,
+                        fetch_duration_ms=(perf_counter() - started_at) * 1000,
+                        warnings=[f"基金经理任期表列名异常: {fund_code}"],
+                    )
+                break
+            except Exception as exc:
+                if attempt < max_retries - 1:
+                    sleep(1.5 * (attempt + 1))
+                    continue
+                return self._error_result("fund_manager_tenure", started_at, exc)
+        else:
+            return self._error_result(
+                "fund_manager_tenure",
+                started_at,
+                RuntimeError(f"重试{max_retries}次后仍失败: {fund_code}"),
+            )
+
+        raw = raw.rename(columns=COLUMN_MAP)
+        raw = _coalesce_duplicate_columns(raw)
+        rows: list[dict] = []
+        for _idx, row in raw.iterrows():
+            start_raw = str(row.get("start_date", "")).strip()
+            end_raw = str(row.get("end_date", "")).strip()
+            names_raw = str(row.get("manager_names_raw", "")).strip()
+            ret_raw = row.get("tenure_return")
+            tenure_ret: float | None = None
+            if ret_raw is not None and str(ret_raw).strip() not in {"--", "", "nan"}:
+                tenure_ret = (
+                    pd.to_numeric(
+                        str(ret_raw).replace("%", "").replace(",", ""),
+                        errors="coerce",
+                    )
+                    / 100.0
+                )
+            if not names_raw or not start_raw or start_raw == "nan":
+                continue
+            names = [n for n in names_raw.split() if n]
+            for name in names:
+                end_date_val: date | None = None
+                if end_raw and end_raw != "至今" and end_raw != "nan":
+                    parsed = pd.to_datetime(end_raw, errors="coerce")
+                    if pd.notna(parsed):
+                        end_date_val = parsed.date()
+                start_parsed = pd.to_datetime(start_raw, errors="coerce")
+                start_date_val: date | None = None
+                if pd.notna(start_parsed):
+                    start_date_val = start_parsed.date()
+                if start_date_val is None:
+                    continue
+                manager_id = _manager_id_from_identity(name)
+                is_current = end_date_val is None
+                tenure_days: int | None = None
+                if is_current:
+                    tenure_days = (date.today() - start_date_val).days
+                else:
+                    tenure_days = (end_date_val - start_date_val).days
+                rows.append(
+                    {
+                        "name": name,
+                        "manager_id": manager_id,
+                        "fund_code": fund_code,
+                        "start_date": start_date_val,
+                        "end_date": end_date_val,
+                        "is_current": is_current,
+                        "tenure_days": tenure_days,
+                        "tenure_return": (
+                            float(tenure_ret) if tenure_ret is not None else None
+                        ),
+                    }
+                )
+        data = pd.DataFrame(rows)
+        result = self._success_result_from_canonical(
+            "fund_manager_tenure",
+            data,
+            started_at,
+            source_level=DataSourceLevel.C,
+        )
+        result.source_name = "eastmoney_f10"
+        result.source_type = DataSourceType.WEB_SCRAPING
+        return result
+
     def fetch_fund_managers(self, fund_code: str) -> FetchResult:
-        """拉取基金经理全量表。"""
+        """拉取基金经理全量表（AKShare 现任经理快照）。"""
         result = self._call("fund_managers", self.ak.fund_manager_em)
         if result.is_success and result.data is not None and "current_fund_codes" in result.data:
             result.data["current_fund_codes"] = (

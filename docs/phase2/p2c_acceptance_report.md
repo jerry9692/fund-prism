@@ -5,8 +5,8 @@
 - Allowed next phase: True
 - Allowed scope: experiment_view_only
 - Source report: docs\phase2\p2b_validation_report.json
-- Report ID: p2b-20260616-145003
-- Generated at: 2026-06-16T14:50:03
+- Report ID: p2b-20260625-120145
+- Generated at: 2026-06-25T12:01:45
 
 ## Summary
 
@@ -31,7 +31,7 @@
 | no_high_confidence_algorithm_status | yes | pass | algorithm statuses remain estimated/needs_review/observation |
 | algorithm_sample_coverage | yes | pass | each algorithm covered sample funds |
 | estimated_pollution_isolation | yes | pass | all P2B outputs remain outside default productization |
-| history_snapshot | yes | pass | docs\phase2\p2b_validation_reports\p2b-20260616-145003.json |
+| history_snapshot | yes | pass | docs\phase2\p2b_validation_reports\p2b-20260625-120145.json |
 
 ## Release Constraints
 

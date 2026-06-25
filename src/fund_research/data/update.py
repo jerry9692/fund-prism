@@ -10,6 +10,7 @@ import uuid
 from dataclasses import dataclass
 from datetime import date, datetime
 from pathlib import Path
+from time import sleep
 from typing import Any, TypeVar
 
 from sqlalchemy import select
@@ -516,6 +517,54 @@ def upsert_akshare_fund_managers(
     return summary
 
 
+def upsert_eastmoney_fund_manager_history(
+    session: Session,
+    fund_codes: set[str],
+    *,
+    adapter: AkshareAdapter | None = None,
+    dry_run: bool = False,
+    request_interval: float = 0.5,
+) -> UpdateSummary:
+    """Fetch and upsert historical fund manager tenure from Eastmoney F10.
+
+    Unlike ``upsert_akshare_fund_managers`` (which only returns current managers
+    from ``fund_manager_em``), this function scrapes the Eastmoney F10
+    ``jjjl_{code}.html`` page to obtain the complete tenure history including
+    departed managers and their start/end dates.
+    """
+    adapter = adapter or AkshareAdapter()
+    summary = UpdateSummary(
+        entity="fund_manager_history",
+        source="eastmoney_f10",
+        requested=len(fund_codes),
+        dry_run=dry_run,
+        warnings=[],
+    )
+    for idx, fund_code in enumerate(_progress_iter(sorted(fund_codes), f"更新 {summary.entity}")):
+        if idx > 0 and request_interval > 0:
+            sleep(request_interval)
+        result = adapter.fetch_fund_manager_history(fund_code)
+        if not dry_run:
+            _snapshot_from_fetch(session, result)
+        if not result.is_success or result.data is None or result.data.empty:
+            summary.skipped += 1
+            summary.warnings.append(result.error_message or f"基金经理历史为空: {fund_code}")
+            continue
+        for row in result.data.to_dict(orient="records"):
+            action = _apply_manager_row(session, row, fund_code, dry_run)
+            if action == "inserted":
+                summary.inserted += 1
+            elif action == "updated":
+                summary.updated += 1
+            else:
+                summary.skipped += 1
+
+    if not dry_run:
+        _log_update_task(session, "fund_manager_history", summary)
+        session.commit()
+    return summary
+
+
 def _apply_fee_row(session: Session, row: dict, fund_code: str, dry_run: bool) -> str:
     effective_date = _parse_date(row.get("effective_date"))
     has_fee_payload = any(
@@ -676,11 +725,53 @@ def upsert_akshare_fund_scale(
     return summary
 
 
+def upsert_eastmoney_fund_scale_history(
+    session: Session,
+    fund_codes: set[str],
+    *,
+    adapter: AkshareAdapter | None = None,
+    dry_run: bool = False,
+    request_interval: float = 0.5,
+) -> UpdateSummary:
+    """Fetch and upsert historical fund scale data (Eastmoney F10 gmbd, C-level)."""
+    adapter = adapter or AkshareAdapter()
+    summary = UpdateSummary(
+        entity="fund_scale_history",
+        source="eastmoney_f10",
+        requested=len(fund_codes),
+        dry_run=dry_run,
+        warnings=[],
+    )
+    for idx, fund_code in enumerate(_progress_iter(sorted(fund_codes), f"更新 {summary.entity}")):
+        if idx > 0 and request_interval > 0:
+            sleep(request_interval)
+        result = adapter.fetch_fund_scale_history(fund_code)
+        if not dry_run:
+            _snapshot_from_fetch(session, result)
+        if not result.is_success or result.data is None or result.data.empty:
+            summary.skipped += 1
+            summary.warnings.append(result.error_message or f"基金规模历史为空: {fund_code}")
+            continue
+        for row in result.data.to_dict(orient="records"):
+            action = _apply_scale_row(session, row, fund_code, result.fetch_timestamp.date(), dry_run)
+            if action == "inserted":
+                summary.inserted += 1
+            elif action == "updated":
+                summary.updated += 1
+            else:
+                summary.skipped += 1
+    if not dry_run:
+        _log_update_task(session, "fund_scale_history", summary)
+        session.commit()
+    return summary
+
+
 def _apply_holder_structure_row(
     session: Session,
     row: dict,
     fund_code: str,
     dry_run: bool,
+    source_level: DataSourceLevel = DataSourceLevel.B,
 ) -> str:
     report_date = _parse_date(row.get("report_date"))
     if report_date is None:
@@ -705,7 +796,7 @@ def _apply_holder_structure_row(
     holder.employee_pct = _parse_float(row.get("employee_pct"))
     holder.total_holders = int(_parse_float(row.get("total_holders")) or 0) or None
     holder.avg_holding = _parse_float(row.get("avg_holding"))
-    holder.data_source_level = DataSourceLevel.B.value
+    holder.data_source_level = source_level.value
     return action
 
 
@@ -715,17 +806,20 @@ def upsert_akshare_holder_structure(
     *,
     adapter: AkshareAdapter | None = None,
     dry_run: bool = False,
+    request_interval: float = 0.3,
 ) -> UpdateSummary:
-    """Fetch and upsert AKShare holder structure data."""
+    """Fetch and upsert holder structure data (Eastmoney F10, C-level)."""
     adapter = adapter or AkshareAdapter()
     summary = UpdateSummary(
         entity="holder_structure",
-        source="akshare",
+        source="eastmoney_f10",
         requested=len(fund_codes),
         dry_run=dry_run,
         warnings=[],
     )
-    for fund_code in _progress_iter(sorted(fund_codes), f"更新 {summary.entity}"):
+    for idx, fund_code in enumerate(_progress_iter(sorted(fund_codes), f"更新 {summary.entity}")):
+        if idx > 0 and request_interval > 0:
+            sleep(request_interval)
         result = adapter.fetch_holder_structure(fund_code)
         if not dry_run:
             _snapshot_from_fetch(session, result)
@@ -734,7 +828,13 @@ def upsert_akshare_holder_structure(
             summary.warnings.append(result.error_message or f"持有人结构数据为空: {fund_code}")
             continue
         for row in result.data.to_dict(orient="records"):
-            action = _apply_holder_structure_row(session, row, fund_code, dry_run)
+            action = _apply_holder_structure_row(
+                session,
+                row,
+                fund_code,
+                dry_run,
+                source_level=result.source_level,
+            )
             if action == "inserted":
                 summary.inserted += 1
             elif action == "updated":

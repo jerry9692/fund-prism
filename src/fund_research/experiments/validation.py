@@ -75,15 +75,20 @@ def run_p2b_validation_report(
                 "total": len(selected_algorithms),
                 "percent": round((index - 1) / len(selected_algorithms) * 90, 1),
             })
+        algorithm_params: dict[str, Any] = {
+            "validation_scope": "P2B",
+            "expected_fund_count": expected_fund_count,
+        }
+        if algorithm == "dynamic_attribution":
+            algorithm_params["min_stock_weight_coverage"] = 0.3
+            algorithm_params["min_return_observations"] = 3
+            algorithm_params["max_benchmark_weight_snapshot_age_days"] = 365
         exp = create_experiment(
             db,
             experiment_name=f"{experiment_prefix}-{algorithm}-{run_date}",
             algorithm_name=algorithm,
             algorithm_version=algorithm_version,
-            parameters={
-                "validation_scope": "P2B",
-                "expected_fund_count": expected_fund_count,
-            },
+            parameters=algorithm_params,
             sample_fund_codes=fund_codes,
         )
         update_experiment_status(db, exp.id, "running")

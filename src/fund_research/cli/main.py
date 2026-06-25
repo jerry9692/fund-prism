@@ -35,7 +35,9 @@ UPDATE_ENTITY_ORDER = [
     "sample-funds",
     "fund-info",
     "fund-managers",
+    "fund-manager-history",
     "fund-scale",
+    "fund-scale-history",
     "fund-fees",
     "fund-nav",
     "fund-dividends",
@@ -61,8 +63,13 @@ UPDATE_DOMAIN_ALIASES = {
     "manager": "fund-managers",
     "managers": "fund-managers",
     "fund-managers": "fund-managers",
+    "manager-history": "fund-manager-history",
+    "fund-manager-history": "fund-manager-history",
+    "tenure": "fund-manager-history",
     "scale": "fund-scale",
     "fund-scale": "fund-scale",
+    "fund-scale-history": "fund-scale-history",
+    "scale-history": "fund-scale-history",
     "fee": "fund-fees",
     "fees": "fund-fees",
     "fund-fees": "fund-fees",
@@ -111,7 +118,7 @@ UpdateEntityArg = Annotated[
     typer.Argument(
         help=(
             "要更新的数据类型 "
-            "(sample-funds/fund-info/fund-managers/fund-scale/fund-fees/fund-nav/"
+            "(sample-funds/fund-info/fund-managers/fund-manager-history/fund-scale/fund-scale-history/fund-fees/fund-nav/"
             "fund-dividends/fund-holdings/fund-industry-allocation/"
             "fund-portfolio-change/holder-structure/stock-daily/index-daily/"
             "benchmark-members/stock-industry/benchmark-industry/official-pdf/all)"
@@ -979,6 +986,8 @@ def update(
         upsert_akshare_stock_daily,
         upsert_akshare_stock_industry_membership,
         upsert_benchmark_industry_weights,
+        upsert_eastmoney_fund_manager_history,
+        upsert_eastmoney_fund_scale_history,
         upsert_local_benchmark_index_members,
         upsert_local_stock_industry_membership,
         upsert_sample_funds,
@@ -1027,9 +1036,26 @@ def update(
             summaries.append(
                 upsert_akshare_fund_managers(session, selected_codes, dry_run=dry_run)
             )
+        if "fund-manager-history" in selected_entities:
+            summaries.append(
+                upsert_eastmoney_fund_manager_history(
+                    session,
+                    selected_codes,
+                    dry_run=dry_run,
+                    request_interval=request_interval,
+                )
+            )
         if "fund-scale" in selected_entities:
             summaries.append(
                 upsert_akshare_fund_scale(session, selected_codes, dry_run=dry_run)
+            )
+        if "fund-scale-history" in selected_entities:
+            summaries.append(
+                upsert_eastmoney_fund_scale_history(
+                    session, selected_codes,
+                    request_interval=max(request_interval, 0.0),
+                    dry_run=dry_run,
+                )
             )
         if "fund-fees" in selected_entities:
             summaries.append(

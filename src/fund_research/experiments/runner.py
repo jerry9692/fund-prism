@@ -1147,6 +1147,9 @@ def _run_dynamic_attribution_batch(
         params.get("warn_benchmark_weight_snapshot_age_days")
         or WARN_ATTRIBUTION_BENCHMARK_WEIGHT_STALENESS_DAYS
     )
+    min_stock_weight_coverage = float(
+        params.get("min_stock_weight_coverage") or MIN_ATTRIBUTION_STOCK_WEIGHT_COVERAGE
+    )
     holdings_source = str(params.get("holdings_source") or "disclosed")
     results: list[dict] = []
 
@@ -1269,11 +1272,24 @@ def _run_dynamic_attribution_batch(
                 continue
 
             min_weight_coverage = return_stats.get("min_stock_weight_coverage", 0.0)
-            if min_weight_coverage < MIN_ATTRIBUTION_STOCK_WEIGHT_COVERAGE:
-                error = f"持仓股票行情覆盖不足: {min_weight_coverage:.1%}"
+            median_weight_coverage = return_stats.get("median_stock_weight_coverage", 0.0)
+            usable_period_count = return_stats.get("usable_period_count", 0)
+            total_period_count = return_stats.get("total_period_count", 0)
+            MIN_USABLE_PERIODS = 1
+            if usable_period_count < MIN_USABLE_PERIODS:
+                error = f"可用归因周期不足: {usable_period_count}/{total_period_count}"
                 warnings = [
                     *return_warnings,
-                    f"要求覆盖率 >= {MIN_ATTRIBUTION_STOCK_WEIGHT_COVERAGE:.0%}",
+                    f"要求至少 {MIN_USABLE_PERIODS} 个有效周期",
+                ]
+                _record_failure(db, exp.id, fund_code, error, warnings=warnings)
+                results.append(_failure_result(fund_code, error, warnings))
+                continue
+            if median_weight_coverage < min_stock_weight_coverage:
+                error = f"持仓股票行情中位覆盖不足: {median_weight_coverage:.1%} (最低 {min_weight_coverage:.1%})"
+                warnings = [
+                    *return_warnings,
+                    f"要求中位覆盖率 >= {min_stock_weight_coverage:.0%}",
                 ]
                 _record_failure(db, exp.id, fund_code, error, warnings=warnings)
                 results.append(_failure_result(fund_code, error, warnings))
@@ -1694,11 +1710,12 @@ def _build_real_sector_return_df(
                 period_holdings["stock_code"].isin(stock_returns)
             ]["port_weight"].sum()
         )
-        coverage_by_report[str(report_date)] = round(available_weight, 6)
         if available_weight <= 0:
             warnings.append(f"{report_date} 持仓股票行情无有效收益样本")
             continue
 
+        period_sector_rows = 0
+        period_sector_weight = 0.0
         for sector, sector_holdings in period_holdings.groupby("sector"):
             usable = sector_holdings[sector_holdings["stock_code"].isin(stock_returns)]
             sector_weight = float(sector_holdings["port_weight"].sum())
@@ -1719,9 +1736,20 @@ def _build_real_sector_return_df(
                 if sector_weight > 0
                 else 0.0,
             })
+            period_sector_rows += 1
+            period_sector_weight += usable_weight
+
+        if period_sector_rows > 0:
+            coverage_by_report[str(report_date)] = round(available_weight, 6)
 
     stats = {
         "min_stock_weight_coverage": min(coverage_by_report.values()) if coverage_by_report else 0.0,
+        "median_stock_weight_coverage": (
+            float(pd.Series(list(coverage_by_report.values())).median())
+            if coverage_by_report else 0.0
+        ),
+        "usable_period_count": len(coverage_by_report),
+        "total_period_count": len(report_dates),
         "stock_weight_coverage_by_report": coverage_by_report,
         "return_observation_count_by_report": observations_by_report,
     }

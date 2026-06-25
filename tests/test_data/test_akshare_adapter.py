@@ -342,52 +342,122 @@ def test_fetch_fund_scale_pivots_latest_scale() -> None:
     assert row["total_share"] == "10.00亿份"
 
 
-def test_fetch_holder_structure_standardizes_columns() -> None:
-    """Holder structure aliases should map to canonical fields."""
-    fake_ak = types.SimpleNamespace(
-        fund_individual_hold_info=lambda symbol: pd.DataFrame(
-            [
-                {
-                    "基金代码": symbol,
-                    "截止日期": "2024-06-30",
-                    "机构持有比列": 43.54,
-                    "个人持有比列": 55.85,
-                    "内部持有比列": 2.0,
-                    "总份额": 321405.19,
-                }
-            ]
+def test_fetch_holder_structure_standardizes_columns(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Holder structure from Eastmoney F10 AJAX API should map to canonical fields."""
+
+    class FakeResponse:
+        text = (
+            'var apidata={ content:"<table>'
+            "<tr><th>公告日期</th><th>机构持有比例</th><th>个人持有比例</th>"
+            "<th>内部持有比例</th><th>总份额（亿份）</th></tr>"
+            "<tr><td>2024-06-30</td><td>43.54%</td><td>55.85%</td>"
+            "<td>2.00%</td><td>3.21</td></tr>"
+            '</table>",summary:"" }'
         )
-    )
-    adapter = AkshareAdapter(ak_module=fake_ak)
+        encoding = "utf-8"
+
+        def raise_for_status(self) -> None:
+            return None
+
+    def fake_get(url: str, **kwargs) -> FakeResponse:
+        assert "FundArchivesDatas.aspx" in url
+        assert kwargs.get("params", {}).get("code") == "000001"
+        return FakeResponse()
+
+    monkeypatch.setattr("fund_research.data.adapters.akshare.requests.get", fake_get)
+    adapter = AkshareAdapter(ak_module=types.SimpleNamespace())
 
     result = adapter.fetch_holder_structure("000001")
 
     assert result.is_success is True
     assert result.record_count == 1
     assert result.data is not None
+    assert result.source_name == "eastmoney_f10"
+    assert result.source_level == DataSourceLevel.C
     row = result.data.iloc[0]
     assert row["fund_code"] == "000001"
-    assert row["report_date"] == "2024-06-30"
-    assert row["institutional_pct"] == 43.54
-    assert row["individual_pct"] == 55.85
-    assert row["employee_pct"] == 2.0
-    assert row["total_share"] == 321405.19
+    assert str(row["report_date"]) == "2024-06-30"
+    assert row["institutional_pct"] == pytest.approx(43.54)
+    assert row["individual_pct"] == pytest.approx(55.85)
+    assert row["employee_pct"] == pytest.approx(2.0)
+    assert row["total_share"] == pytest.approx(3.21e8)
 
 
-def test_fetch_holder_structure_skips_aggregate_only_interface() -> None:
-    """Aggregate holder structure output must not be treated as fund-level data."""
+def test_fetch_holder_structure_handles_empty_response(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Empty holder structure response should return an empty DataFrame, not an error."""
 
-    def aggregate_holder_structure() -> pd.DataFrame:
-        raise AssertionError("aggregate interface should not be called")
+    class FakeResponse:
+        text = 'var apidata={ content:"",summary:"" }'
+        encoding = "utf-8"
 
-    fake_ak = types.SimpleNamespace(fund_hold_structure_em=aggregate_holder_structure)
-    adapter = AkshareAdapter(ak_module=fake_ak)
+        def raise_for_status(self) -> None:
+            return None
 
-    result = adapter.fetch_holder_structure("000001")
+    def fake_get(url: str, **kwargs) -> FakeResponse:
+        return FakeResponse()
 
-    assert result.is_success is False
+    monkeypatch.setattr("fund_research.data.adapters.akshare.requests.get", fake_get)
+    adapter = AkshareAdapter(ak_module=types.SimpleNamespace())
+
+    result = adapter.fetch_holder_structure("999999")
+
+    assert result.is_success is True
     assert result.record_count == 0
-    assert "全市场汇总接口" in result.error_message
+
+
+def test_fetch_fund_manager_history_parses_eastmoney_f10(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Manager history from Eastmoney F10 should split multi-manager rows and set dates."""
+
+    class FakeResponse:
+        text = (
+            "<html><body>"
+            "<table><tr><td>nav</td></tr></table>"
+            "<table>"
+            "<tr><th>起始期</th><th>截止期</th><th>基金经理</th><th>任职期间</th><th>任职回报</th></tr>"
+            "<tr><td>2024-01-01</td><td>至今</td><td>张三 李四</td><td>1年又100天</td><td>15.50%</td></tr>"
+            "<tr><td>2022-01-01</td><td>2023-12-31</td><td>王五</td><td>2年</td><td>-5.20%</td></tr>"
+            "</table>"
+            "<table><tr><td>other</td></tr></table>"
+            "<table><tr><td>other</td></tr></table>"
+            "</body></html>"
+        )
+        encoding = "utf-8"
+
+        def raise_for_status(self) -> None:
+            return None
+
+    def fake_get(url: str, **kwargs) -> FakeResponse:
+        assert "jjjl_000001" in url
+        return FakeResponse()
+
+    monkeypatch.setattr("fund_research.data.adapters.akshare.requests.get", fake_get)
+    adapter = AkshareAdapter(ak_module=types.SimpleNamespace())
+
+    result = adapter.fetch_fund_manager_history("000001")
+
+    assert result.is_success is True
+    assert result.source_name == "eastmoney_f10"
+    assert result.source_level == DataSourceLevel.C
+    assert result.record_count == 3
+    assert result.data is not None
+    rows = result.data.to_dict(orient="records")
+    names = {r["name"] for r in rows}
+    assert names == {"张三", "李四", "王五"}
+    current = [r for r in rows if r["is_current"]]
+    assert len(current) == 2
+    assert {r["name"] for r in current} == {"张三", "李四"}
+    former = [r for r in rows if not r["is_current"]]
+    assert len(former) == 1
+    assert former[0]["name"] == "王五"
+    assert former[0]["start_date"].isoformat() == "2022-01-01"
+    assert former[0]["end_date"].isoformat() == "2023-12-31"
+    assert former[0]["tenure_return"] == pytest.approx(-0.052)
 
 
 def test_fetch_index_daily_standardizes_english_columns() -> None:
