@@ -1,0 +1,175 @@
+================================================================================
+AKShare version: 1.18.64
+================================================================================
+TEST 1: fund_manager_em()
+shape: (34952, 8)
+columns: ['序号', '姓名', '所属公司', '现任基金代码', '现任基金', '累计从业时间', '现任基金资产总规模', '现任基金最佳回报']
+head(3):
+   序号   姓名  所属公司  现任基金代码       现任基金  累计从业时间  现任基金资产总规模  现任基金最佳回报
+0   1  艾邦妮  华夏基金  001924   华夏国企改革混合    1394       2.85     51.52
+1   1  艾邦妮  华夏基金  010692  华夏核心价值混合A    1394       2.85     51.52
+2   1  艾邦妮  华夏基金  010693  华夏核心价值混合C    1394       2.85     51.52
+相关日期列:
+  现任基金代码: ['001924', '010692', '010693']
+  现任基金: ['华夏国企改革混合', '华夏核心价值混合A', '华夏核心价值混合C']
+  现任基金资产总规模: [2.85, 2.85, 2.85]
+  现任基金最佳回报: [51.52, 51.52, 51.52]
+================================================================================
+TEST 2: manager functions
+manager funcs: ['amac_manager_cancelled_info', 'amac_manager_classify_info', 'amac_manager_info', 'fund_manager_em']
+  amac_manager_cancelled_info() -> pandas.core.frame.DataFrame
+  amac_manager_classify_info() -> pandas.core.frame.DataFrame
+  amac_manager_info() -> pandas.core.frame.DataFrame
+  fund_manager_em() -> pandas.core.frame.DataFrame
+================================================================================
+TEST 3: hold/holder+fund functions
+hold+fund funcs: ['fund_hold_structure_em', 'fund_individual_detail_hold_xq', 'fund_portfolio_bond_hold_em', 'fund_portfolio_hold_em', 'stock_fund_stock_holder', 'stock_report_fund_hold', 'stock_report_fund_hold_detail']
+  fund_hold_structure_em() -> pandas.core.frame.DataFrame
+  fund_individual_detail_hold_xq(symbol: str = '002804', date: str = '20231231', timeout: float = None) -> pandas.core.frame.DataFrame
+  fund_portfolio_bond_hold_em(symbol: str = '000001', date: str = '2023') -> pandas.core.frame.DataFrame
+  fund_portfolio_hold_em(symbol: str = '000001', date: str = '2024') -> pandas.core.frame.DataFrame
+  stock_fund_stock_holder(symbol: str = '600004') -> pandas.core.frame.DataFrame
+  stock_report_fund_hold(symbol: str = '基金持仓', date: str = '20210331') -> pandas.core.frame.DataFrame
+  stock_report_fund_hold_detail(symbol: str = '008286', date: str = '20220331') -> pandas.core.frame.DataFrame
+================================================================================
+TEST 4: fund_individual_hold_info(symbol='000001')
+ERROR: AttributeError: module 'akshare' has no attribute 'fund_individual_hold_info'
+================================================================================
+TEST 5: fund_hold_structure_em() if exists
+shape: (44, 7)
+columns: ['序号', '截止日期', '基金家数', '机构持有比列', '个人持有比列', '内部持有比列', '总份额']
+   序号        截止日期   基金家数  机构持有比列  个人持有比列  内部持有比列        总份额
+0   1  2025-12-31  24419   43.54   55.85    2.00  321405.19
+1   2  2025-06-30  23094   43.98   55.59    1.66  312638.40
+2   3  2024-12-31  21852   44.59   55.03    1.53  303777.38
+3   4  2024-06-30  20630   45.44   54.31    1.31  299481.30
+4   5  2023-12-31  19227   43.92   55.86    1.32  266178.85
+================================================================================
+TEST 6: all hold funcs
+All hold funcs (41):
+  crypto_bitcoin_hold_report
+  fund_hold_structure_em
+  fund_individual_detail_hold_xq
+  fund_portfolio_bond_hold_em
+  fund_portfolio_hold_em
+  futures_hold_pos_sina
+  macro_euro_lme_holding
+  macro_usa_cftc_c_holding
+  macro_usa_cftc_merchant_currency_holding
+  macro_usa_cftc_merchant_goods_holding
+  macro_usa_cftc_nc_holding
+  macro_usa_cme_merchant_goods_holding
+  stock_circulate_stock_holder
+  stock_fund_stock_holder
+  stock_gdfx_free_holding_analyse_em
+  stock_gdfx_free_holding_change_em
+  stock_gdfx_free_holding_detail_em
+  stock_gdfx_free_holding_statistics_em
+  stock_gdfx_free_holding_teamwork_em
+  stock_gdfx_holding_analyse_em
+  stock_gdfx_holding_change_em
+  stock_gdfx_holding_detail_em
+  stock_gdfx_holding_statistics_em
+  stock_gdfx_holding_teamwork_em
+  stock_hold_change_cninfo
+  stock_hold_control_cninfo
+  stock_hold_management_detail_cninfo
+  stock_hold_management_detail_em
+  stock_hold_management_person_em
+  stock_hold_num_cninfo
+  stock_hsgt_hold_stock_em
+  stock_institute_hold
+  stock_institute_hold_detail
+  stock_main_stock_holder
+  stock_report_fund_hold
+  stock_report_fund_hold_detail
+  stock_restricted_release_stockholder_em
+  stock_share_hold_change_bse
+  stock_share_hold_change_sse
+  stock_share_hold_change_szse
+  stock_shareholder_change_ths
+================================================================================
+TEST 7: all holder funcs
+All holder funcs (5):
+  stock_circulate_stock_holder
+  stock_fund_stock_holder
+  stock_main_stock_holder
+  stock_restricted_release_stockholder_em
+  stock_shareholder_change_ths
+================================================================================
+TEST 9: fund_individual_detail_info_xq(symbol='000001')
+shape: (8, 3)
+columns: ['费用类型', '条件或名称', '费用']
+   费用类型                 条件或名称      费用
+0  买入规则      0.0万<买入金额<100.0万     1.5
+1  买入规则   100.0万<=买入金额<500.0万     1.2
+2  买入规则  500.0万<=买入金额<1000.0万     0.8
+3  买入规则         1000.0万<=买入金额  1000.0
+4  卖出规则        0.0天<持有期限<7.0天     1.5
+5  卖出规则            7.0天<=持有期限     0.5
+6  其他费用                 基金管理费     1.2
+7  其他费用                 基金托管费     0.2
+================================================================================
+TEST 10: structure funcs
+structure funcs: ['fund_hold_structure_em', 'fund_scale_structured_sina']
+  fund_hold_structure_em() -> pandas.core.frame.DataFrame
+  fund_scale_structured_sina() -> pandas.core.frame.DataFrame
+================================================================================
+TEST 11: all individual+fund funcs
+individual+fund funcs: ['fund_individual_achievement_xq', 'fund_individual_analysis_xq', 'fund_individual_basic_info_xq', 'fund_individual_detail_hold_xq', 'fund_individual_detail_info_xq', 'fund_individual_profit_probability_xq', 'stock_fund_flow_individual', 'stock_individual_fund_flow', 'stock_individual_fund_flow_rank']
+
+--- fund_individual_achievement_xq(symbol: str = '000001', timeout: float = None) -> pandas.core.frame.DataFrame ---
+  -> shape=(32, 5), columns=['业绩类型', '周期', '本产品区间收益', '本产品最大回撒', '周期收益同类排名']
+   业绩类型    周期     本产品区间收益  本产品最大回撒   周期收益同类排名
+0  年度业绩  成立以来  875.546000    59.09    89/5469
+1  年度业绩  今年以来   38.504157    15.89  1235/5470
+2  年度业绩  2025   32.960000    12.48  2029/5118
+
+--- fund_individual_analysis_xq(symbol: str = '000001', timeout: float = None) -> pandas.core.frame.DataFrame ---
+  -> shape=(3, 6), columns=['周期', '较同类风险收益比', '较同类抗风险波动', '年化波动率', '年化夏普比率', '最大回撤']
+    周期  较同类风险收益比  较同类抗风险波动  年化波动率  年化夏普比率   最大回撤
+0  近1年        75        39  26.95    2.94  15.89
+1  近3年        77        53  22.16    0.75  29.90
+2  近5年        56        51  20.78    0.03  52.93
+
+--- fund_individual_basic_info_xq(symbol: str = '000001', timeout: float = None) -> pandas.core.frame.DataFrame ---
+  -> shape=(14, 2), columns=['item', 'value']
+   item       value
+0  基金代码      000001
+1  基金名称      华夏成长混合
+2  基金全称  华夏成长证券投资基金
+
+--- fund_individual_detail_hold_xq(symbol: str = '002804', date: str = '20231231', timeout: float = None) -> pandas.core.frame.DataFrame ---
+  -> shape=(4, 2), columns=['资产类型', '仓位占比']
+  资产类型   仓位占比
+0   股票  67.37
+1   债券  20.93
+2   现金  10.02
+
+--- fund_individual_detail_info_xq(symbol: str = '000001', timeout: float = None) -> pandas.core.frame.DataFrame ---
+  -> shape=(8, 3), columns=['费用类型', '条件或名称', '费用']
+   费用类型                 条件或名称   费用
+0  买入规则      0.0万<买入金额<100.0万  1.5
+1  买入规则   100.0万<=买入金额<500.0万  1.2
+2  买入规则  500.0万<=买入金额<1000.0万  0.8
+
+--- fund_individual_profit_probability_xq(symbol: str = '000001', timeout: float = None) -> pandas.core.frame.DataFrame ---
+  -> shape=(4, 3), columns=['持有时长', '盈利概率', '平均收益']
+   持有时长  盈利概率   平均收益
+0  满6个月    55   6.16
+1   满1年    60  13.85
+2   满2年    63  29.18
+
+--- stock_fund_flow_individual(symbol: str = '即时') -> pandas.core.frame.DataFrame ---
+  ERROR: ValueError: Length mismatch: Expected axis has 10 elements, new values have 7 elements
+
+--- stock_individual_fund_flow(stock: str = '600094', market: str = 'sh') -> pandas.core.frame.DataFrame ---
+
+--- stock_individual_fund_flow_rank(indicator: str = '5日') -> pandas.core.frame.DataFrame ---
+================================================================================
+TEST 12: fund+change funcs
+fund+change funcs: ['fund_exchange_rank_em', 'fund_portfolio_change_em', 'fund_scale_change_em', 'get_qhkc_fund_money_change']
+  fund_exchange_rank_em() -> pandas.core.frame.DataFrame
+  fund_portfolio_change_em(symbol: str = '003567', indicator: str = '累计买入', date: str = '2023') -> pandas.core.frame.DataFrame
+  fund_scale_change_em() -> pandas.core.frame.DataFrame
+  get_qhkc_fund_money_change(date: <method 'date' of 'datetime.datetime' objects> = '20190924', url: ~AnyStr = 'https://qhkch.com/ajax/fund_deal_pie.php')

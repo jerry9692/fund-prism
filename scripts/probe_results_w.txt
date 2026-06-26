@@ -1,0 +1,129 @@
+================================================================================
+TEST EE: F10DataApi.aspx - try with callback and various type params
+================================================================================
+
+--- type=cyrjg, cid=cyrjg ---
+Response empty or minimal (12 chars): 'var apidata='
+
+--- type=jjjl, cid=cyrjg ---
+Response empty or minimal (12 chars): 'var apidata='
+
+--- type=gmbd, cid=cyrjg ---
+Response empty or minimal (12 chars): 'var apidata='
+
+--- type=, cid=cyrjg ---
+Response empty or minimal (12 chars): 'var apidata='
+
+--- type=cyrjg, cid=cyrjgtable ---
+Response empty or minimal (12 chars): 'var apidata='
+
+--- type=jjjl, cid=cyrjgtable ---
+Response empty or minimal (12 chars): 'var apidata='
+
+--- type=gmbd, cid=cyrjgtable ---
+Response empty or minimal (12 chars): 'var apidata='
+
+--- type=, cid=cyrjgtable ---
+Response empty or minimal (12 chars): 'var apidata='
+
+--- type=cyrjg, cid= ---
+Response empty or minimal (12 chars): 'var apidata='
+
+--- type=jjjl, cid= ---
+Response empty or minimal (12 chars): 'var apidata='
+
+--- type=gmbd, cid= ---
+Response empty or minimal (12 chars): 'var apidata='
+
+--- type=, cid= ---
+Response empty or minimal (12 chars): 'var apidata='
+
+================================================================================
+TEST FF: Try api.fund.eastmoney.com/f10/ endpoints for holder structure
+================================================================================
+
+--- GET http://api.fund.eastmoney.com/f10/CyrjgList ---
+Status: 200, resp: {"Data":null,"ErrCode":4,"ErrMsg":"404","TotalCount":0,"Expansion":null,"PageSize":0,"PageIndex":0}
+
+--- GET http://api.fund.eastmoney.com/f10/CyrjgDetail ---
+Status: 200, resp: {"Data":null,"ErrCode":4,"ErrMsg":"404","TotalCount":0,"Expansion":null,"PageSize":0,"PageIndex":0}
+
+--- GET http://api.fund.eastmoney.com/f10/holder ---
+Status: 200, resp: {"Data":null,"ErrCode":4,"ErrMsg":"404","TotalCount":0,"Expansion":null,"PageSize":0,"PageIndex":0}
+
+--- GET http://api.fund.eastmoney.com/f10/Holder ---
+Status: 200, resp: {"Data":null,"ErrCode":4,"ErrMsg":"404","TotalCount":0,"Expansion":null,"PageSize":0,"PageIndex":0}
+
+--- GET http://api.fund.eastmoney.com/f10/CyrjgNew ---
+Status: 200, resp: {"Data":null,"ErrCode":4,"ErrMsg":"404","TotalCount":0,"Expansion":null,"PageSize":0,"PageIndex":0}
+
+--- GET http://api.fund.eastmoney.com/f10/scale ---
+Status: 200, resp: {"Data":null,"ErrCode":4,"ErrMsg":"404","TotalCount":0,"Expansion":null,"PageSize":0,"PageIndex":0}
+
+--- GET http://api.fund.eastmoney.com/f10/gmbd ---
+Status: 200, resp: {"Data":null,"ErrCode":4,"ErrMsg":"404","TotalCount":0,"Expansion":null,"PageSize":0,"PageIndex":0}
+
+--- GET http://api.fund.eastmoney.com/f10/FundScale ---
+Status: 200, resp: {"Data":null,"ErrCode":4,"ErrMsg":"404","TotalCount":0,"Expansion":null,"PageSize":0,"PageIndex":0}
+
+--- GET http://api.fund.eastmoney.com/f10/jjjl ---
+Status: 200, resp: {"Data":null,"ErrCode":4,"ErrMsg":"404","TotalCount":0,"Expansion":null,"PageSize":0,"PageIndex":0}
+
+--- GET http://api.fund.eastmoney.com/f10/JJGL ---
+Status: 200, resp: {"Data":null,"ErrCode":4,"ErrMsg":"404","TotalCount":0,"Expansion":null,"PageSize":0,"PageIndex":0}
+
+--- GET http://api.fund.eastmoney.com/f10/FundManager ---
+Status: 200, resp: {"Data":null,"ErrCode":4,"ErrMsg":"404","TotalCount":0,"Expansion":null,"PageSize":0,"PageIndex":0}
+
+================================================================================
+TEST GG: Look at embasef10.js for API endpoint patterns
+================================================================================
+JS file length: 4435
+API refs: set()
+
+================================================================================
+TEST HH: Look at f10_min JS for cyrjg endpoint
+================================================================================
+f10_min JS length: 54757
+
+  context around 'cyrjg':
+  + tarCode + ".html"; break; case "jjfl": strUrl = "jjfl_" + tarCode + ".html"; break; case "dxjg": strUrl = "dxjg_" + tarCode + ".html"; break; case "cyrjg": strUrl = "cyrjg_" + tarCode + ".html"; break; case "srfx": strUrl = "srfx_" + tarCode + ".html"; break; case "hytz": strUrl = "hytz_" + tarCode + ".html"; break; case "hybd": strUrl = "hybd_" + tarCode + ".html"; break; case "ccbd": strUrl = "ccbd_" + tarCode + ".html"; break; case "jzbd": strUrl = "jzbd_" + tarCode + ".html"; break; case "
+
+  context around 'cyrjg':
+  "; break; case "jjfl": strUrl = "jjfl_" + tarCode + ".html"; break; case "dxjg": strUrl = "dxjg_" + tarCode + ".html"; break; case "cyrjg": strUrl = "cyrjg_" + tarCode + ".html"; break; case "srfx": strUrl = "srfx_" + tarCode + ".html"; break; case "hytz": strUrl = "hytz_" + tarCode + ".html"; break; case "hybd": strUrl = "hybd_" + tarCode + ".html"; break; case "ccbd": strUrl = "ccbd_" + tarCode + ".html"; break; case "jzbd": strUrl = "jzbd_" + tarCode + ".html"; break; case "jjjz": strUrl = "j
+
+  context around 'cyrjg':
+  + tarCode + ".html"; break; case "jjfl": strUrl = "jjfl_" + tarCode + ".html"; break; case "dxjg": strUrl = "dxjg_" + tarCode + ".html"; break; case "cyrjg": strUrl = "cyrjg_" + tarCode + ".html"; break; case "srfx": strUrl = "srfx_" + tarCode + ".html"; break; case "hytz": strUrl = "hytz_" + tarCode + ".html"; break; case "hybd": strUrl = "hybd_" + tarCode + ".html"; break; case "ccbd": strUrl = "ccbd_" + tarCode + ".html"; break; case "jzbd": strUrl = "jzbd_" + tarCode + ".html"; break; case "
+
+  context around 'cyrjg':
+  "; break; case "jjfl": strUrl = "jjfl_" + tarCode + ".html"; break; case "dxjg": strUrl = "dxjg_" + tarCode + ".html"; break; case "cyrjg": strUrl = "cyrjg_" + tarCode + ".html"; break; case "srfx": strUrl = "srfx_" + tarCode + ".html"; break; case "hytz": strUrl = "hytz_" + tarCode + ".html"; break; case "hybd": strUrl = "hybd_" + tarCode + ".html"; break; case "ccbd": strUrl = "ccbd_" + tarCode + ".html"; break; case "jzbd": strUrl = "jzbd_" + tarCode + ".html"; break; case "jjjz": strUrl = "j
+
+  context around 'Cyrjg':
+  ll'>暂无数据</label>"; $("pagebar").innerHTML = "" } CalPagePosition(); pObj.years = apidata.arryear; EventForYearBtn(pObj, LoadProfit) }) } function LoadCyrjg(pObj) { $("cyrjgtable").innerHTML = "<div style='text-align:center; font-size:14px;'><img src='//j5.dfcfw.com/j1/images/loading2.gif' title='数据加载中' style='margin:50px 10px; vertical-align:middle;' />数据加载中...</div>"; var strcode = pObj.code; var request = "FundArchivesDatas.aspx?type=cyrjg&code=" + strcode + "&rt=" + Math.random(); JsLoader(re
+
+  context around 'cyrjg':
+  ; $("pagebar").innerHTML = "" } CalPagePosition(); pObj.years = apidata.arryear; EventForYearBtn(pObj, LoadProfit) }) } function LoadCyrjg(pObj) { $("cyrjgtable").innerHTML = "<div style='text-align:center; font-size:14px;'><img src='//j5.dfcfw.com/j1/images/loading2.gif' title='数据加载中' style='margin:50px 10px; vertical-align:middle;' />数据加载中...</div>"; var strcode = pObj.code; var request = "FundArchivesDatas.aspx?type=cyrjg&code=" + strcode + "&rt=" + Math.random(); JsLoader(request, "utf-8", f
+
+  context around 'cyrjg':
+  title='数据加载中' style='margin:50px 10px; vertical-align:middle;' />数据加载中...</div>"; var strcode = pObj.code; var request = "FundArchivesDatas.aspx?type=cyrjg&code=" + strcode + "&rt=" + Math.random(); JsLoader(request, "utf-8", function () { if (apidata.content && apidata.content != "") { $("cyrjgpng").src = "//j6.dfcfw.com/charts/Cyrjg/" + strcode + ".png"; $("cyrjgtable").innerHTML = apidata.content; $("summary").innerHTML = apidata.summary } else { $("cyrjgtable").innerHTML = "<label class='tbn
+
+  context around 'cyrjg':
+  spx?type=cyrjg&code=" + strcode + "&rt=" + Math.random(); JsLoader(request, "utf-8", function () { if (apidata.content && apidata.content != "") { $("cyrjgpng").src = "//j6.dfcfw.com/charts/Cyrjg/" + strcode + ".png"; $("cyrjgtable").innerHTML = apidata.content; $("summary").innerHTML = apidata.summary } else { $("cyrjgtable").innerHTML = "<label class='tbnull'>暂无数据!</label>"; $("cyrjgpng").src = "//j6.dfcfw.com/charts/999999_Archives.png" } }) } function loadLSYZSY(strcode) { $("lsyzqsy").inner
+
+  context around 'Cyrjg':
+   + Math.random(); JsLoader(request, "utf-8", function () { if (apidata.content && apidata.content != "") { $("cyrjgpng").src = "//j6.dfcfw.com/charts/Cyrjg/" + strcode + ".png"; $("cyrjgtable").innerHTML = apidata.content; $("summary").innerHTML = apidata.summary } else { $("cyrjgtable").innerHTML = "<label class='tbnull'>暂无数据!</label>"; $("cyrjgpng").src = "//j6.dfcfw.com/charts/999999_Archives.png" } }) } function loadLSYZSY(strcode) { $("lsyzqsy").innerHTML = "<div style='text-align:center; f
+
+  context around 'cyrjg':
+  est, "utf-8", function () { if (apidata.content && apidata.content != "") { $("cyrjgpng").src = "//j6.dfcfw.com/charts/Cyrjg/" + strcode + ".png"; $("cyrjgtable").innerHTML = apidata.content; $("summary").innerHTML = apidata.summary } else { $("cyrjgtable").innerHTML = "<label class='tbnull'>暂无数据!</label>"; $("cyrjgpng").src = "//j6.dfcfw.com/charts/999999_Archives.png" } }) } function loadLSYZSY(strcode) { $("lsyzqsy").innerHTML = "<div style='text-align:center; font-size:14px;'><img src='//j5.
+
+  context around 'cyrjg':
+   "//j6.dfcfw.com/charts/Cyrjg/" + strcode + ".png"; $("cyrjgtable").innerHTML = apidata.content; $("summary").innerHTML = apidata.summary } else { $("cyrjgtable").innerHTML = "<label class='tbnull'>暂无数据!</label>"; $("cyrjgpng").src = "//j6.dfcfw.com/charts/999999_Archives.png" } }) } function loadLSYZSY(strcode) { $("lsyzqsy").innerHTML = "<div style='text-align:center; font-size:14px;'><img src='//j5.dfcfw.com/j1/images/loading2.gif' title='数据加载中' style='margin:50px 10px; vertical-align:middle;
+
+  context around 'cyrjg':
+  .innerHTML = apidata.content; $("summary").innerHTML = apidata.summary } else { $("cyrjgtable").innerHTML = "<label class='tbnull'>暂无数据!</label>"; $("cyrjgpng").src = "//j6.dfcfw.com/charts/999999_Archives.png" } }) } function loadLSYZSY(strcode) { $("lsyzqsy").innerHTML = "<div style='text-align:center; font-size:14px;'><img src='//j5.dfcfw.com/j1/images/loading2.gif' title='数据加载中' style='margin:50px 10px; vertical-align:middle;' />数据加载中...</div>"; var request = "FundArchivesDatas.aspx?type=yzl
+
+  context around 'cyrjg':
+  ndom(); JsLoader(request, "utf-8", function () { var data = apidata_fqzj.Data; if (data.length > 0) { var arr = []; arr.push('<table class="w782 comm cyrjg"><thead><tr><th>时间</th><th>持有份额总数(份)</th><th class="fqzjtr">持有份额占基金总份额比例(%)</th><th>发起份额总数(份)</th><th class="fqzjtr">发起份额占基金总份额比例(%)</th><th>持有份额详情</th></tr></thead><tbody>'); for (var i = 0, len = data.length; i < len; i++) { arr.push("<tr>"); arr.push("<td >", data[i]["REPORTDATE"], (i == len - 1 ? "(初始)" : ""), "</td>"); arr.push('<td  cla
+
+  context around 'cyrjg':
+   = apidata_fqzj.MaxDate; $("limitDate").innerHTML = setEmptyDefault(maxDate); if (data.length > 0) { var arr = []; arr.push('<table class="w782 comm  cyrjg "><thead><tr><th>项目</th><th >持有份额总数(份)</th><th >持有份额占基金总份额比例(%)</th><th>发起份额总数(份)</th><th >发起份额占基金总份额比例(%)</th><th >发起份额承诺持有期限</th></tr></thead><tbody>'); for (var i = 0, len = data.length; i < len; i++) { arr.push("<tr>"); arr.push('<td class="tol">', _cyrType(data[i]["ITEM"]), '</td><td class="tor">', setEmptyDefault(toThousands(data[i]["TO

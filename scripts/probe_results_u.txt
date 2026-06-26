@@ -1,0 +1,111 @@
+================================================================================
+TEST U: Direct Eastmoney F10 API - Fund Manager History (基金经理变动)
+URL pattern: https://fundf10.eastmoney.com/jjjl_{fundcode}.html
+API: http://api.fund.eastmoney.com/f10/JJGG?type=4 or similar
+================================================================================
+Status: 200, length: 48721
+Number of tables found: 4
+
+--- Table 0: shape=(1, 4) ---
+columns: ['热点推荐\xa0手机买基金', '基金数据', '基金交易登录|开户', '服务指南']
+                             热点推荐 手机买基金                                 基金数据                               基金交易登录|开户                 服务指南
+0  自选基金基金比较 稳健理财收益计算 主题基金基金经理 基金研究基 金 吧  基金净值投顾管家 基金排行定投排行 基金评级基金分红 基金公司私募基金  活 期 宝私 募 宝 指 数 宝高端理财 基金导购收益排行 稳健理财基金优选  帮助中心 机构指南 意见反馈 安全保障
+
+--- Table 1: shape=(21, 5) ---
+columns: ['起始期', '截止期', '基金经理', '任职期间', '任职回报']
+          起始期         截止期            基金经理     任职期间     任职回报
+0  2024-12-26          至今         郑晓辉 刘睿聪  1年又181天   81.50%
+1  2024-07-12  2024-12-25             王泽实     166天    8.17%
+2  2022-10-27  2024-07-11         王泽实 万方方  1年又258天  -29.07%
+3  2022-04-11  2022-10-26         王泽实 刘文成     198天    9.45%
+4  2021-09-16  2022-04-10      阳琨 王泽实 刘文成     206天  -16.30%
+5  2021-02-22  2021-09-15              阳琨     205天  -16.46%
+6  2017-03-28  2021-02-21             董阳阳  3年又331天   55.61%
+7  2017-02-24  2017-03-27         董阳阳 许利明      31天    2.68%
+8  2017-01-13  2017-02-23      董阳阳 许利明 孙萌      41天    4.55%
+9  2015-11-19  2017-01-12  李铧汶 董阳阳 许利明 孙萌   1年又55天  -20.83%
+
+--- Table 2: shape=(7, 9) ---
+columns: ['基金代码', '基金名称', '基金类型', '起始时间', '截止时间', '任职天数', '任职回报', '同类平均', '同类排名']
+     基金代码          基金名称    基金类型        起始时间        截止时间     任职天数     任职回报     同类平均       同类排名
+0       1        华夏成长混合  混合型-灵活  2024-12-26          至今  1年又181天   81.50%   46.15%  1745|8001
+1   17602  华夏国企创新混合发起式A  混合型-偏股  2024-04-02          至今   2年又84天  147.61%   57.85%   827|7525
+2   17603  华夏国企创新混合发起式C  混合型-偏股  2024-04-02          至今   2年又84天  144.32%   57.85%   873|7525
+3    1924      华夏国企改革混合  混合型-灵活  2015-11-25  2024-08-07  8年又258天   11.40%   28.29%   714|1148
+4    2031        华夏策略混合  混合型-灵活  2015-06-16  2016-09-14   1年又91天  -18.12%  -20.68%    362|990
+5      21      华夏优势增长混合  混合型-偏股  2013-05-10          至今  13年又49天  267.76%  298.10%    261|561
+6  184699          基金同盛     股票型  2006-11-29  2008-04-26  1年又149天  109.23%   96.91%      15|32
+
+--- Table 3: shape=(5, 9) ---
+columns: ['基金代码', '基金名称', '基金类型', '起始时间', '截止时间', '任职天数', '任职回报', '同类平均', '同类排名']
+    基金代码          基金名称    基金类型        起始时间        截止时间     任职天数    任职回报    同类平均       同类排名
+0      1        华夏成长混合  混合型-灵活  2024-12-26          至今  1年又181天  81.50%  46.15%  1745|8001
+1  19729  华夏国企红利混合发起式A  混合型-偏股  2024-02-27          至今  2年又119天   5.29%  61.35%  6444|7447
+2  19730  华夏国企红利混合发起式C  混合型-偏股  2024-02-27          至今  2年又119天   3.84%  61.35%  6588|7447
+3   2231      华夏新趋势混合A  混合型-灵活  2022-12-28  2024-12-06  1年又344天   1.57%  -5.16%  2442|7301
+4   2232      华夏新趋势混合C  混合型-灵活  2022-12-28  2024-12-06  1年又344天   1.10%  -5.16%  2565|7301
+
+================================================================================
+TEST V: Direct Eastmoney F10 - Holder Structure (持有人结构)
+URL: https://fundf10.eastmoney.com/cyrjg_000001.html
+================================================================================
+Status: 200, length: 30812
+ERROR: ValueError: No tables found
+
+================================================================================
+TEST W: Read AKShare fund_em.py full source for undocumented/unexported functions
+================================================================================
+source: C:\Users\Jzr\AppData\Roaming\Python\Python314\site-packages\akshare\fund\fund_em.py
+Total lines: 1319
+
+All 'def ' lines in fund_em.py:
+  L32: def fund_purchase_em() -> pd.DataFrame:
+  L99: def fund_name_em() -> pd.DataFrame:
+  L115: def fund_info_index_em(
+  L267: def fund_open_fund_daily_em() -> pd.DataFrame:
+  L333: def fund_open_fund_info_em(
+  L588: def fund_money_fund_daily_em() -> pd.DataFrame:
+  L622: def fund_money_fund_info_em(symbol: str = "000009") -> pd.DataFrame:
+  L681: def fund_financial_fund_daily_em() -> pd.DataFrame:
+  L754: def fund_financial_fund_info_em(symbol: str = "000134") -> pd.DataFrame:
+  L809: def fund_graded_fund_daily_em() -> pd.DataFrame:
+  L879: def fund_graded_fund_info_em(symbol: str = "150232") -> pd.DataFrame:
+  L940: def fund_etf_fund_daily_em() -> pd.DataFrame:
+  L973: def fund_etf_fund_info_em(
+  L1042: def fund_value_estimation_em(symbol: str = "全部") -> pd.DataFrame:
+  L1132: def fund_hk_fund_hist_em(
+
+================================================================================
+TEST X: Check fund_portfolio_em.py source for holder structure functions
+================================================================================
+source: C:\Users\Jzr\AppData\Roaming\Python\Python314\site-packages\akshare\fund\fund_portfolio_em.py
+
+All 'def ' lines:
+  L18: def fund_portfolio_hold_em(symbol: str = "000001", date: str = "2024") -> pd.DataFrame:
+  L106: def fund_portfolio_bond_hold_em(
+  L161: def fund_portfolio_industry_allocation_em(
+  L234: def fund_portfolio_change_em(
+
+Lines mentioning '持有人' or 'holder':
+
+================================================================================
+TEST Y: Eastmoney F10 - 基金经理变动一览 API (json api)
+Try api.fund.eastmoney.com/f10/lsjz?callback=... and similar
+================================================================================
+Status: 200
+Response (first 500 chars): {"Data":[{"FUNDCODE":"000001","TITLE":"华夏基金管理有限公司关于调整华夏成长证券投资基金基金经理的公告","ShortTitle":"华夏成长混合","NEWCATEGORY":"4","PUBLISHDATE":"2024-12-28T00:00:00","PUBLISHDATEDesc":"2024-12-28","ATTACHTYPE":"0","ID":"AN202412281641460609"},{"FUNDCODE":"000001","TITLE":"华夏基金管理有限公司关于调整华夏成长证券投资基金基金经理的公告","ShortTitle":"华夏成长混合","NEWCATEGORY":"4","PUBLISHDATE":"2024-07-13T00:00:00","PUBLISHDATEDesc":"2024-07-13","ATTACHTYPE":"0","ID":"AN202407131637858301"},{"FUNDCODE":"000001","TITLE":"华夏基金管理有限公司关于调整华夏成长证券投资基金基金经理的
+Keys: ['Data', 'ErrCode', 'ErrMsg', 'TotalCount', 'Expansion', 'PageSize', 'PageIndex']
+Data keys: <class 'list'>
+
+================================================================================
+TEST Z: Try fetching jjjl page content with regex for manager tenure data
+================================================================================
+Page length: 42513
+'任职日期' found at positions: []
+'离任日期' found at positions: []
+'起始日期' found at positions: []
+'截止日期' found at positions: []
+'基金经理' found at positions: [205, 295, 462, 3896, 12150]
+  Context: ...1-transitional.dtd"> 华夏成长混合(000001)基金经理 _ 基金档案 _ 天天基金网 <meta http-equiv...
+  Context: ...混合(000001)基金经理 _ 基金档案 _ 天天基金网 <meta http-equiv="Content-Language"...
+'经理姓名' found at positions: []

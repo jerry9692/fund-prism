@@ -1,0 +1,44 @@
+================================================================================
+TEST II: FundArchivesDatas.aspx?type=cyrjg - holder structure!
+================================================================================
+Status: 200, length: 6199
+Full response:
+var apidata={ content:"<table class='w782 comm cyrjg'><thead><tr><th class='first'>公告日期</th><th>机构持有比例</th><th>个人持有比例</th><th>内部持有比例</th><th class='last'>总份额（亿份）</th></tr></thead><tbody><tr><td>2025-12-31</td><td class='tor'>0.50%</td><td class='tor'>99.50%</td><td class='tor'>0.00%</td><td class='tor'>27.12</td></tr><tr><td>2025-06-30</td><td class='tor'>0.55%</td><td class='tor'>99.45%</td><td class='tor'>0.00%</td><td class='tor'>29.93</td></tr><tr><td>2024-12-31</td><td class='tor'>0.55%</td><td class='tor'>99.45%</td><td class='tor'>0.00%</td><td class='tor'>30.57</td></tr><tr><td>2024-06-30</td><td class='tor'>0.48%</td><td class='tor'>99.52%</td><td class='tor'>0.00%</td><td class='tor'>30.89</td></tr><tr><td>2023-12-31</td><td class='tor'>0.49%</td><td class='tor'>99.51%</td><td class='tor'>0.00%</td><td class='tor'>31.00</td></tr><tr><td>2023-06-30</td><td class='tor'>0.47%</td><td class='tor'>99.53%</td><td class='tor'>0.00%</td><td class='tor'>31.17</td></tr><tr><td>2022-12-31</td><td class='tor'>1.10%</td><td class='tor'>98.90%</td><td class='tor'>0.00%</td><td class='tor'>31.39</td></tr><tr><td>2022-06-30</td><td class='tor'>0.60%</td><td class='tor'>99.40%</td><td class='tor'>0.00%</td><td class='tor'>31.20</td></tr><tr><td>2021-12-31</td><td class='tor'>0.63%</td><td class='tor'>99.37%</td><td class='tor'>0.00%</td><td class='tor'>30.49</td></tr><tr><td>2021-06-30</td><td class='tor'>0.59%</td><td class='tor'>99.41%</td><td class='tor'>0.00%</td><td class='tor'>30.56</td></tr><tr><td>2020-12-31</td><td class='tor'>5.31%</td><td class='tor'>94.69%</td><td class='tor'>0.00%</td><td class='tor'>35.41</td></tr><tr><td>2020-06-30</td><td class='tor'>4.88%</td><td class='tor'>95.12%</td><td class='tor'>0.00%</td><td class='tor'>38.85</td></tr><tr><td>2019-12-31</td><td class='tor'>0.45%</td><td class='tor'>99.55%</td><td class='tor'>0.00%</td><td class='tor'>41.62</td></tr><tr><td>2019-06-30</td><td class='tor'>0.40%</td><td class='tor'>99.60%</td><td class='tor'>0.00%</td><td class='tor'>42.95</td></tr><tr><td>2018-12-31</td><td class='tor'>0.30%</td><td class='tor'>99.70%</td><td class='tor'>0.01%</td><td class='tor'>44.23</td></tr><tr><td>2018-06-30</td><td class='tor'>0.28%</td><td class='tor'>99.72%</td><td class='tor'>0.01%</td><td class='tor'>42.84</td></tr><tr><td>2017-12-31</td><td class='tor'>0.29%</td><td class='tor'>99.71%</td><td class='tor'>0.02%</td><td class='tor'>43.98</td></tr><tr><td>2017-06-30</td><td class='tor'>0.35%</td><td class='tor'>99.65%</td><td class='tor'>0.02%</td><td class='tor'>44.41</td></tr><tr><td>2016-12-31</td><td class='tor'>0.35%</td><td class='tor'>99.65%</td><td class='tor'>0.02%</td><td class='tor'>45.42</td></tr><tr><td>2016-06-30</td><td class='tor'>0.35%</td><td class='tor'>99.65%</td><td class='tor'>0.03%</td><td class='tor'>46.03</td></tr><tr><td>2015-12-31</td><td class='tor'>0.36%</td><td class='tor'>99.64%</td><td class='tor'>0.03%</td><td class='tor'>44.08</td></tr><tr><td>2015-06-30</t
+
+Summary: 截至2025-12-31，<a href='http://fund.eastmoney.com/000001.html'>华夏成长混合</a> 的基金机构持有0.13亿份，占总份额的0.50%，个人投资者持有26.98亿份，占总份额的99.50%
+
+================================================================================
+TEST JJ: FundArchivesDatas.aspx?type=jjjl - manager history API
+================================================================================
+Status: 200, length: 12
+Full response (first 3000):
+var apidata=
+
+================================================================================
+TEST KK: FundArchivesDatas.aspx - explore other types (gmbd=规模变动, etc.)
+================================================================================
+
+--- type=gmbd (len=57345) ---
+response preview: var gmbd_apidata={ content:"<table class='w782 comm gmbd'><thead><tr><th class='first'>日期</th><th>期间申购（亿份）</th><th>期间赎回（亿份）</th><th>期末总份额（亿份）</th><th>期末净资产（亿元）</th><th class='last'>净资产变动率</th></tr></thead><tbody><tr><td>2026-03-31</td><td class='tor'>1.25</td><td class='tor'>2.44</td><td class='tor'>25.92</td><td class='tor'>26.44</td><td class='tor'>-9.96%</td></tr><tr><td>2025-12-31</td><td clas
+
+--- type=jjfl (len=12) ---
+response preview: var apidata=
+
+--- type=srfx (len=12) ---
+response preview: var apidata=
+
+--- type=hytz (len=12) ---
+response preview: var apidata=
+
+--- type=ccbd (len=47) ---
+response preview: var apidata={ content:"",arryear:[],curyear:0};
+  content preview: 
+
+--- type=jzbd (len=12) ---
+response preview: var apidata=
+
+--- type=yzlsy (len=12) ---
+response preview: var apidata=
+
+--- type=fqzj (len=12) ---
+response preview: var apidata=

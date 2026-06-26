@@ -1,0 +1,231 @@
+================================================================================
+DEEP TEST A: AMAC manager functions (中基协备案)
+================================================================================
+
+--- amac_manager_info() ---
+signature: () -> pandas.core.frame.DataFrame
+shape: (18675, 7)
+columns: ['私募基金管理人名称', '法定代表人/执行事务合伙人(委派代表)姓名', '机构类型', '注册地', '登记编号', '成立时间', '登记时间']
+        私募基金管理人名称 法定代表人/执行事务合伙人(委派代表)姓名         机构类型  注册地      登记编号        成立时间        登记时间
+0  上海重阳投资管理股份有限公司                    王庆  私募证券投资基金管理人  上海市  P1000265  2009-06-26  2014-03-17
+1    上海景林资产管理有限公司                   高云程  私募证券投资基金管理人  上海市  P1000267  2012-06-06  2014-03-17
+2  富舜资产管理（上海）有限公司                    周楠  私募证券投资基金管理人  上海市  P1000268  2012-02-10  2014-03-17
+date-related columns: ['登记编号', '成立时间', '登记时间']
+
+--- amac_manager_cancelled_info() ---
+signature: () -> pandas.core.frame.DataFrame
+ERROR: JSONDecodeError: Expecting value: line 1 column 1 (char 0)
+
+--- amac_manager_classify_info() ---
+signature: () -> pandas.core.frame.DataFrame
+ERROR: JSONDecodeError: Expecting value: line 1 column 1 (char 0)
+
+================================================================================
+DEEP TEST B: fund_individual_basic_info_xq FULL content (000001)
+================================================================================
+shape: (14, 2)
+columns: ['item', 'value']
+      item                                                                                                                                                                                                                                                                                                                                                                                          value
+0     基金代码                                                                                                                                                                                                                                                                                                                                                                                         000001
+1     基金名称                                                                                                                                                                                                                                                                                                                                                                                         华夏成长混合
+2     基金全称                                                                                                                                                                                                                                                                                                                                                                                     华夏成长证券投资基金
+3     成立时间                                                                                                                                                                                                                                                                                                                                                                                     2001-12-18
+4     最新规模                                                                                                                                                                                                                                                                                                                                                                                         26.44亿
+5     基金公司                                                                                                                                                                                                                                                                                                                                                                                     华夏基金管理有限公司
+6     基金经理                                                                                                                                                                                                                                                                                                                                                                                        刘睿聪 郑晓辉
+7     托管银行                                                                                                                                                                                                                                                                                                                                                                                   中国建设银行股份有限公司
+8     基金类型                                                                                                                                                                                                                                                                                                                                                                                         混合型-偏股
+9     评级机构                                                                                                                                                                                                                                                                                                                                                                                           <NA>
+10    基金评级                                                                                                                                                                                                                                                                                                                                                                                           暂无评级
+11    投资策略  在股票投资方面，本基金重点投资于预期利润或收入具有良好增长潜力的成长型上市公司发行的股票，从基本面的分析入手挑选成长股，本基金建立了一套基于成长性的上市公司综合评价指标体系，以上市公司过去两年的历史成长性和未来两年的预期成长性为核心，通过对上市公司所处行业成长性及其在行业中的竞争地位、包括盈利能力和偿债能力在内的财务状况、企业的经营管理能力及研发能力等多方面的因素进行分解评估，综合考察上市公司的成长性以及这种成长性的可靠性和持续性，结合其股价所对应的市盈率水平与其成长性相比是否合理，作出具体的投资决策；在债券投资方面，本基金可投资于国债、金融债和企业债（包括可转换债）。本基金将在对利率走势和债券发行人基本面进行分析的基础上，综合考虑利率变化对不同债券品种的影响、收益率水平、信用风险的大小、流动性的好坏等因素，建立由不同类型、不同期限债券品种构成的组合。
+12    投资目标                                                                                                                                                                                                                                                                                                                               本基金属成长型基金，主要通过投资于具有良好成长性的上市公司的股票，在保持基金资产安全性和流动性的前提下，实现基金的长期资本增值。
+13  业绩比较基准                                                                                                                                                                                                                                                                                                                                                                                   本基金暂不设业绩比较基准
+
+================================================================================
+DEEP TEST C: fund_individual_detail_hold_xq with different dates (000001)
+================================================================================
+
+--- date=20241231 ---
+shape: (4, 2), columns: ['资产类型', '仓位占比']
+  资产类型   仓位占比
+0   股票  64.04
+1   债券  26.85
+2   现金  13.07
+3   其他   0.05
+
+--- date=20240630 ---
+shape: (4, 2), columns: ['资产类型', '仓位占比']
+  资产类型   仓位占比
+0   股票  72.07
+1   债券  20.46
+2   现金   8.06
+3   其他   0.11
+
+--- date=20231231 ---
+shape: (4, 2), columns: ['资产类型', '仓位占比']
+  资产类型   仓位占比
+0   股票  67.37
+1   债券  20.93
+2   现金  10.02
+3   其他   3.98
+
+--- date=20250331 ---
+shape: (4, 2), columns: ['资产类型', '仓位占比']
+  资产类型   仓位占比
+0   股票  74.46
+1   债券  20.32
+2   现金   5.21
+3   其他   0.84
+
+================================================================================
+DEEP TEST D: fund_scale_change_em() - 基金规模变动
+================================================================================
+signature: () -> pandas.core.frame.DataFrame
+shape: (112, 7)
+columns: ['序号', '截止日期', '基金家数', '期间申购', '期间赎回', '期末总份额', '期末净资产']
+   序号        截止日期   基金家数       期间申购       期间赎回      期末总份额      期末净资产
+0   1  2026-03-31  25324  505708.85  501870.12  330670.72  373482.35
+1   2  2025-12-31  24685  489260.33  482493.96  323350.89  376850.21
+2   3  2025-09-30  24013  511777.23  513197.10  314070.01  364586.45
+3   4  2025-06-30  23291  386823.64  374087.11  313759.58  344910.84
+4   5  2025-03-31  22620  381703.26  392391.51  297589.25  320568.84
+
+================================================================================
+DEEP TEST E: Search for all fund-related functions with 'ren'/'li'/'renqi' in name
+================================================================================
+Total fund_ functions: 74
+All fund_ functions:
+  fund_announcement_dividend_em(symbol: str = '000001') -> pandas.core.frame.DataFrame
+  fund_announcement_personnel_em(symbol: str = '000001') -> pandas.core.frame.DataFrame
+  fund_announcement_report_em(symbol: str = '000001') -> pandas.core.frame.DataFrame
+  fund_aum_em() -> pandas.core.frame.DataFrame
+  fund_aum_hist_em(year: str = '2023') -> pandas.core.frame.DataFrame
+  fund_aum_trend_em() -> pandas.core.frame.DataFrame
+  fund_balance_position_lg() -> pandas.core.frame.DataFrame
+  fund_cf_em(year: str = '2025', typ: str = '', rank: str = 'FSRQ', sort: str = 'desc', page: int = -1) -> pandas.core.frame.DataFrame
+  fund_etf_category_sina(symbol: str = 'LOF基金') -> pandas.core.frame.DataFrame
+  fund_etf_category_ths(symbol: str = 'ETF', date: str = '') -> pandas.core.frame.DataFrame
+  fund_etf_dividend_sina(symbol: str = 'sh510050') -> pandas.core.frame.DataFrame
+  fund_etf_fund_daily_em() -> pandas.core.frame.DataFrame
+  fund_etf_fund_info_em(fund: str = '511280', start_date: str = '20000101', end_date: str = '20500101') -> pandas.core.frame.DataFrame
+  fund_etf_hist_em(symbol: str = '159707', period: str = 'daily', start_date: str = '19700101', end_date: str = '20500101', adjust: str = '') -> pandas.core.frame.DataFrame
+  fund_etf_hist_min_em(symbol: str = '159707', start_date: str = '1979-09-01 09:32:00', end_date: str = '2222-01-01 09:32:00', period: str = '5', adjust: str = '') -> pandas.core.frame.DataFrame
+  fund_etf_hist_sina(symbol: str = 'sh510050') -> pandas.core.frame.DataFrame
+  fund_etf_scale_sse(date: str = '20250115') -> pandas.core.frame.DataFrame
+  fund_etf_scale_szse() -> pandas.core.frame.DataFrame
+  fund_etf_spot_em() -> pandas.core.frame.DataFrame
+  fund_etf_spot_ths(date: str = '') -> pandas.core.frame.DataFrame
+  fund_exchange_rank_em() -> pandas.core.frame.DataFrame
+  fund_fee_em(symbol: str = '015641', indicator: str = '认购费率') -> pandas.core.frame.DataFrame
+  fund_fh_em(year: str = '2025', typ: str = '', rank: str = 'BZDM', sort: str = 'asc', page: int = -1) -> pandas.core.frame.DataFrame
+  fund_fh_rank_em() -> pandas.core.frame.DataFrame
+  fund_financial_fund_daily_em() -> pandas.core.frame.DataFrame
+  fund_financial_fund_info_em(symbol: str = '000134') -> pandas.core.frame.DataFrame
+  fund_graded_fund_daily_em() -> pandas.core.frame.DataFrame
+  fund_graded_fund_info_em(symbol: str = '150232') -> pandas.core.frame.DataFrame
+  fund_hk_fund_hist_em(code: str = '1002200683', symbol: str = '历史净值明细') -> pandas.core.frame.DataFrame
+  fund_hk_rank_em() -> pandas.core.frame.DataFrame
+  fund_hold_structure_em() -> pandas.core.frame.DataFrame
+  fund_individual_achievement_xq(symbol: str = '000001', timeout: float = None) -> pandas.core.frame.DataFrame
+  fund_individual_analysis_xq(symbol: str = '000001', timeout: float = None) -> pandas.core.frame.DataFrame
+  fund_individual_basic_info_xq(symbol: str = '000001', timeout: float = None) -> pandas.core.frame.DataFrame
+  fund_individual_detail_hold_xq(symbol: str = '002804', date: str = '20231231', timeout: float = None) -> pandas.core.frame.DataFrame
+  fund_individual_detail_info_xq(symbol: str = '000001', timeout: float = None) -> pandas.core.frame.DataFrame
+  fund_individual_profit_probability_xq(symbol: str = '000001', timeout: float = None) -> pandas.core.frame.DataFrame
+  fund_info_index_em(symbol: str = '沪深指数', indicator: str = '被动指数型') -> pandas.core.frame.DataFrame
+  fund_info_ths(symbol: str = '161130') -> pandas.core.frame.DataFrame
+  fund_lcx_rank_em() -> pandas.core.frame.DataFrame
+  fund_linghuo_position_lg() -> pandas.core.frame.DataFrame
+  fund_lof_hist_em(symbol: str = '166009', period: str = 'daily', start_date: str = '19700101', end_date: str = '20500101', adjust: str = '') -> pandas.core.frame.DataFrame
+  fund_lof_hist_min_em(symbol: str = '166009', start_date: str = '1979-09-01 09:32:00', end_date: str = '2222-01-01 09:32:00', period: str = '5', adjust: str = '') -> pandas.core.frame.DataFrame
+  fund_lof_spot_em() -> pandas.core.frame.DataFrame
+  fund_manager_em() -> pandas.core.frame.DataFrame
+  fund_money_fund_daily_em() -> pandas.core.frame.DataFrame
+  fund_money_fund_info_em(symbol: str = '000009') -> pandas.core.frame.DataFrame
+  fund_money_rank_em() -> pandas.core.frame.DataFrame
+  fund_name_em() -> pandas.core.frame.DataFrame
+  fund_new_found_em() -> pandas.core.frame.DataFrame
+  fund_new_found_ths(symbol: str = '全部') -> pandas.core.frame.DataFrame
+  fund_open_fund_daily_em() -> pandas.core.frame.DataFrame
+  fund_open_fund_info_em(symbol: str = '710001', indicator: str = '单位净值走势', period: str = '成立来') -> pandas.core.frame.DataFrame
+  fund_open_fund_rank_em(symbol: str = '全部') -> pandas.core.frame.DataFrame
+  fund_overview_em(symbol: str = '015641') -> pandas.core.frame.DataFrame
+  fund_portfolio_bond_hold_em(symbol: str = '000001', date: str = '2023') -> pandas.core.frame.DataFrame
+  fund_portfolio_change_em(symbol: str = '003567', indicator: str = '累计买入', date: str = '2023') -> pandas.core.frame.DataFrame
+  fund_portfolio_hold_em(symbol: str = '000001', date: str = '2024') -> pandas.core.frame.DataFrame
+  fund_portfolio_industry_allocation_em(symbol: str = '000001', date: str = '2023') -> pandas.core.frame.DataFrame
+  fund_purchase_em() -> pandas.core.frame.DataFrame
+  fund_rating_all() -> pandas.core.frame.DataFrame
+  fund_rating_ja(date: str = '20230331') -> pandas.core.frame.DataFrame
+  fund_rating_sh(date: str = '20230630') -> pandas.core.frame.DataFrame
+  fund_rating_zs(date: str = '20230331') -> pandas.core.frame.DataFrame
+  fund_report_asset_allocation_cninfo() -> pandas.core.frame.DataFrame
+  fund_report_industry_allocation_cninfo(date: str = '20210630') -> pandas.core.frame.DataFrame
+  fund_report_stock_cninfo(date: str = '20210630') -> pandas.core.frame.DataFrame
+  fund_scale_change_em() -> pandas.core.frame.DataFrame
+  fund_scale_close_sina() -> pandas.core.frame.DataFrame
+  fund_scale_daily_szse(start_date: str = '20260401', end_date: str = '20260401', symbol: str = 'ETF') -> pandas.core.frame.DataFrame
+  fund_scale_open_sina(symbol: str = '股票型基金') -> pandas.core.frame.DataFrame
+  fund_scale_structured_sina() -> pandas.core.frame.DataFrame
+  fund_stock_position_lg() -> pandas.core.frame.DataFrame
+  fund_value_estimation_em(symbol: str = '全部') -> pandas.core.frame.DataFrame
+
+================================================================================
+DEEP TEST F: fund_portfolio_hold_em for holder info? No, that's stock holdings.
+Check fund_open_fund_info_em with different indicators
+================================================================================
+signature: (symbol: str = '710001', indicator: str = '单位净值走势', period: str = '成立来') -> pandas.core.frame.DataFrame
+
+--- indicator='单位净值走势' ---
+shape: (5948, 3), columns: ['净值日期', '单位净值', '日增长率']
+         净值日期  单位净值  日增长率
+0  2001-12-18   1.0   0.0
+1  2001-12-21   1.0   0.0
+2  2001-12-28   1.0   0.0
+
+--- indicator='累计净值走势' ---
+shape: (5948, 2), columns: ['净值日期', '累计净值']
+         净值日期  累计净值
+0  2001-12-18   1.0
+1  2001-12-21   1.0
+2  2001-12-28   1.0
+
+--- indicator='累计收益率走势' ---
+shape: (207, 2), columns: ['日期', '累计收益率']
+           日期  累计收益率
+0  2001-12-18    0.0
+1  2002-03-15    2.5
+2  2002-04-24    3.1
+
+================================================================================
+DEEP TEST G: Check akshare source for fund_individual_hold_info reference
+================================================================================
+AKShare fund dir: C:\Users\Jzr\AppData\Roaming\Python\Python314\site-packages\akshare\fund
+Fund module files: ['__init__.py', 'fund_amac.py', 'fund_announcement_em.py', 'fund_aum_em.py', 'fund_em.py', 'fund_etf_em.py', 'fund_etf_sina.py', 'fund_etf_sse.py', 'fund_etf_szse.py', 'fund_etf_ths.py', 'fund_fee_em.py', 'fund_fhsp_em.py', 'fund_info_ths.py', 'fund_init_em.py', 'fund_init_ths.py', 'fund_lof_em.py', 'fund_manager.py', 'fund_overview_em.py', 'fund_portfolio_em.py', 'fund_position_lg.py', 'fund_rank_em.py', 'fund_rating.py', 'fund_report_cninfo.py', 'fund_scale_em.py', 'fund_scale_sina.py', 'fund_scale_szse.py', 'fund_xq.py']
+
+--- fund_scale_em.py contains holder/持有人 references ---
+  L71: def fund_hold_structure_em() -> pd.DataFrame:
+  L73: 天天基金网-基金数据-规模份额-持有人结构
+  L75: :return: 持有人结构
+
+================================================================================
+DEEP TEST H: fund_name_em columns (fund list)
+================================================================================
+shape: (27065, 5)
+columns: ['基金代码', '拼音缩写', '基金简称', '基金类型', '拼音全称']
+     基金代码      拼音缩写        基金简称      基金类型                          拼音全称
+0  000001    HXCZHH      华夏成长混合    混合型-灵活         HUAXIACHENGZHANGHUNHE
+1  000002    HXCZHH  华夏成长混合(后端)    混合型-灵活         HUAXIACHENGZHANGHUNHE
+2  000003  ZHKZZZQA    中海可转债债券A  债券型-混合二级  ZHONGHAIKEZHUANZHAIZHAIQUANA
+
+================================================================================
+DEEP TEST I: Look for fund manager history per fund via eastmoney direct API approach
+Check akshare fund_manager module source for tenure info
+================================================================================
+fund_manager module path: C:\Users\Jzr\AppData\Roaming\Python\Python314\site-packages\akshare\fund\fund_manager.py
+
+fund_manager.py URLs:
+  L6: https://fund.eastmoney.com/manager/default.html
+  L16: def fund_manager_em() -> pd.DataFrame:
+  L19: https://fund.eastmoney.com/manager/default.html
+  L24: url = "https://fund.eastmoney.com/Data/FundDataPortfolio_Interface.aspx"

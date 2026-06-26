@@ -1,0 +1,146 @@
+================================================================================
+TEST AA: Search cyrjg page for JS data sources / API endpoints
+================================================================================
+Page length: 37020
+Found API URLs in JS:
+  https://fundsuggest.eastmoney.com/FundSearch/api/FundSearchAPI.ashx?callback=?&m=10&t=700&IsNeedBaseInfo=0&IsNeedZTInfo=0&key=
+
+FundData/API patterns:
+
+JS files referenced:
+  //fund.eastmoney.com/js/fundcode_search.js
+  //j5.dfcfw.com/js/pinzhong/getcookies_20140928104112.js
+  //j5.dfcfw.com/sc/js/default/jump_tracker_config.min.js
+  https://bdstatics.eastmoney.com/web/prd/jump_tracker.js
+  //j5.dfcfw.com/sc/js/default/replacegb_min_20200410.js
+  //j5.dfcfw.com/j1/js/embasef10.js?v=20111103.js
+  //j5.dfcfw.com/j1/js/hq-fund.js?v=20120615.js
+  //fund.eastmoney.com/js/rightAd.js
+  //j5.dfcfw.com/js/data/jquery_183min_20140312171610.js
+  //fund.eastmoney.com/webcommon/js/FundCommonPage.min.js
+  //j5.dfcfw.com/sc/js/web/f10_min_20250219.js
+  //j5.dfcfw.com/js/f10/fundminisearchcom_min_20181207111845.js
+  //f1.dfcfw.com/??js/searchbox.js
+  //j5.dfcfw.com/libs/js/counter.js
+
+Searching for '持有人' context:
+  ...OCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd"> <html xmlns="http://www.w3.org/1999/xhtml"> <head> <title>华夏成长混合(000001)基金持有人结构 _ 基金档案 _ 天天基金网</title> <meta name="keywords" content="华夏成长混合,000001,基金,基金档案,F10,持有人结构,天天基金网,fund,1234567" /> <meta name="description" content="东方财富网(www.eastmoney.com)旗下基金平台——天天基金网(fund.eastmoney.com)提供华夏成长混合(000001)最新的基金档案信息，华夏成长混合(000001)基金的持有人结构信息。" /> <meta http-equiv="Content-Type" content="text...
+
+  ...D/xhtml1-transitional.dtd"> <html xmlns="http://www.w3.org/1999/xhtml"> <head> <title>华夏成长混合(000001)基金持有人结构 _ 基金档案 _ 天天基金网</title> <meta name="keywords" content="华夏成长混合,000001,基金,基金档案,F10,持有人结构,天天基金网,fund,1234567" /> <meta name="description" content="东方财富网(www.eastmoney.com)旗下基金平台——天天基金网(fund.eastmoney.com)提供华夏成长混合(000001)最新的基金档案信息，华夏成长混合(000001)基金的持有人结构信息。" /> <meta http-equiv="Content-Type" content="text/html; charset=utf-8" /> <meta http-equiv="Content-Language" content="zh-CN" /> <meta http-...
+
+  ...tent="华夏成长混合,000001,基金,基金档案,F10,持有人结构,天天基金网,fund,1234567" /> <meta name="description" content="东方财富网(www.eastmoney.com)旗下基金平台——天天基金网(fund.eastmoney.com)提供华夏成长混合(000001)最新的基金档案信息，华夏成长混合(000001)基金的持有人结构信息。" /> <meta http-equiv="Content-Type" content="text/html; charset=utf-8" /> <meta http-equiv="Content-Language" content="zh-CN" /> <meta http-equiv="X-UA-Compatible" content="IE=edge" /> <meta http-equiv="Cache-Control" content="no-cache" /> <link href="//j5.dfcfw.com/sc/css/f10/common_min1_202107...
+
+  ...ch"></b></dt> <dd id="f10_menu_gmbd"><a href="gmbd_000001.html" target="_self">规模变动</a></dd> <dd id="f10_menu_cyrjg" class="nb at"><a href="cyrjg_000001.html" target="_self">持有人结构</a></dd> </dl> <dl> <dt><span>基金公告</span><b class="ico pinch"></b></dt> <dd id="f10_menu_jjgg"><a href="jjgg_000001.html" target="_self">全部公告</a></dd> <dd id="f10_menu_fxyz"><a href="jjgg_000001_1.html" target="_self">发行运作</a></dd> <dd id="f10_menu_fhgg"><a href="jjgg_000001_2.html" target="_self">分红公告</a></dd> <dd id=...
+
+  ...<div class="tit_h3"> <div class="space0"></div> <h1 class="left"> <a class="tit" href="cyrjg_000001.html">持有人结构</a><b class="ico arrow"></b> </h1> <div class="right clearfix" style="margin-top: 13px; padding-right: 10px;"> <div style="float:left; line-height: 30px;"><label>其他基金持有人结构查询：</label></div> <div class="searchbox" style="position: relative; float: left;"> <input type="text" id="search-input1" />...
+
+  ...<div class="right clearfix" style="margin-top: 13px; padding-right: 10px;"> <div style="float:left; line-height: 30px;"><label>其他基金持有人结构查询：</label></div> <div class="searchbox" style="position: relative; float: left;"> <input type="text" id="search-input1" /> </div> </div> </div> <div class="txt_cont"> <div class="txt_in"> <div class="box bx"> <div class="boxitem">...
+
+  ...<div class="space0"></div> <div class="listcomm cyrjg_list"> <img id="cyrjgpng" alt="华夏成长混合(000001)持有人结构" /> <div class="about-cyrjg"> <p>机构持有者：指企业法人、事业法人、社会团体或其他组织中持有该基金份额的组织。</p> <p>个人持有者：指可投资于证券投资基金的自然人中持有该基金份额的人员。</p> <p>内部持有者： 指基金管理公司内部的从业人员中持有该基金的人员（备注：此处还包含ETF联接基金所持有的份额）</p> </div> </div>...
+
+  ...<div class="box nb"> <div class="boxitem w790"> <h4 class="t"> <label class="left">持有人变动详情</label> <label class="right sourceTTJJ">来源：天天基金</label> </h4> <div class="space0"></div> <div id="cyrjgtable"> <div class="loading"> <img class="img" src="//j5.dfcfw.com/j1/images/loading2.gif" title="数据加载中" />数据加载中......
+
+
+================================================================================
+TEST BB: Try known Eastmoney F10 API patterns for holder structure
+================================================================================
+
+--- GET http://api.fund.eastmoney.com/f10/lsjz params={'fundCode': '000001', 'pageIndex': 1, 'pageSize': 20} ---
+Status: 200, Content-Type: application/json; charset=utf-8
+Response (first 1000): {"Data":{"LSJZList":[{"FSRQ":"2026-06-24","DWJZ":"1.5000","LJJZ":"4.0730","SDATE":null,"ACTUALSYI":"","NAVTYPE":"1","JZZZL":"3.45","SGZT":"开放申购","SHZT":"开放赎回","FHFCZ":"","FHFCBZ":"","DTYPE":null,"FHSP":""},{"FSRQ":"2026-06-23","DWJZ":"1.4500","LJJZ":"4.0230","SDATE":null,"ACTUALSYI":"","NAVTYPE":"1","JZZZL":"-1.29","SGZT":"开放申购","SHZT":"开放赎回","FHFCZ":"","FHFCBZ":"","DTYPE":null,"FHSP":""},{"FSRQ":"2026-06-22","DWJZ":"1.4690","LJJZ":"4.0420","SDATE":null,"ACTUALSYI":"","NAVTYPE":"1","JZZZL":"1.52","SGZT":"开放申购","SHZT":"开放赎回","FHFCZ":"","FHFCBZ":"","DTYPE":null,"FHSP":""},{"FSRQ":"2026-06-18","DWJZ":"1.4470","LJJZ":"4.0200","SDATE":null,"ACTUALSYI":"","NAVTYPE":"1","JZZZL":"2.84","SGZT":"开放申购","SHZT":"开放赎回","FHFCZ":"","FHFCBZ":"","DTYPE":null,"FHSP":""},{"FSRQ":"2026-06-17","DWJZ":"1.4070","LJJZ":"3.9800","SDATE":null,"ACTUALSYI":"","NAVTYPE":"1","JZZZL":"3.61","SGZT":"开放申购","SHZT":"开放赎回","FHFCZ":"","FHFCBZ":"","DTYPE":null,"FHSP":""},{"FSRQ":"2026-06-16","DWJZ":"1.3580","LJJZ":"3.9310",
+
+--- GET https://fundf10.eastmoney.com/F10DataApi.aspx params={'type': 'cyrjg', 'code': '000001'} ---
+Status: 200, Content-Type: text/html; charset=utf-8
+Response (first 1000): var apidata=
+
+--- GET http://api.fund.eastmoney.com/f10/Cyrjg params={'fundCode': '000001'} ---
+Status: 200, Content-Type: application/json; charset=utf-8
+Response (first 1000): {"Data":null,"ErrCode":4,"ErrMsg":"404","TotalCount":0,"Expansion":null,"PageSize":0,"PageIndex":0}
+
+--- GET http://api.fund.eastmoney.com/f10/FundHolder params={'fundCode': '000001'} ---
+Status: 200, Content-Type: application/json; charset=utf-8
+Response (first 1000): {"Data":null,"ErrCode":4,"ErrMsg":"404","TotalCount":0,"Expansion":null,"PageSize":0,"PageIndex":0}
+
+--- GET https://fund.eastmoney.com/Data/FundDataPortfolio_Interface.aspx params={'dt': '0', 'mc': 'returnjson', 'ft': '0', 'pn': '50', 'pi': '1', 'sc': 'abbname', 'st': 'asc'} ---
+Status: 200, Content-Type: text/html; charset=utf-8
+Response (first 1000): var returnjson={data:[],record:"",pages:"",curpage:""}
+
+================================================================================
+TEST CC: Read fund_scale_em.py source (holder structure function source)
+================================================================================
+File: C:\Users\Jzr\AppData\Roaming\Python\Python314\site-packages\akshare\fund\fund_scale_em.py, lines: 127
+
+All 'def ' lines:
+  L15: def fund_scale_change_em() -> pd.DataFrame:
+  L71: def fund_hold_structure_em() -> pd.DataFrame:
+
+Content of fund_hold_structure_em function:
+L71: def fund_hold_structure_em() -> pd.DataFrame:
+L72:     """
+L73:     天天基金网-基金数据-规模份额-持有人结构
+L74:     https://fund.eastmoney.com/data/cyrjglist.html
+L75:     :return: 持有人结构
+L76:     :rtype: pandas.DataFrame
+L77:     """
+L78:     url = "https://fund.eastmoney.com/data/FundDataPortfolio_Interface.aspx"
+L79:     params = {
+L80:         "dt": "11",
+L81:         "pi": "1",
+L82:         "pn": "50",
+L83:         "mc": "hypzDetail",
+L84:         "st": "desc",
+L85:         "sc": "reportdate",
+L86:     }
+L87:     r = requests.get(url, params=params)
+L88:     data_text = r.text
+L89:     data_json = demjson.decode(data_text[data_text.find("{") : -1])
+L90:     total_page = data_json["pages"]
+L91:     big_df = pd.DataFrame()
+L92:     for page in range(1, int(total_page) + 1):
+L93:         params.update({"pi": page})
+L94:         r = requests.get(url, params=params)
+L95:         data_text = r.text
+L96:         data_json = demjson.decode(data_text[data_text.find("{") : -1])
+L97:         temp_df = pd.DataFrame(data_json["data"])
+L98:         big_df = pd.concat(objs=[big_df, temp_df], ignore_index=True)
+L99:     big_df.reset_index(inplace=True)
+L100:     big_df["index"] = big_df["index"] + 1
+L101:     big_df.columns = [
+L102:         "序号",
+L103:         "截止日期",
+L104:         "基金家数",
+L105:         "机构持有比列",
+L106:         "个人持有比列",
+L107:         "内部持有比列",
+L108:         "总份额",
+L109:     ]
+L110:     big_df["截止日期"] = pd.to_datetime(big_df["截止日期"], errors="coerce").dt.date
+L111:     big_df["基金家数"] = pd.to_numeric(big_df["基金家数"], errors="coerce")
+L112:     big_df["机构持有比列"] = pd.to_numeric(big_df["机构持有比列"], errors="coerce")
+L113:     big_df["个人持有比列"] = pd.to_numeric(big_df["个人持有比列"], errors="coerce")
+L114:     big_df["内部持有比列"] = pd.to_numeric(big_df["内部持有比列"], errors="coerce")
+L115:     big_df["总份额"] = pd.to_numeric(
+L116:         big_df["总份额"].str.replace(",", ""), errors="coerce"
+L117:     )
+L118:     return big_df
+L119:
+
+================================================================================
+TEST DD: Try Eastmoney F10 DataApi.aspx for holder structure (cyrjg)
+Try various 'type' / 'dt' / 'cid' values
+================================================================================
+
+dt=15: 
+resp[:300]: (["安安,AA,30532593","艾邦妮,ABN,30777698","艾翀,AC,30558595","艾定飞,ADF,30634044","敖明皓,AMH,30864465","艾雪晗,AXH,30767673","艾小军,AXJ,30277862","安昀,AY,30074174","彬彬,BB,30648059","包兵华,BBH,30659779"])
+
+dt=16: 
+resp[:300]: var returnValue="A,B,C,D,E,F,G,H,I,J,K,L,M,N,O,P,Q,R,S,T,W,X,Y,Z_安联基金,安信基金,百嘉基金,宝盈基金,北京京管泰富基金,贝莱德基金管理,博道基金,博时基金,博远基金,渤海汇金,财通基金,财通资管,财信基金,创金合信基金,淳厚基金,达诚基金,大成基金,德邦基金,东财基金,东方阿尔法基金,东方红资产管理,东方基金,东海基金,东吴基金,东兴基金,方正富邦基金,蜂巢基金,富安达基金,富达基金(中国),富国基金,富荣基金,格林基金,工银瑞信基金,光大保德信基金,广发基金,国都证券,国海富兰克林基金,国金基金,国联安基金,国联基金,国联证
+
+dt=17: 
+resp[:300]: var returnjson = {graph: [],dataProvider: []};
+
+dt=18: 
+resp[:300]: var returnjson = {graph: [],dataProvider: []};
+
+dt=0: 
+resp[:300]: var returnjson={data:[],record:"",pages:"",curpage:""}
