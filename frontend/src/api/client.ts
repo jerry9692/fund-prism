@@ -481,6 +481,11 @@ export const api = {
       body: JSON.stringify(body),
     }),
 
+  searchFunds: (q: string, limit?: number) =>
+    request<{ funds: Array<{ fund_code: string; short_name: string; full_name: string; fund_type: string }>; count: number }>(
+      `/api/v1/funds/search?q=${encodeURIComponent(q)}&limit=${limit ?? 10}`
+    ),
+
   listExperiments: () =>
     request<ExperimentListData>("/api/v2/experiments"),
 

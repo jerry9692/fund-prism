@@ -12,7 +12,7 @@ from uuid import uuid4
 
 import pandas as pd
 from fastapi import APIRouter, Depends, Query
-from sqlalchemy import select, text
+from sqlalchemy import or_, select, text
 from sqlalchemy.orm import Session
 
 from fund_research import __version__
@@ -1165,6 +1165,98 @@ def screen_funds(
         conclusion_status=ConclusionStatus.COMPUTED if total > 0 else ConclusionStatus.OBSERVATION,
     )
     return _log_tool_api_call(db, "screen_funds", body, response, started_at)
+
+
+# ============================================================
+# 3.6 search_funds — 基金搜索（搜索框自动补全）
+# ============================================================
+
+
+@router.get("/funds/search")
+def search_funds(
+    db: SessionDep,
+    q: str = Query(..., min_length=1, max_length=50, description="搜索关键词（基金代码或名称）"),
+    limit: int = Query(10, ge=1, le=50),
+) -> APIResponse[dict]:
+    """按基金代码或名称模糊搜索，返回匹配列表（用于搜索框自动补全）。"""
+    started_at = perf_counter()
+    try:
+        pattern = f"%{q}%"
+        stmt = (
+            select(FundMain)
+            .where(
+                or_(
+                    FundMain.fund_code.ilike(pattern),
+                    FundMain.short_name.ilike(pattern),
+                    FundMain.full_name.ilike(pattern),
+                )
+            )
+            .limit(limit)
+        )
+        rows = db.scalars(stmt).all()
+        results = [
+            {
+                "fund_code": r.fund_code,
+                "short_name": r.short_name,
+                "full_name": r.full_name,
+                "fund_type": r.category,
+            }
+            for r in rows
+        ]
+        response = APIResponse(
+            data={"funds": results, "count": len(results)},
+            metadata={
+                "tool": "fund_search",
+                "q": q,
+                "limit": limit,
+                "platform_version": __version__,
+                "implemented": True,
+            },
+            evidence=[
+                EvidenceRecord(
+                    evidence_id=f"fund_search:{q}",
+                    entity_id="fund:search",
+                    evidence_type=EvidenceType.RAW_DATA,
+                    source="fund_main",
+                    source_level=DataSourceLevel.LOCAL,
+                    data_summary=(
+                        f"按关键词 '{q}' 模糊搜索基金主表，匹配 {len(results)} 条"
+                    ),
+                    confidence=ConfidenceLevel.MEDIUM,
+                    conclusion_status=ConclusionStatus.FACT,
+                )
+            ],
+            warnings=[],
+            conclusion_status=(
+                ConclusionStatus.FACT if results else ConclusionStatus.OBSERVATION
+            ),
+        )
+        return _log_tool_api_call(
+            db,
+            "fund_search",
+            {"q": q, "limit": limit},
+            response,
+            started_at,
+        )
+    except Exception as exc:
+        response = APIResponse(
+            data=None,
+            metadata={
+                "tool": "fund_search",
+                "q": q,
+                "platform_version": __version__,
+            },
+            evidence=[],
+            warnings=[f"搜索失败: {exc}"],
+            conclusion_status=ConclusionStatus.NEEDS_REVIEW,
+        )
+        return _log_tool_api_call(
+            db,
+            "fund_search",
+            {"q": q},
+            response,
+            started_at,
+        )
 
 
 # ============================================================

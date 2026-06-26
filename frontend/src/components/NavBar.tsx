@@ -1,4 +1,5 @@
 import { Link, useLocation } from "react-router-dom";
+import FundSearch from "./FundSearch";
 
 const links = [
   { to: "/", label: "首页" },
@@ -28,6 +29,7 @@ export default function NavBar() {
       >
         Fund Prism
       </Link>
+      <FundSearch />
       {links.map((l) => (
         <Link
           key={l.to}
