@@ -1275,12 +1275,12 @@ def _run_dynamic_attribution_batch(
             median_weight_coverage = return_stats.get("median_stock_weight_coverage", 0.0)
             usable_period_count = return_stats.get("usable_period_count", 0)
             total_period_count = return_stats.get("total_period_count", 0)
-            MIN_USABLE_PERIODS = 1
-            if usable_period_count < MIN_USABLE_PERIODS:
+            min_usable_periods = 1
+            if usable_period_count < min_usable_periods:
                 error = f"可用归因周期不足: {usable_period_count}/{total_period_count}"
                 warnings = [
                     *return_warnings,
-                    f"要求至少 {MIN_USABLE_PERIODS} 个有效周期",
+                    f"要求至少 {min_usable_periods} 个有效周期",
                 ]
                 _record_failure(db, exp.id, fund_code, error, warnings=warnings)
                 results.append(_failure_result(fund_code, error, warnings))

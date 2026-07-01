@@ -1702,6 +1702,18 @@ def _simulated_holding_to_dict(row: DbSimulatedHoldingResult) -> dict:
     }
 
 
+class SimulatedHoldingRequest(BaseModel):
+    """Request body for POST /analysis/simulated-holding (§5.1.4)."""
+
+    fund_code: str = Field(..., min_length=1, max_length=20)
+    start_date: date | None = None
+    end_date: date | None = None
+    candidate_pool: str = "auto"
+    max_positions: int = Field(default=30, ge=1, le=100)
+    sparse_lambda: float = Field(default=0.1, ge=0.0)
+    turnover_lambda: float = Field(default=0.5, ge=0.0)
+
+
 @v2_router.get("/analysis/simulated-holding")
 def list_simulated_holding(
     db: SessionDep,
@@ -1749,6 +1761,174 @@ def list_simulated_holding(
                 data=None,
                 metadata={"tool": "simulated_holding"},
                 warnings=[f"查询模拟持仓失败: {exc}"],
+                conclusion_status=ConclusionStatus.NEEDS_REVIEW,
+            ),
+            started,
+        )
+
+
+@v2_router.post("/analysis/simulated-holding")
+def run_simulated_holding(
+    db: SessionDep,
+    body: SimulatedHoldingRequest,
+) -> APIResponse[dict]:
+    """Run simulated holding analysis for a single fund (§5.1.4).
+
+    Creates an experiment, dispatches the run, and returns the latest
+    persisted result.  Results are always ``conclusion_status=estimated``.
+    """
+    started = perf_counter()
+    params = body.model_dump(mode="json")
+    try:
+        exp = create_experiment(
+            db,
+            experiment_name=f"Simulated holding {body.fund_code}",
+            algorithm_name="simulated_holding",
+            algorithm_version="0.1.0",
+            parameters={
+                "candidate_pool": body.candidate_pool,
+                "max_positions": body.max_positions,
+                "sparse_lambda": body.sparse_lambda,
+                "turnover_lambda": body.turnover_lambda,
+                "start_date": str(body.start_date) if body.start_date else None,
+                "end_date": str(body.end_date) if body.end_date else None,
+            },
+            sample_fund_codes=[body.fund_code],
+            backtest_start=body.start_date,
+            backtest_end=body.end_date,
+        )
+        update_experiment_status(db, exp.id, "running")
+        results = dispatch_run(db, exp)
+
+        success = results[0]["is_success"] if results else False
+        final_status = "completed" if success else "failed"
+        update_experiment_status(db, exp.id, final_status)
+
+        row = db.scalar(
+            select(DbSimulatedHoldingResult)
+            .where(DbSimulatedHoldingResult.fund_code == body.fund_code)
+            .order_by(DbSimulatedHoldingResult.calc_date.desc())
+            .limit(1)
+        )
+
+        return _log(
+            db,
+            "simulated_holding",
+            params,
+            APIResponse(
+                data={
+                    "experiment_id": str(exp.id),
+                    "status": final_status,
+                    "result": _simulated_holding_to_dict(row) if row else None,
+                },
+                metadata={"tool": "simulated_holding", "platform_version": __version__},
+                warnings=[] if success else ["模拟持仓计算失败"],
+                conclusion_status=ConclusionStatus.ESTIMATED if success else ConclusionStatus.NEEDS_REVIEW,
+            ),
+            started,
+        )
+    except Exception as exc:
+        db.rollback()
+        return _log(
+            db,
+            "simulated_holding",
+            params,
+            APIResponse(
+                data=None,
+                metadata={"tool": "simulated_holding"},
+                warnings=[str(exc)],
+                conclusion_status=ConclusionStatus.NEEDS_REVIEW,
+            ),
+            started,
+        )
+
+
+# ============================================================
+# Dynamic Attribution — independent endpoint (§5.2.4)
+# ============================================================
+
+
+class ReturnAttributionRequest(BaseModel):
+    """Request body for POST /analysis/return-attribution (§5.2.4)."""
+
+    fund_code: str = Field(..., min_length=1, max_length=20)
+    report_date: date | None = None
+    benchmark_symbol: str | None = None
+    holdings_source: str = Field(default="disclosed", description="disclosed | estimated")
+    min_return_observations: int = Field(default=3, ge=1)
+    max_snapshot_age_days: int = Field(default=180, ge=1)
+
+
+@v2_router.post("/analysis/return-attribution")
+def run_return_attribution(
+    db: SessionDep,
+    body: ReturnAttributionRequest,
+) -> APIResponse[dict]:
+    """Run dynamic return attribution for a single fund (§5.2.4).
+
+    Creates an experiment, dispatches the dynamic attribution runner,
+    and returns the persisted result.  Results are always
+    ``conclusion_status=estimated``.
+    """
+    started = perf_counter()
+    params = body.model_dump(mode="json")
+    try:
+        experiment_params: dict[str, Any] = {
+            "holdings_source": body.holdings_source,
+            "min_return_observations": body.min_return_observations,
+            "max_benchmark_weight_snapshot_age_days": body.max_snapshot_age_days,
+        }
+        if body.report_date:
+            experiment_params["report_dates"] = [str(body.report_date)]
+        if body.benchmark_symbol:
+            experiment_params["benchmark_symbol"] = body.benchmark_symbol
+
+        exp = create_experiment(
+            db,
+            experiment_name=f"Dynamic attribution {body.fund_code}",
+            algorithm_name="dynamic_attribution",
+            algorithm_version="0.1.0",
+            parameters=experiment_params,
+            sample_fund_codes=[body.fund_code],
+        )
+        update_experiment_status(db, exp.id, "running")
+        results = dispatch_run(db, exp)
+
+        success = results[0]["is_success"] if results else False
+        final_status = "completed" if success else "failed"
+        update_experiment_status(db, exp.id, final_status)
+
+        result_data = results[0] if results else None
+        warnings: list[str] = []
+        if not success:
+            warnings.append(result_data.get("error_message", "动态归因计算失败") if result_data else "动态归因计算失败")
+
+        return _log(
+            db,
+            "return_attribution",
+            params,
+            APIResponse(
+                data={
+                    "experiment_id": str(exp.id),
+                    "status": final_status,
+                    "result": result_data,
+                },
+                metadata={"tool": "return_attribution", "platform_version": __version__},
+                warnings=warnings,
+                conclusion_status=ConclusionStatus.ESTIMATED if success else ConclusionStatus.NEEDS_REVIEW,
+            ),
+            started,
+        )
+    except Exception as exc:
+        db.rollback()
+        return _log(
+            db,
+            "return_attribution",
+            params,
+            APIResponse(
+                data=None,
+                metadata={"tool": "return_attribution"},
+                warnings=[str(exc)],
                 conclusion_status=ConclusionStatus.NEEDS_REVIEW,
             ),
             started,
@@ -1840,4 +2020,109 @@ def get_fund_review_status(
     - ``is_approved``: any ``approve`` annotation exists
     - ``effective_status``: ``excluded`` > ``locked`` > ``approved`` > ``open``
     """
+    return _get_fund_review_status(db, fund_code)
+
+
+# ============================================================
+# Review API — specialized endpoints (§5.5.3)
+# These are convenience wrappers over the generic annotation CRUD.
+# ============================================================
+
+
+class LockSecuritiesRequest(BaseModel):
+    """§5.5.3 — Lock or exclude securities in simulated holding pool."""
+
+    fund_code: str = Field(..., min_length=1, max_length=20)
+    action: str = Field(..., description="lock (必选) | exclude (排除)")
+    security_codes: list[str] = Field(default_factory=list)
+    reason: str = Field(..., min_length=1, max_length=2000)
+
+
+class AdjustBenchmarkRequest(BaseModel):
+    """§5.5.3 — Manually adjust benchmark for attribution."""
+
+    fund_code: str = Field(..., min_length=1, max_length=20)
+    benchmark_symbol: str | None = None
+    custom_weights: dict[str, float] | None = None
+    reason: str = Field(..., min_length=1, max_length=2000)
+
+
+class AnnotateConfidenceRequest(BaseModel):
+    """§5.5.3 — Manually annotate confidence level."""
+
+    fund_code: str = Field(..., min_length=1, max_length=20)
+    action: str = Field(..., description="approve (上调置信度) | flag (下调置信度)")
+    target_module: str | None = Field(None, description="scoring | simulated_holding | dynamic_attribution")
+    reason: str = Field(..., min_length=1, max_length=2000)
+    evidence_id: str | None = Field(None, max_length=64)
+
+
+@v2_router.post("/review/lock-securities")
+def review_lock_securities(
+    db: SessionDep,
+    body: LockSecuritiesRequest,
+) -> APIResponse[dict]:
+    """§5.5.3 — Lock or exclude securities in simulated holding candidate pool."""
+    annotation_type = "lock" if body.action == "lock" else "exclude"
+    return create_annotation(
+        db,
+        CreateReviewerAnnotationRequest(
+            fund_code=body.fund_code,
+            annotation_type=annotation_type,
+            target_module="simulated_holding",
+            detail={"action": body.action, "security_codes": body.security_codes},
+            reason=body.reason,
+        ),
+    )
+
+
+@v2_router.post("/review/adjust-benchmark")
+def review_adjust_benchmark(
+    db: SessionDep,
+    body: AdjustBenchmarkRequest,
+) -> APIResponse[dict]:
+    """§5.5.3 — Manually adjust benchmark for attribution analysis."""
+    detail: dict[str, Any] = {"action": "adjust_benchmark"}
+    if body.benchmark_symbol:
+        detail["benchmark_symbol"] = body.benchmark_symbol
+    if body.custom_weights:
+        detail["custom_weights"] = body.custom_weights
+    return create_annotation(
+        db,
+        CreateReviewerAnnotationRequest(
+            fund_code=body.fund_code,
+            annotation_type="note",
+            target_module="dynamic_attribution",
+            detail=detail,
+            reason=body.reason,
+        ),
+    )
+
+
+@v2_router.post("/review/annotate-confidence")
+def review_annotate_confidence(
+    db: SessionDep,
+    body: AnnotateConfidenceRequest,
+) -> APIResponse[dict]:
+    """§5.5.3 — Manually annotate confidence level for algorithm results."""
+    annotation_type = "approve" if body.action == "approve" else "note"
+    return create_annotation(
+        db,
+        CreateReviewerAnnotationRequest(
+            fund_code=body.fund_code,
+            annotation_type=annotation_type,
+            target_module=body.target_module,
+            detail={"action": body.action},
+            reason=body.reason,
+            evidence_id=body.evidence_id,
+        ),
+    )
+
+
+@v2_router.get("/review/history/{fund_code}")
+def review_history(
+    db: SessionDep,
+    fund_code: str,
+) -> APIResponse[dict]:
+    """§5.5.3 — Get review history for a fund (alias for fund review status)."""
     return _get_fund_review_status(db, fund_code)
