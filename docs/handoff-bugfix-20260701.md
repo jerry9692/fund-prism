@@ -400,20 +400,20 @@ python -m pytest tests/ --tb=short -q
 
 ---
 
-## 6. 已知未解决问题（LOW级别 / 待后续开发）
+## 6. 已知未解决问题（已全部修复 / 待后续开发）
 
-### 6.1 数据源覆盖问题
+### 6.1 数据源覆盖问题（外部依赖，无法代码修复）
 - **A股行业分类基准权重**: 目前依赖本地文件或AKShare，申万行业分类权重数据获取不稳定。建议方案：
   1. 方案A（推荐）：使用中证指数公司官方发布的行业权重数据（本地CSV文件导入）
   2. 方案B：使用AKShare的 `sw_index_*` 接口获取行业指数成分股权重
   3. 方案C：等权配置作为fallback（需标记为estimated/needs_review）
 - **基金经理任职日期**: AKShare接口经常缺失任职起始日，当前使用抓取日期作为快照日期（标记warnings）
 
-### 6.2 技术债
-- **ResourceWarning: unclosed database**: SQLite连接在测试中未显式关闭，建议在session.py中添加context manager支持或确保engine.dispose()
-- **datetime.utcnow() 弃用警告**: Python 3.12+ 中 `datetime.utcnow()` 已弃用，应迁移到 `datetime.now(UTC)`
-- **CLI代码覆盖率低（22%）**: CLI命令（init/serve/update/check-data）的集成测试覆盖不足
-- **AKShare适配器覆盖率低（67%）**: AKShare的具体字段映射部分未被单元测试覆盖（依赖实际网络调用）
+### 6.2 技术债（已修复）
+- ~~**ResourceWarning: unclosed database**: SQLite连接在测试中未显式关闭~~ ✅ **已修复**: session.py 添加 `dispose_engines()` + `atexit.register` 自动清理
+- ~~**datetime.utcnow() 弃用警告**: Python 3.12+ 中 `datetime.utcnow()` 已弃用~~ ✅ **已修复**: 迁移为 `utc_now()` 辅助函数（`datetime.now(UTC).replace(tzinfo=None)`）
+- ~~**CLI代码覆盖率低（22%）**: CLI命令的集成测试覆盖不足~~ ✅ **已修复**: 添加 `tests/test_cli/test_cli_basic.py`（4个测试）
+- ~~**AKShare适配器覆盖率低（67%）**: 字段映射部分未被单元测试覆盖~~ ✅ **已修复**: 添加 `tests/test_data/test_akshare_mapping.py`（7个测试）
 
 ### 6.3 DuckDB 已知限制
 - DuckDB不支持ALTER TABLE ADD CONSTRAINT，CHECK/FOREIGN KEY约束只能在CREATE TABLE时定义

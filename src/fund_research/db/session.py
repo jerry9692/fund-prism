@@ -5,6 +5,7 @@
 通过 pydantic-settings / 环境变量 FUND_DB_PATH 配置路径。
 """
 
+import atexit
 from collections.abc import Generator
 from pathlib import Path
 
@@ -40,19 +41,25 @@ def get_db_url(db_path: str | None = None) -> str:
         return f"duckdb:///{abs_path}"
 
 
+# 跟踪所有创建的引擎，用于在退出时正确释放资源
+_engines: list[Engine] = []
+
+
 def create_engine_from_path(db_path: str | None = None) -> Engine:
     """创建 SQLAlchemy 引擎。"""
     url = get_db_url(db_path)
     if url.startswith("duckdb://"):
         # DuckDB 不需要额外的连接参数
-        return create_engine(url, echo=False)
+        engine = create_engine(url, echo=False)
     else:
         # SQLite
-        return create_engine(
+        engine = create_engine(
             url,
             echo=False,
             connect_args={"check_same_thread": False},
         )
+    _engines.append(engine)
+    return engine
 
 
 def _migration_script_location() -> Path:
@@ -70,6 +77,13 @@ def get_alembic_config(db_path: str | None = None) -> Config:
 def run_migrations(db_path: str | None = None) -> None:
     """Run Alembic migrations to the latest revision."""
     command.upgrade(get_alembic_config(db_path), "head")
+
+
+def dispose_engines() -> None:
+    """释放所有数据库引擎的连接池资源。"""
+    for engine in _engines:
+        engine.dispose()
+    _engines.clear()
 
 
 # 默认引擎和会话工厂
@@ -122,3 +136,7 @@ def reset_db(db_path: str | None = None) -> None:
     """重置数据库：先删除再创建。"""
     drop_db(db_path)
     init_db(db_path)
+
+
+# 注册退出时释放引擎资源
+atexit.register(dispose_engines)

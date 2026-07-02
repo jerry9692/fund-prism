@@ -35,6 +35,7 @@ from fund_research.core.enums import (
     ExperimentStatus,
 )
 from fund_research.db.models import Base, enum_values, id_column
+from fund_research.utils import utc_now
 
 
 class SimulatedHoldingResult(Base):
@@ -76,7 +77,7 @@ class SimulatedHoldingResult(Base):
     backtest_report_date: Mapped[date | None] = mapped_column(Date)
     warnings: Mapped[list[str] | None] = mapped_column(JSON)
     input_coverage: Mapped[float | None] = mapped_column(Float)
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now)
 
     __table_args__ = (
         UniqueConstraint(
@@ -135,7 +136,7 @@ class DynamicAttributionResult(Base):
         server_default=text("'estimated'"),
     )
     warnings: Mapped[list[str] | None] = mapped_column(JSON)
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now)
 
     __table_args__ = (
         UniqueConstraint(
@@ -189,7 +190,7 @@ class ScoringResult(Base):
     )
     is_backtest: Mapped[bool] = mapped_column(Boolean, default=False, server_default=text("false"))
     warnings: Mapped[list[str] | None] = mapped_column(JSON)
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now)
 
     __table_args__ = (
         UniqueConstraint(
@@ -223,7 +224,7 @@ class ScoringBacktest(Base):
     ic_mean: Mapped[float | None] = mapped_column(Float)
     ic_ir: Mapped[float | None] = mapped_column(Float)
     detail: Mapped[dict[str, Any] | None] = mapped_column(JSON)
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now)
 
     __table_args__ = (
         UniqueConstraint(
@@ -260,7 +261,7 @@ class AlgorithmExperiment(Base):
     started_at: Mapped[datetime | None] = mapped_column(DateTime)
     completed_at: Mapped[datetime | None] = mapped_column(DateTime)
     summary: Mapped[str | None] = mapped_column(Text)
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now)
 
 
 class ExperimentResult(Base):
@@ -280,7 +281,7 @@ class ExperimentResult(Base):
     metrics: Mapped[dict[str, Any] | None] = mapped_column(JSON)
     error_message: Mapped[str | None] = mapped_column(Text)
     warnings: Mapped[list[str] | None] = mapped_column(JSON)
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now)
 
     __table_args__ = (
         UniqueConstraint(
@@ -312,7 +313,7 @@ class ReviewerAnnotation(Base):
     detail: Mapped[dict[str, Any]] = mapped_column(JSON)
     reason: Mapped[str] = mapped_column(Text)
     evidence_id: Mapped[str | None] = mapped_column(String(64))
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now)
 
 
 class BenchmarkIndexMember(Base):
@@ -336,7 +337,7 @@ class BenchmarkIndexMember(Base):
         SAEnum(DataSourceLevel, native_enum=False, values_callable=enum_values)
     )
     raw_payload_hash: Mapped[str | None] = mapped_column(String(64))
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now)
 
     __table_args__ = (
         UniqueConstraint(
@@ -371,7 +372,7 @@ class StockIndustryMembership(Base):
     source_level: Mapped[DataSourceLevel] = mapped_column(
         SAEnum(DataSourceLevel, native_enum=False, values_callable=enum_values)
     )
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now)
 
     __table_args__ = (
         UniqueConstraint(
@@ -416,7 +417,7 @@ class BenchmarkIndustryWeight(Base):
     source_industry_snapshot: Mapped[date | None] = mapped_column(Date)
     algorithm_version: Mapped[str] = mapped_column(String(20))
     warnings: Mapped[dict[str, Any] | None] = mapped_column(JSON)
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now)
 
     __table_args__ = (
         UniqueConstraint(

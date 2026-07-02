@@ -37,6 +37,7 @@ from fund_research.core.enums import (
     TaskStatus,
     TaskType,
 )
+from fund_research.utils import utc_now
 
 
 def enum_values(enum_cls: type) -> list[str]:
@@ -100,9 +101,9 @@ class FundMain(Base):
     data_source_level: Mapped[DataSourceLevel | None] = mapped_column(
         SAEnum(DataSourceLevel, native_enum=False, values_callable=enum_values), comment="数据源等级"
     )
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now)
     updated_at: Mapped[datetime] = mapped_column(
-        DateTime, default=datetime.utcnow, onupdate=datetime.utcnow
+        DateTime, default=utc_now, onupdate=utc_now
     )
 
     __table_args__ = (
@@ -128,7 +129,7 @@ class FundCategory(Base):
         String(20), comment="分类版本（口径版本化）"
     )
     effective_date: Mapped[date | None] = mapped_column(Date, comment="生效日期")
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now)
 
     def __repr__(self) -> str:
         return f"<FundCategory({self.fund_code}) {self.category_name}>"
@@ -151,9 +152,9 @@ class FundManager(Base):
     education: Mapped[str | None] = mapped_column(String(100), comment="学历")
     experience_years: Mapped[float | None] = mapped_column(Float, comment="从业年限")
     bio: Mapped[str | None] = mapped_column(Text, comment="简介")
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now)
     updated_at: Mapped[datetime] = mapped_column(
-        DateTime, default=datetime.utcnow, onupdate=datetime.utcnow
+        DateTime, default=utc_now, onupdate=utc_now
     )
 
     __table_args__ = (
@@ -185,9 +186,9 @@ class FundManagerTenure(Base):
     data_source_level: Mapped[DataSourceLevel | None] = mapped_column(
         SAEnum(DataSourceLevel, native_enum=False, values_callable=enum_values), comment="数据源等级"
     )
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now)
     updated_at: Mapped[datetime] = mapped_column(
-        DateTime, default=datetime.utcnow, onupdate=datetime.utcnow
+        DateTime, default=utc_now, onupdate=utc_now
     )
 
     __table_args__ = (
@@ -216,9 +217,9 @@ class FundCompany(Base):
     total_aum: Mapped[float | None] = mapped_column(Float, comment="总管理规模（亿元）")
     fund_count: Mapped[int | None] = mapped_column(Integer, comment="管理基金数量")
     manager_count: Mapped[int | None] = mapped_column(Integer, comment="基金经理数量")
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now)
     updated_at: Mapped[datetime] = mapped_column(
-        DateTime, default=datetime.utcnow, onupdate=datetime.utcnow
+        DateTime, default=utc_now, onupdate=utc_now
     )
 
     __table_args__ = (
@@ -254,7 +255,7 @@ class FundNAV(Base):
     data_source_level: Mapped[DataSourceLevel | None] = mapped_column(
         SAEnum(DataSourceLevel, native_enum=False, values_callable=enum_values), comment="数据源等级"
     )
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now)
 
     __table_args__ = (
         UniqueConstraint("fund_code", "trade_date", name="uq_fund_trade_date"),
@@ -282,9 +283,9 @@ class FundScale(Base):
     data_source_level: Mapped[DataSourceLevel | None] = mapped_column(
         SAEnum(DataSourceLevel, native_enum=False, values_callable=enum_values), comment="数据源等级"
     )
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now)
     updated_at: Mapped[datetime] = mapped_column(
-        DateTime, default=datetime.utcnow, onupdate=datetime.utcnow
+        DateTime, default=utc_now, onupdate=utc_now
     )
 
     __table_args__ = (UniqueConstraint("fund_code", "report_date", name="uq_fund_scale_date"),)
@@ -309,9 +310,9 @@ class FundFee(Base):
     data_source_level: Mapped[DataSourceLevel | None] = mapped_column(
         SAEnum(DataSourceLevel, native_enum=False, values_callable=enum_values), comment="数据源等级"
     )
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now)
     updated_at: Mapped[datetime] = mapped_column(
-        DateTime, default=datetime.utcnow, onupdate=datetime.utcnow
+        DateTime, default=utc_now, onupdate=utc_now
     )
 
 
@@ -349,7 +350,7 @@ class FundDisclosedHoldings(Base):
     data_source_level: Mapped[DataSourceLevel | None] = mapped_column(
         SAEnum(DataSourceLevel, native_enum=False, values_callable=enum_values), comment="数据源等级"
     )
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now)
 
     __table_args__ = (
         UniqueConstraint(
@@ -384,9 +385,9 @@ class HolderStructure(Base):
     data_source_level: Mapped[DataSourceLevel | None] = mapped_column(
         SAEnum(DataSourceLevel, native_enum=False, values_callable=enum_values), comment="数据源等级"
     )
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now)
     updated_at: Mapped[datetime] = mapped_column(
-        DateTime, default=datetime.utcnow, onupdate=datetime.utcnow
+        DateTime, default=utc_now, onupdate=utc_now
     )
 
     __table_args__ = (UniqueConstraint("fund_code", "report_date", name="uq_holder_date"),)
@@ -414,9 +415,9 @@ class StockMain(Base):
     pb: Mapped[float | None] = mapped_column(Float, comment="市净率")
     listing_date: Mapped[date | None] = mapped_column(Date, comment="上市日期")
     is_delisted: Mapped[bool] = mapped_column(Boolean, default=False, comment="是否已退市")
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now)
     updated_at: Mapped[datetime] = mapped_column(
-        DateTime, default=datetime.utcnow, onupdate=datetime.utcnow
+        DateTime, default=utc_now, onupdate=utc_now
     )
 
     __table_args__ = (
@@ -451,7 +452,7 @@ class StockDaily(Base):
     data_source_level: Mapped[DataSourceLevel | None] = mapped_column(
         SAEnum(DataSourceLevel, native_enum=False, values_callable=enum_values), comment="数据源等级"
     )
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now)
 
     __table_args__ = (UniqueConstraint("stock_code", "trade_date", name="uq_stock_trade_date"),)
 
@@ -470,7 +471,7 @@ class IndustryCategory(Base):
     industry_name: Mapped[str] = mapped_column(String(50), comment="行业名称")
     parent_code: Mapped[str | None] = mapped_column(String(20), comment="上级行业代码")
     level: Mapped[int] = mapped_column(Integer, comment="层级（1/2/3级）")
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now)
 
     __table_args__ = (
         UniqueConstraint(
@@ -515,9 +516,9 @@ class MetricRegistry(Base):
     metric_group: Mapped[str | None] = mapped_column(String(20), comment="指标分组")
     version: Mapped[str] = mapped_column(String(10), default="1.0.0", comment="指标版本")
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, comment="是否启用")
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now)
     updated_at: Mapped[datetime] = mapped_column(
-        DateTime, default=datetime.utcnow, onupdate=datetime.utcnow
+        DateTime, default=utc_now, onupdate=utc_now
     )
 
     def __repr__(self) -> str:
@@ -565,9 +566,9 @@ class StyleExposureResult(Base):
     data_source_level: Mapped[DataSourceLevel | None] = mapped_column(
         SAEnum(DataSourceLevel, native_enum=False, values_callable=enum_values), comment="数据源等级"
     )
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now)
     updated_at: Mapped[datetime] = mapped_column(
-        DateTime, default=datetime.utcnow, onupdate=datetime.utcnow
+        DateTime, default=utc_now, onupdate=utc_now
     )
 
     __table_args__ = (
@@ -616,9 +617,9 @@ class StaticAttributionResult(Base):
     )
     warnings: Mapped[dict | None] = mapped_column(JSON, comment="警告信息")
     data_source: Mapped[str | None] = mapped_column(String(50), comment="数据来源")
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now)
     updated_at: Mapped[datetime] = mapped_column(
-        DateTime, default=datetime.utcnow, onupdate=datetime.utcnow
+        DateTime, default=utc_now, onupdate=utc_now
     )
 
     __table_args__ = (
@@ -657,7 +658,7 @@ class ResearchPacketRecord(Base):
         SAEnum(ConfidenceLevel, native_enum=False, values_callable=enum_values), comment="整体置信度"
     )
     is_latest: Mapped[bool] = mapped_column(Boolean, default=True, comment="是否最新版本")
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now)
 
     def __repr__(self) -> str:
         return f"<ResearchPacket({self.packet_id}) fund={self.fund_code}>"
@@ -695,7 +696,7 @@ class EvidenceRecord(Base):
         server_default=text("'needs_review'"),
         comment="结论状态",
     )
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now)
 
     def __repr__(self) -> str:
         return f"<Evidence({self.evidence_id}) entity={self.entity_id}>"
@@ -730,7 +731,7 @@ class DataSourceSnapshot(Base):
     fetch_duration_ms: Mapped[float | None] = mapped_column(Float, comment="拉取耗时(ms)")
     is_success: Mapped[bool] = mapped_column(Boolean, default=True, comment="是否成功")
     error_message: Mapped[str | None] = mapped_column(Text, comment="错误信息")
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now)
 
     def __repr__(self) -> str:
         return f"<DataSourceSnapshot({self.source_name} @ {self.fetch_timestamp})>"
@@ -761,7 +762,7 @@ class TaskLog(Base):
     result_summary: Mapped[str | None] = mapped_column(Text, comment="结果摘要")
     error_message: Mapped[str | None] = mapped_column(Text, comment="错误信息")
     retry_count: Mapped[int] = mapped_column(Integer, default=0, comment="重试次数")
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now)
 
     def __repr__(self) -> str:
         return f"<TaskLog({self.task_id}) {self.task_type}:{self.status}>"
@@ -781,7 +782,7 @@ class ToolAPICallLog(Base):
     response_time_ms: Mapped[float | None] = mapped_column(Float, comment="响应时间(ms)")
     error_message: Mapped[str | None] = mapped_column(Text, comment="错误信息")
     ip_address: Mapped[str | None] = mapped_column(String(50), comment="请求 IP")
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now, index=True)
 
     def __repr__(self) -> str:
         return f"<ToolAPICallLog({self.call_id}) {self.tool_name}>"
