@@ -45,6 +45,13 @@ class Settings(BaseSettings):
     # --- 免责声明 ---
     disclaimer: str = "本平台所有算法结果仅用于个人研究和方法验证，不构成投资建议。"
 
+    # --- 算法常量 ---
+    trading_days_per_year: int = 252
+    risk_free_rate: float = 0.02
+    min_nav_observations: int = 60
+    min_holdings_for_attribution: int = 10
+    default_benchmark: str = "sh000300"
+
     @property
     def db_path_absolute(self) -> Path:
         """数据库文件的绝对路径。"""

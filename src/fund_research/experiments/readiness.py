@@ -17,13 +17,14 @@ from fund_research.experiments.runner import (
     DEFAULT_ATTRIBUTION_BENCHMARK_SYMBOL,
     MAX_ATTRIBUTION_BENCHMARK_WEIGHT_STALENESS_DAYS,
     MIN_ATTRIBUTION_BENCHMARK_WEIGHT_COVERAGE,
-    MIN_ATTRIBUTION_RETURN_OBSERVATIONS,
-    MIN_ATTRIBUTION_STOCK_WEIGHT_COVERAGE,
 )
 
 MIN_SIMULATED_HOLDING_VALIDATION_PAIRS = 1
 MIN_SIMULATED_HOLDING_RETURN_OBSERVATIONS = 20
-MIN_SIMULATED_HOLDING_STOCK_WEIGHT_COVERAGE = 0.8
+MIN_SIMULATED_HOLDING_STOCK_WEIGHT_COVERAGE = 0.6
+
+MIN_READINESS_RETURN_OBSERVATIONS = 20
+MIN_READINESS_STOCK_WEIGHT_COVERAGE = 0.6
 
 
 def assess_simulated_holding_backtest_readiness(
@@ -176,7 +177,8 @@ def assess_dynamic_attribution_readiness(
     benchmark_symbol: str | None = None,
     min_report_date: date_type | None = None,
     max_report_date: date_type | None = None,
-    min_return_observations: int = MIN_ATTRIBUTION_RETURN_OBSERVATIONS,
+    min_return_observations: int = MIN_READINESS_RETURN_OBSERVATIONS,
+    min_stock_weight_coverage: float = MIN_READINESS_STOCK_WEIGHT_COVERAGE,
     max_snapshot_age_days: int = MAX_ATTRIBUTION_BENCHMARK_WEIGHT_STALENESS_DAYS,
     ready_only: bool = False,
     limit: int | None = None,
@@ -204,6 +206,7 @@ def assess_dynamic_attribution_readiness(
                 report_date=report_date,
                 configured_benchmark_symbol=benchmark_symbol,
                 min_return_observations=min_return_observations,
+                min_stock_weight_coverage=min_stock_weight_coverage,
                 max_snapshot_age_days=max_snapshot_age_days,
             )
         )
@@ -222,6 +225,7 @@ def _assess_report(
     report_date: date_type,
     configured_benchmark_symbol: str | None,
     min_return_observations: int,
+    min_stock_weight_coverage: float,
     max_snapshot_age_days: int,
 ) -> dict:
     holdings = session.scalars(
@@ -262,7 +266,7 @@ def _assess_report(
         issues.append("无股票持仓")
     if missing_industry_count:
         issues.append(f"持仓行业缺失 {missing_industry_count}/{len(holdings)}")
-    if stock_coverage < MIN_ATTRIBUTION_STOCK_WEIGHT_COVERAGE:
+    if stock_coverage < min_stock_weight_coverage:
         issues.append(f"持仓股票行情覆盖不足 {stock_coverage:.1%}")
     if benchmark_observations < min_return_observations:
         issues.append(f"基准收益样本不足 {benchmark_observations}/{min_return_observations}")

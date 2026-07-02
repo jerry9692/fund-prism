@@ -58,21 +58,45 @@ def check_nav_continuity(nav_df: pd.DataFrame) -> QualityReport:
     检查净值数据连续性和异常。
 
     检查项：
-    1. 交易日缺失
+    1. 交易日缺失（相邻交易日跳过超过5个工作日）
     2. 净值异常跳变（日收益超出阈值）
-    3. 复权口径一致性
-    4. 分红拆分记录完整性
+    3. 空值检查
     """
     report = QualityReport(entity_type="fund_nav")
+    checks_passed = 0
+    checks_failed = 0
 
     if nav_df.empty:
         report.warnings.append("净值数据为空")
+        report.checks_passed = 0
+        report.checks_failed = 1
         return report
 
     report.total_records = len(nav_df)
     report.total_fields = len(nav_df.columns)
 
-    # 检查日收益异常跳变（单日超过 20% 视为可疑）
+    if "trade_date" in nav_df.columns:
+        dates = pd.to_datetime(nav_df["trade_date"], errors="coerce").dropna().sort_values()
+        if len(dates) >= 2:
+            gap_anomalies = 0
+            for i in range(1, len(dates)):
+                prev_date = dates.iloc[i - 1]
+                curr_date = dates.iloc[i]
+                expected_bdate = pd.bdate_range(start=prev_date, end=curr_date, freq="B")
+                business_days_gap = len(expected_bdate) - 1
+                if business_days_gap > 3:
+                    gap_anomalies += 1
+            if gap_anomalies > 0:
+                report.anomaly_count += gap_anomalies
+                report.warnings.append(f"发现 {gap_anomalies} 处交易日缺口（超过3个工作日）")
+                checks_failed += 1
+            else:
+                checks_passed += 1
+        else:
+            checks_passed += 1
+    else:
+        checks_passed += 1
+
     if "daily_return" in nav_df.columns:
         returns = pd.to_numeric(nav_df["daily_return"], errors="coerce").dropna()
         threshold = 0.20
@@ -82,19 +106,29 @@ def check_nav_continuity(nav_df: pd.DataFrame) -> QualityReport:
             report.warnings.append(
                 f"发现 {len(big_jumps)} 条日收益异常跳变（|return| > {threshold:.0%}）"
             )
+            checks_failed += 1
+        else:
+            checks_passed += 1
+    else:
+        checks_passed += 1
 
-    # 检查 null 值覆盖率
+    has_null = False
     for col in nav_df.columns:
         null_count = nav_df[col].isna().sum()
         if null_count > 0:
             report.fields_missing[col] = int(null_count)
+            has_null = True
+    if has_null:
+        checks_failed += 1
+    else:
+        checks_passed += 1
 
     total_cells = report.total_records * max(report.total_fields, 1)
     total_missing = sum(report.fields_missing.values())
     report.coverage_rate = 1.0 - (total_missing / total_cells) if total_cells > 0 else 0.0
 
-    report.checks_passed = 1
-    report.checks_failed = 1 if report.anomaly_count > 0 else 0
+    report.checks_passed = checks_passed
+    report.checks_failed = checks_failed
 
     return report
 
@@ -104,38 +138,79 @@ def check_holdings_integrity(holdings_df: pd.DataFrame) -> QualityReport:
     检查持仓数据完整性。
 
     检查项：
-    1. 持仓比例合计是否在合理范围
-    2. 证券代码有效性
-    3. 行业/评级字段缺失
-    4. 重复记录
+    1. 持仓比例合计是否在合理范围（按report_date分组，合计在[95,105]）
+    2. 重复记录
+    3. 空值检查
     """
     report = QualityReport(entity_type="fund_holdings")
+    checks_passed = 0
+    checks_failed = 0
 
     if holdings_df.empty:
         report.warnings.append("持仓数据为空")
+        report.checks_passed = 0
+        report.checks_failed = 1
         return report
 
     report.total_records = len(holdings_df)
     report.total_fields = len(holdings_df.columns)
 
-    # 检查 null 覆盖率
-    for col in holdings_df.columns:
-        null_count = holdings_df[col].isna().sum()
-        if null_count > 0:
-            report.fields_missing[col] = int(null_count)
+    if "weight_pct" in holdings_df.columns:
+        weight_col = pd.to_numeric(holdings_df["weight_pct"], errors="coerce")
+        if "report_date" in holdings_df.columns:
+            weight_anomalies = 0
+            for report_date, group in holdings_df.groupby("report_date"):
+                group_weights = pd.to_numeric(group["weight_pct"], errors="coerce").dropna()
+                total_weight = group_weights.sum()
+                if total_weight < 95 or total_weight > 105:
+                    weight_anomalies += 1
+                    report.anomaly_details.append({
+                        "report_date": str(report_date),
+                        "total_weight_pct": float(total_weight),
+                        "issue": "权重合计不在[95, 105]范围内",
+                    })
+            if weight_anomalies > 0:
+                report.anomaly_count += weight_anomalies
+                report.warnings.append(f"发现 {weight_anomalies} 个报告期权重合计异常（不在[95,105]范围）")
+                checks_failed += 1
+            else:
+                checks_passed += 1
+        else:
+            total_weight = weight_col.dropna().sum()
+            if total_weight < 95 or total_weight > 105:
+                report.anomaly_count += 1
+                report.warnings.append(f"权重合计异常: {total_weight:.2f}%（不在[95,105]范围）")
+                checks_failed += 1
+            else:
+                checks_passed += 1
+    else:
+        checks_passed += 1
 
-    # 检查重复
     dup_count = holdings_df.duplicated().sum()
     if dup_count > 0:
         report.anomaly_count += int(dup_count)
         report.warnings.append(f"发现 {dup_count} 条重复记录")
+        checks_failed += 1
+    else:
+        checks_passed += 1
+
+    has_null = False
+    for col in holdings_df.columns:
+        null_count = holdings_df[col].isna().sum()
+        if null_count > 0:
+            report.fields_missing[col] = int(null_count)
+            has_null = True
+    if has_null:
+        checks_failed += 1
+    else:
+        checks_passed += 1
 
     total_cells = report.total_records * max(report.total_fields, 1)
     total_missing = sum(report.fields_missing.values())
     report.coverage_rate = 1.0 - (total_missing / total_cells) if total_cells > 0 else 0.0
 
-    report.checks_passed = 1
-    report.checks_failed = 1 if report.anomaly_count > 0 else 0
+    report.checks_passed = checks_passed
+    report.checks_failed = checks_failed
 
     return report
 

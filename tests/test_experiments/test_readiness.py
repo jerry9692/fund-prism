@@ -23,9 +23,10 @@ def _seed_market_data(
     stock_codes: list[str],
     benchmark_symbol: str = "sh000300",
     daily_return: float | None = 0.01,
+    days: int = 5,
 ) -> None:
     for stock_code in [*stock_codes, benchmark_symbol]:
-        for index in range(5):
+        for index in range(days):
             test_session.add(
                 StockDaily(
                     stock_code=stock_code,
@@ -210,6 +211,8 @@ def test_dynamic_attribution_readiness_accepts_valid_sample(
         test_session,
         {"000001"},
         benchmark_symbol="sh000300",
+        min_return_observations=3,
+        min_stock_weight_coverage=0.5,
     )
 
     assert len(rows) == 1
@@ -252,6 +255,8 @@ def test_dynamic_attribution_readiness_counts_close_price_observations(
         test_session,
         {"000001"},
         benchmark_symbol="sh000300",
+        min_return_observations=3,
+        min_stock_weight_coverage=0.5,
     )
 
     row = rows[0]
@@ -297,6 +302,8 @@ def test_dynamic_attribution_readiness_filters_ready_candidates(
         test_session,
         benchmark_symbol="sh000300",
         min_report_date=date(2026, 5, 29),
+        min_return_observations=3,
+        min_stock_weight_coverage=0.5,
         ready_only=True,
         limit=1,
     )

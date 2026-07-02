@@ -22,6 +22,10 @@ from fund_research.experiments.runner import dispatch_run
 P2B_ALGORITHMS = ("simulated_holding", "dynamic_attribution", "scoring")
 P2B_HISTORY_DIR_NAME = "p2b_validation_reports"
 
+DEFAULT_MIN_RETURN_OBSERVATIONS = 20
+DEFAULT_MIN_STOCK_WEIGHT_COVERAGE = 0.6
+DEFAULT_MAX_BENCHMARK_WEIGHT_SNAPSHOT_AGE_DAYS = 365
+
 
 def load_sample_fund_codes(sample_path: Path, limit: int | None = None) -> list[str]:
     """Load fund codes from the Phase 0/1 sample CSV."""
@@ -78,11 +82,11 @@ def run_p2b_validation_report(
         algorithm_params: dict[str, Any] = {
             "validation_scope": "P2B",
             "expected_fund_count": expected_fund_count,
+            "min_return_observations": DEFAULT_MIN_RETURN_OBSERVATIONS,
+            "min_stock_weight_coverage": DEFAULT_MIN_STOCK_WEIGHT_COVERAGE,
         }
         if algorithm == "dynamic_attribution":
-            algorithm_params["min_stock_weight_coverage"] = 0.3
-            algorithm_params["min_return_observations"] = 3
-            algorithm_params["max_benchmark_weight_snapshot_age_days"] = 365
+            algorithm_params["max_benchmark_weight_snapshot_age_days"] = DEFAULT_MAX_BENCHMARK_WEIGHT_SNAPSHOT_AGE_DAYS
         exp = create_experiment(
             db,
             experiment_name=f"{experiment_prefix}-{algorithm}-{run_date}",

@@ -11,7 +11,8 @@ from typing import Annotated, Any
 from uuid import uuid4
 
 import pandas as pd
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Body, Depends, Query
+from pydantic import BaseModel
 from sqlalchemy import or_, select, text
 from sqlalchemy.orm import Session
 
@@ -45,6 +46,7 @@ from fund_research.analysis.nav_metrics import (
 )
 from fund_research.analysis.nav_metrics import calculate_nav_metrics
 from fund_research.api.deps import get_session
+from fund_research.config.settings import get_settings
 from fund_research.core.enums import (
     ConclusionStatus,
     ConfidenceLevel,
@@ -72,6 +74,8 @@ from fund_research.research.packet import build_single_fund_packet, persist_rese
 
 router = APIRouter(prefix="/api/v1", tags=["Tool API v1"])
 
+_settings = get_settings()
+
 SessionDep = Annotated[Session, Depends(get_session)]
 StartDateQuery = Annotated[date | None, Query(description="起始日期")]
 EndDateQuery = Annotated[date | None, Query(description="结束日期")]
@@ -95,6 +99,43 @@ TemplateQuery = Annotated[
         ),
     ),
 ]
+IndexesBody = Annotated[
+    list[str] | None,
+    Body(None, description="自定义风格因子指数代码列表"),
+]
+
+
+class ScreenRequest(BaseModel):
+    filters: dict | None = None
+    sort_by: str | None = None
+    sort_order: str | None = "desc"
+    limit: int | None = 100
+    offset: int | None = 0
+
+
+class DiffRequest(BaseModel):
+    fund_code: str | None = None
+    left_packet_id: str | None = None
+    right_packet_id: str | None = None
+    left_snapshot: str | None = None
+    right_snapshot: str | None = None
+
+
+class ExposureRequest(BaseModel):
+    fund_code: str
+    window: int = 60
+    indexes: list[str] | None = None
+
+
+class PacketRequest(BaseModel):
+    fund_code: str
+    template: str = "single_fund_checkup"
+
+
+ScreenRequestBody = Annotated[ScreenRequest, Body(default_factory=ScreenRequest)]
+DiffRequestBody = Annotated[DiffRequest, Body(default_factory=DiffRequest)]
+ExposureRequestBody = Annotated[ExposureRequest, Body(...)]
+PacketRequestBody = Annotated[PacketRequest, Body(...)]
 
 
 def _log_tool_api_call(
@@ -347,18 +388,21 @@ def _fee_info(db: Session, fund_code: str) -> dict | None:
 
 
 @router.get("/")
-def root() -> dict:
+def root() -> APIResponse[dict]:
     """API 根路由。"""
-    return {
-        "platform": "Fund Research Platform",
-        "version": __version__,
-        "docs": "/docs",
-        "disclaimer": "本平台所有算法结果仅用于个人研究和方法验证，不构成投资建议。",
-    }
+    return APIResponse(
+        data={
+            "platform": "Fund Research Platform",
+            "version": __version__,
+            "docs": "/docs",
+            "disclaimer": "本平台所有算法结果仅用于个人研究和方法验证，不构成投资建议。",
+        },
+        metadata={"tool": "root", "platform_version": __version__},
+    )
 
 
 @router.get("/health")
-def health_check(db: SessionDep) -> dict:
+def health_check(db: SessionDep) -> APIResponse[dict]:
     """健康检查。"""
     db_ok = False
     try:
@@ -367,11 +411,15 @@ def health_check(db: SessionDep) -> dict:
     except Exception:
         pass
 
-    return {
-        "status": "ok" if db_ok else "degraded",
-        "database": "connected" if db_ok else "disconnected",
-        "version": __version__,
-    }
+    return APIResponse(
+        data={
+            "status": "ok" if db_ok else "degraded",
+            "database": "connected" if db_ok else "disconnected",
+            "version": __version__,
+        },
+        metadata={"tool": "health_check", "platform_version": __version__},
+        conclusion_status=ConclusionStatus.FACT if db_ok else ConclusionStatus.NEEDS_REVIEW,
+    )
 
 
 # ============================================================
@@ -506,6 +554,7 @@ def get_nav_metrics(
     db: SessionDep,
     start: StartDateQuery = None,
     end: EndDateQuery = None,
+    benchmark: str | None = Query(None, description="基准指数代码，如000300(沪深300)"),
 ) -> APIResponse[dict]:
     """
     获取净值指标：收益、回撤、波动、夏普、卡玛、索提诺、信息比率等。
@@ -545,28 +594,62 @@ def get_nav_metrics(
         )
     )
 
-    def _slice(from_date: date_type | None) -> list[dict]:
+    resolved_benchmark_code = benchmark or (fund_row.benchmark if fund_row else None)
+    bm_all_rows: list[dict] = []
+    bm_warnings: list[str] = []
+    if resolved_benchmark_code:
+        bm_code = resolved_benchmark_code.strip()
+        bm_candidates = (
+            [f"sh{bm_code}", f"sz{bm_code}"]
+            if len(bm_code) == 6 and bm_code.isdigit()
+            else [bm_code]
+        )
+        bm_db_rows = db.scalars(
+            select(StockDaily)
+            .where(StockDaily.stock_code.in_(bm_candidates))
+            .order_by(StockDaily.trade_date)
+        ).all()
+        if bm_db_rows:
+            bm_all_rows = [
+                {
+                    "trade_date": r.trade_date,
+                    "close_price": r.close_price,
+                    "daily_return": r.daily_return,
+                }
+                for r in bm_db_rows
+            ]
+        else:
+            bm_warnings.append(f"基准指数 {resolved_benchmark_code} 行情数据未找到，基准对比指标返回 None")
+
+    fund_data_all = [
+        {
+            "trade_date": r.trade_date,
+            "unit_nav": r.unit_nav,
+            "accumulated_nav": r.accumulated_nav,
+            "adjusted_nav": r.adjusted_nav,
+            "daily_return": r.daily_return,
+            "dividend": r.dividend,
+            "split_ratio": r.split_ratio,
+        }
+        for r in all_rows
+    ]
+
+    def _slice(from_date: date_type | None, rows: list[dict]) -> list[dict]:
         if from_date is None:
             return []
-        return [
-            {
-                "trade_date": r.trade_date,
-                "unit_nav": r.unit_nav,
-                "accumulated_nav": r.accumulated_nav,
-                "adjusted_nav": r.adjusted_nav,
-                "daily_return": r.daily_return,
-                "dividend": r.dividend,
-                "split_ratio": r.split_ratio,
-            }
-            for r in all_rows
-            if r.trade_date >= from_date
-        ]
+        return [r for r in rows if r["trade_date"] >= from_date]
 
-    def _compute(label: str, from_date: date_type | None, expected_days: int | None = None) -> dict:
-        rows_slice = _slice(from_date)
+    def _compute(
+        label: str,
+        from_date: date_type | None,
+        expected_days: int | None = None,
+    ) -> dict:
+        rows_slice = _slice(from_date, fund_data_all)
         if not rows_slice:
             return {"label": label, "status": "no_data", "warnings": [f"{label}: 无可用净值数据"]}
-        result = calculate_nav_metrics(pd.DataFrame(rows_slice))
+        bm_slice = _slice(from_date, bm_all_rows) if bm_all_rows else None
+        bm_df = pd.DataFrame(bm_slice) if bm_slice else None
+        result = calculate_nav_metrics(pd.DataFrame(rows_slice), benchmark_nav=bm_df)
         warnings = result.warnings.copy()
         status = "computed" if result.is_sufficient else "needs_review"
         if expected_days and result.start_date and result.end_date:
@@ -604,16 +687,18 @@ def get_nav_metrics(
     # 自定义区间
     custom = None
     if start or end:
-        rows_slice = _slice(start) if start else [
-            {"trade_date": r.trade_date, "unit_nav": r.unit_nav, "accumulated_nav": r.accumulated_nav,
-             "adjusted_nav": r.adjusted_nav, "daily_return": r.daily_return, "dividend": r.dividend,
-             "split_ratio": r.split_ratio}
-            for r in all_rows
-        ]
+        rows_slice = _slice(start, fund_data_all) if start else list(fund_data_all)
         if end and rows_slice:
             rows_slice = [r for r in rows_slice if r["trade_date"] <= end]
         if rows_slice:
-            custom_result = calculate_nav_metrics(pd.DataFrame(rows_slice))
+            bm_slice_custom = None
+            if bm_all_rows:
+                bm_start = start or bm_all_rows[0]["trade_date"]
+                bm_slice_custom = [r for r in bm_all_rows if r["trade_date"] >= bm_start]
+                if end:
+                    bm_slice_custom = [r for r in bm_slice_custom if r["trade_date"] <= end]
+            bm_df_custom = pd.DataFrame(bm_slice_custom) if bm_slice_custom else None
+            custom_result = calculate_nav_metrics(pd.DataFrame(rows_slice), benchmark_nav=bm_df_custom)
             custom = {
                 "label": f"{start or '最早'} ~ {end or '最新'}",
                 "status": "computed" if custom_result.is_sufficient else "needs_review",
@@ -626,6 +711,7 @@ def get_nav_metrics(
 
     dividend_count = sum(1 for r in all_rows if r.dividend is not None)
     all_warnings: list[str] = []
+    all_warnings.extend(bm_warnings)
     for p in periods.values():
         all_warnings.extend(p.get("warnings", []))
     has_computed_period = any(p.get("status") == "computed" for p in periods.values())
@@ -647,7 +733,7 @@ def get_nav_metrics(
             algorithm_metadata=AlgorithmMetadata(
                 algorithm_name=NAV_METRICS_ALGORITHM_NAME,
                 algorithm_version=NAV_METRICS_ALGORITHM_VERSION,
-                parameters={"trading_days_per_year": 252},
+                parameters={"trading_days_per_year": 252, "benchmark": resolved_benchmark_code},
                 confidence=ConfidenceLevel.MEDIUM,
                 warnings=all_warnings,
             ),
@@ -663,6 +749,7 @@ def get_nav_metrics(
     response = APIResponse(
         data={
             "fund_code": fund_code,
+            "benchmark": resolved_benchmark_code,
             "periods": {k: {
                 "label": v.get("label"), "status": v.get("status"),
                 "metrics": v.get("data", {}).get("metrics"),
@@ -686,6 +773,7 @@ def get_nav_metrics(
             "fund_code": fund_code,
             "start": str(start) if start else None,
             "end": str(end) if end else None,
+            "benchmark": resolved_benchmark_code,
             "platform_version": __version__,
             "implemented": True,
             "algorithm_name": NAV_METRICS_ALGORITHM_NAME,
@@ -701,7 +789,12 @@ def get_nav_metrics(
     )
     return _log_tool_api_call(
         db, "get_nav_metrics",
-        {"fund_code": fund_code, "start": str(start) if start else None, "end": str(end) if end else None},
+        {
+            "fund_code": fund_code,
+            "start": str(start) if start else None,
+            "end": str(end) if end else None,
+            "benchmark": resolved_benchmark_code,
+        },
         response, started_at,
     )
 
@@ -909,7 +1002,7 @@ def get_disclosed_holdings(
 @router.post("/funds/screen")
 def screen_funds(
     db: SessionDep,
-    body: dict | None = None,
+    body: ScreenRequestBody,
 ) -> APIResponse[dict]:
     """
     按条件筛选基金并排序。
@@ -935,12 +1028,11 @@ def screen_funds(
     from dateutil.relativedelta import relativedelta
 
     started_at = perf_counter()
-    body = body or {}
-    filters = body.get("filters", {})
-    sort_by = body.get("sort_by", "fund_code")
-    sort_order = body.get("sort_order", "asc")
-    limit = min(body.get("limit", 50), 200)
-    offset = body.get("offset", 0)
+    filters = body.filters or {}
+    sort_by = body.sort_by or "fund_code"
+    sort_order = body.sort_order or "asc"
+    limit = min(body.limit or 50, 200)
+    offset = body.offset or 0
 
     def _calculate_metrics(fund_code: str) -> dict[str, float | None]:
         nav_rows = db.scalars(
@@ -1031,7 +1123,7 @@ def screen_funds(
             warnings=["无匹配基金"],
             conclusion_status=ConclusionStatus.OBSERVATION,
         )
-        return _log_tool_api_call(db, "screen_funds", body, response, started_at)
+        return _log_tool_api_call(db, "screen_funds", body.model_dump(), response, started_at)
 
     # 收集筛选数据
     results = []
@@ -1164,7 +1256,7 @@ def screen_funds(
         warnings=[f"共 {total} 只基金匹配筛选条件"] if total > 0 else ["无匹配基金"],
         conclusion_status=ConclusionStatus.COMPUTED if total > 0 else ConclusionStatus.OBSERVATION,
     )
-    return _log_tool_api_call(db, "screen_funds", body, response, started_at)
+    return _log_tool_api_call(db, "screen_funds", body.model_dump(), response, started_at)
 
 
 # ============================================================
@@ -1266,9 +1358,8 @@ def search_funds(
 
 @router.post("/analysis/exposure")
 def run_exposure_analysis(
-    fund_code: str,
     db: SessionDep,
-    window: WindowQuery = 60,
+    body: ExposureRequestBody,
 ) -> APIResponse[dict]:
     """
     运行风格/行业暴露分析和静态归因。
@@ -1281,12 +1372,34 @@ def run_exposure_analysis(
     - 风格漂移和偏离提示
     """
     started_at = perf_counter()
+    fund_code = body.fund_code
+    window = body.window
+    indexes = body.indexes
     nav_rows = db.scalars(
         select(FundNAV).where(FundNAV.fund_code == fund_code).order_by(FundNAV.trade_date)
     ).all()
+
+    def _normalize_index_code(code: str) -> str:
+        code = code.strip()
+        if len(code) == 6 and code.isdigit():
+            if code.startswith("000") or code.startswith("00"):
+                return f"sh{code}"
+            if code.startswith("399"):
+                return f"sz{code}"
+            return f"sh{code}"
+        return code
+
+    if indexes:
+        normalized_codes = [_normalize_index_code(c) for c in indexes]
+        factor_symbols = {code: code for code in normalized_codes}
+        factor_codes = normalized_codes
+    else:
+        factor_symbols = DEFAULT_STYLE_FACTORS
+        factor_codes = list(DEFAULT_STYLE_FACTORS.values())
+
     factor_rows = db.scalars(
         select(StockDaily)
-        .where(StockDaily.stock_code.in_(DEFAULT_STYLE_FACTORS.values()))
+        .where(StockDaily.stock_code.in_(factor_codes))
         .order_by(StockDaily.stock_code, StockDaily.trade_date)
     ).all()
     result = calculate_style_exposure(
@@ -1314,11 +1427,13 @@ def run_exposure_analysis(
             ]
         ),
         window=window,
+        factor_symbols=factor_symbols,
     )
     metadata = {
         "tool": "run_exposure_analysis",
         "fund_code": fund_code,
         "window": window,
+        "indexes": indexes,
         "platform_version": __version__,
         "implemented": True,
         "algorithm_name": EXPOSURE_ALGORITHM_NAME,
@@ -1339,7 +1454,7 @@ def run_exposure_analysis(
         return _log_tool_api_call(
             db,
             "run_exposure_analysis",
-            {"fund_code": fund_code, "window": window},
+            {"fund_code": fund_code, "window": window, "indexes": indexes},
             response,
             started_at,
         )
@@ -1366,12 +1481,12 @@ def run_exposure_analysis(
             calc_date=result.end_date,
             algorithm_name=EXPOSURE_ALGORITHM_NAME,
             algorithm_version=EXPOSURE_ALGORITHM_VERSION,
-            parameters={"window": window, "factor_symbols": result.factor_symbols},
+            parameters={"window": window, "factor_symbols": result.factor_symbols, "indexes": indexes},
             exposure_type="style",
             exposure_values=result.exposure_values,
         )
         db.add(existing)
-    existing.parameters = {"window": window, "factor_symbols": result.factor_symbols}
+    existing.parameters = {"window": window, "factor_symbols": result.factor_symbols, "indexes": indexes}
     existing.exposure_type = "style"
     existing.exposure_values = result.exposure_values
     existing.residual = result.residual
@@ -1460,7 +1575,7 @@ def run_exposure_analysis(
     return _log_tool_api_call(
         db,
         "run_exposure_analysis",
-        {"fund_code": fund_code, "window": window},
+        {"fund_code": fund_code, "window": window, "indexes": indexes},
         response,
         started_at,
     )
@@ -1474,7 +1589,7 @@ def run_exposure_analysis(
 @router.post("/research/diff")
 def diff_research_packets(
     db: SessionDep,
-    body: dict | None = None,
+    body: DiffRequestBody,
 ) -> APIResponse[dict]:
     """
     对比同一基金两个日期的 Research Packet。
@@ -1495,33 +1610,31 @@ def diff_research_packets(
     from datetime import date as date_type
 
     started_at = perf_counter()
-    body = body or {}
-    fund_code = body.get("fund_code", "")
+    fund_code = body.fund_code or ""
     warnings: list[str] = []
 
-    # 获取两个 packet
     left = None
     right = None
-    if body.get("left_packet_id"):
+    if body.left_packet_id:
         left = db.scalar(
-            select(ResearchPacketRecord).where(ResearchPacketRecord.packet_id == body["left_packet_id"])
+            select(ResearchPacketRecord).where(ResearchPacketRecord.packet_id == body.left_packet_id)
         )
-    elif body.get("left_snapshot"):
+    elif body.left_snapshot:
         left = db.scalar(
             select(ResearchPacketRecord).where(
                 ResearchPacketRecord.fund_code == fund_code,
-                ResearchPacketRecord.data_date <= date_type.fromisoformat(body["left_snapshot"]),
+                ResearchPacketRecord.data_date <= date_type.fromisoformat(body.left_snapshot),
             ).order_by(ResearchPacketRecord.data_date.desc()).limit(1)
         )
-    if body.get("right_packet_id"):
+    if body.right_packet_id:
         right = db.scalar(
-            select(ResearchPacketRecord).where(ResearchPacketRecord.packet_id == body["right_packet_id"])
+            select(ResearchPacketRecord).where(ResearchPacketRecord.packet_id == body.right_packet_id)
         )
-    elif body.get("right_snapshot"):
+    elif body.right_snapshot:
         right = db.scalar(
             select(ResearchPacketRecord).where(
                 ResearchPacketRecord.fund_code == fund_code,
-                ResearchPacketRecord.data_date <= date_type.fromisoformat(body["right_snapshot"]),
+                ResearchPacketRecord.data_date <= date_type.fromisoformat(body.right_snapshot),
             ).order_by(ResearchPacketRecord.data_date.desc()).limit(1)
         )
 
@@ -1538,7 +1651,7 @@ def diff_research_packets(
             warnings=[f"缺少研究包: {', '.join(missing)}"],
             conclusion_status=ConclusionStatus.NEEDS_REVIEW,
         )
-        return _log_tool_api_call(db, "diff_research_packets", body, response, started_at)
+        return _log_tool_api_call(db, "diff_research_packets", body.model_dump(), response, started_at)
 
     # 对比两个 packet 的 JSON
     lp = left.packet_json if isinstance(left.packet_json, dict) else {}
@@ -1553,7 +1666,7 @@ def diff_research_packets(
             warnings=["左右研究包不属于同一基金，不能进行同基金 diff"],
             conclusion_status=ConclusionStatus.NEEDS_REVIEW,
         )
-        return _log_tool_api_call(db, "diff_research_packets", body, response, started_at)
+        return _log_tool_api_call(db, "diff_research_packets", body.model_dump(), response, started_at)
 
     diffs: dict[str, Any] = {}
 
@@ -1708,7 +1821,7 @@ def diff_research_packets(
         warnings=warnings if changed else [*warnings, "两个研究包在各模块上均无显著差异"],
         conclusion_status=ConclusionStatus.OBSERVATION if changed else ConclusionStatus.COMPUTED,
     )
-    return _log_tool_api_call(db, "diff_research_packets", body, response, started_at)
+    return _log_tool_api_call(db, "diff_research_packets", body.model_dump(), response, started_at)
 
 
 # ============================================================
@@ -1718,9 +1831,8 @@ def diff_research_packets(
 
 @router.post("/research/packet")
 def build_research_packet(
-    fund_code: str,
     db: SessionDep,
-    template: TemplateQuery = "single_fund_checkup",
+    body: PacketRequestBody,
 ) -> APIResponse[dict]:
     """
     生成标准化研究包（JSON + Markdown）。
@@ -1730,6 +1842,29 @@ def build_research_packet(
     研究包附带完整 metadata：数据日期、算法版本、数据源等级、置信度、免责声明。
     """
     started_at = perf_counter()
+    fund_code = body.fund_code
+    template = body.template
+    fund = db.scalar(select(FundMain).where(FundMain.fund_code == fund_code))
+    if fund is None:
+        response = APIResponse(
+            data=None,
+            metadata={
+                "tool": "build_research_packet",
+                "fund_code": fund_code,
+                "platform_version": __version__,
+                "implemented": True,
+            },
+            evidence=[],
+            warnings=["基金不存在或尚未更新到本地数据库"],
+            conclusion_status=ConclusionStatus.NEEDS_REVIEW,
+        )
+        return _log_tool_api_call(
+            db,
+            "build_research_packet",
+            {"fund_code": fund_code, "template": template},
+            response,
+            started_at,
+        )
     packet = build_single_fund_packet(db, fund_code=fund_code, template=template)
     record = persist_research_packet(db, packet)
     warnings = packet.warnings.copy()

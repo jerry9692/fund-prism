@@ -21,10 +21,20 @@ from sqlalchemy import (
     String,
     Text,
     UniqueConstraint,
+    text,
+)
+from sqlalchemy import (
+    Enum as SAEnum,
 )
 from sqlalchemy.orm import Mapped, mapped_column
 
-from fund_research.db.models import Base, id_column
+from fund_research.core.enums import (
+    ConclusionStatus,
+    ConfidenceLevel,
+    DataSourceLevel,
+    ExperimentStatus,
+)
+from fund_research.db.models import Base, enum_values, id_column
 
 
 class SimulatedHoldingResult(Base):
@@ -33,7 +43,15 @@ class SimulatedHoldingResult(Base):
     __tablename__ = "simulated_holding_result"
 
     id: Mapped[int] = id_column()
-    fund_code: Mapped[str] = mapped_column(String(20), index=True)
+    experiment_id: Mapped[int | None] = mapped_column(
+        BigInteger,
+        ForeignKey("algorithm_experiment.id"),
+        index=True,
+        nullable=True,
+    )
+    fund_code: Mapped[str] = mapped_column(
+        String(20), ForeignKey("fund_main.fund_code"), index=True
+    )
     calc_date: Mapped[date] = mapped_column(Date, index=True)
     algorithm_name: Mapped[str] = mapped_column(String(50))
     algorithm_version: Mapped[str] = mapped_column(String(10))
@@ -46,13 +64,35 @@ class SimulatedHoldingResult(Base):
     stock_weight_pct: Mapped[float | None] = mapped_column(Float)
     bond_weight_pct: Mapped[float | None] = mapped_column(Float)
     cash_weight_pct: Mapped[float | None] = mapped_column(Float)
-    confidence: Mapped[str | None] = mapped_column(String(20))
-    conclusion_status: Mapped[str] = mapped_column(String(20), default="estimated")
+    confidence: Mapped[ConfidenceLevel | None] = mapped_column(
+        SAEnum(ConfidenceLevel, native_enum=False, values_callable=enum_values)
+    )
+    conclusion_status: Mapped[ConclusionStatus] = mapped_column(
+        SAEnum(ConclusionStatus, native_enum=False, values_callable=enum_values),
+        default=ConclusionStatus.ESTIMATED,
+        server_default=text("'estimated'"),
+    )
     is_backtest: Mapped[bool] = mapped_column(Boolean, default=False)
     backtest_report_date: Mapped[date | None] = mapped_column(Date)
     warnings: Mapped[list[str] | None] = mapped_column(JSON)
     input_coverage: Mapped[float | None] = mapped_column(Float)
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.now)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+    __table_args__ = (
+        UniqueConstraint(
+            "fund_code",
+            "calc_date",
+            "algorithm_name",
+            "algorithm_version",
+            name="uq_sim_holding_fund_date_algo",
+        ),
+        Index(
+            "ix_sim_holding_fund_date_algo",
+            "fund_code",
+            "calc_date",
+            "algorithm_name",
+        ),
+    )
 
 
 class DynamicAttributionResult(Base):
@@ -61,9 +101,17 @@ class DynamicAttributionResult(Base):
     __tablename__ = "dynamic_attribution_result"
 
     id: Mapped[int] = id_column()
-    fund_code: Mapped[str] = mapped_column(String(20), index=True)
-    period_start: Mapped[date] = mapped_column(Date)
-    period_end: Mapped[date] = mapped_column(Date)
+    experiment_id: Mapped[int | None] = mapped_column(
+        BigInteger,
+        ForeignKey("algorithm_experiment.id"),
+        index=True,
+        nullable=True,
+    )
+    fund_code: Mapped[str] = mapped_column(
+        String(20), ForeignKey("fund_main.fund_code"), index=True
+    )
+    period_start: Mapped[date] = mapped_column(Date, index=True)
+    period_end: Mapped[date] = mapped_column(Date, index=True)
     algorithm_name: Mapped[str] = mapped_column(String(50))
     algorithm_version: Mapped[str] = mapped_column(String(10))
     parameters: Mapped[dict[str, Any] | None] = mapped_column(JSON)
@@ -74,13 +122,37 @@ class DynamicAttributionResult(Base):
     stock_selection_return: Mapped[float | None] = mapped_column(Float)
     convertible_bond_return: Mapped[float | None] = mapped_column(Float)
     ipo_return: Mapped[float | None] = mapped_column(Float)
+    interaction_return: Mapped[float | None] = mapped_column(Float)
     residual: Mapped[float | None] = mapped_column(Float)
     residual_pct: Mapped[float | None] = mapped_column(Float)
     detail: Mapped[dict[str, Any] | None] = mapped_column(JSON)
-    confidence: Mapped[str | None] = mapped_column(String(20))
-    conclusion_status: Mapped[str] = mapped_column(String(20), default="estimated")
+    confidence: Mapped[ConfidenceLevel | None] = mapped_column(
+        SAEnum(ConfidenceLevel, native_enum=False, values_callable=enum_values)
+    )
+    conclusion_status: Mapped[ConclusionStatus] = mapped_column(
+        SAEnum(ConclusionStatus, native_enum=False, values_callable=enum_values),
+        default=ConclusionStatus.ESTIMATED,
+        server_default=text("'estimated'"),
+    )
     warnings: Mapped[list[str] | None] = mapped_column(JSON)
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.now)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+    __table_args__ = (
+        UniqueConstraint(
+            "fund_code",
+            "period_start",
+            "period_end",
+            "algorithm_name",
+            "algorithm_version",
+            name="uq_dyn_attr_fund_period_algo",
+        ),
+        Index(
+            "ix_dyn_attr_fund_period",
+            "fund_code",
+            "period_start",
+            "period_end",
+        ),
+    )
 
 
 class ScoringResult(Base):
@@ -89,8 +161,16 @@ class ScoringResult(Base):
     __tablename__ = "scoring_result"
 
     id: Mapped[int] = id_column()
-    fund_code: Mapped[str] = mapped_column(String(20), index=True)
-    calc_date: Mapped[date] = mapped_column(Date)
+    experiment_id: Mapped[int | None] = mapped_column(
+        BigInteger,
+        ForeignKey("algorithm_experiment.id"),
+        index=True,
+        nullable=True,
+    )
+    fund_code: Mapped[str] = mapped_column(
+        String(20), ForeignKey("fund_main.fund_code"), index=True
+    )
+    calc_date: Mapped[date] = mapped_column(Date, index=True)
     score_version: Mapped[str] = mapped_column(String(20))
     algorithm_version: Mapped[str] = mapped_column(String(10))
     weight_config: Mapped[dict[str, Any]] = mapped_column(JSON)
@@ -99,10 +179,34 @@ class ScoringResult(Base):
     percentile_rank: Mapped[float | None] = mapped_column(Float)
     deduction_reasons: Mapped[list[str] | None] = mapped_column(JSON)
     contains_estimated: Mapped[bool] = mapped_column(Boolean, default=False)
-    confidence: Mapped[str | None] = mapped_column(String(20))
-    conclusion_status: Mapped[str] = mapped_column(String(20), default="computed")
+    confidence: Mapped[ConfidenceLevel | None] = mapped_column(
+        SAEnum(ConfidenceLevel, native_enum=False, values_callable=enum_values)
+    )
+    conclusion_status: Mapped[ConclusionStatus] = mapped_column(
+        SAEnum(ConclusionStatus, native_enum=False, values_callable=enum_values),
+        default=ConclusionStatus.COMPUTED,
+        server_default=text("'computed'"),
+    )
+    is_backtest: Mapped[bool] = mapped_column(Boolean, default=False, server_default=text("false"))
     warnings: Mapped[list[str] | None] = mapped_column(JSON)
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.now)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+    __table_args__ = (
+        UniqueConstraint(
+            "fund_code",
+            "calc_date",
+            "score_version",
+            "algorithm_version",
+            "is_backtest",
+            name="uq_scoring_fund_date_version",
+        ),
+        Index(
+            "ix_scoring_fund_date_version",
+            "fund_code",
+            "calc_date",
+            "score_version",
+        ),
+    )
 
 
 class ScoringBacktest(Base):
@@ -119,7 +223,20 @@ class ScoringBacktest(Base):
     ic_mean: Mapped[float | None] = mapped_column(Float)
     ic_ir: Mapped[float | None] = mapped_column(Float)
     detail: Mapped[dict[str, Any] | None] = mapped_column(JSON)
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.now)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+    __table_args__ = (
+        UniqueConstraint(
+            "score_version",
+            "backtest_date",
+            name="uq_scoring_bt_version_date",
+        ),
+        Index(
+            "ix_scoring_bt_version_date",
+            "score_version",
+            "backtest_date",
+        ),
+    )
 
 
 class AlgorithmExperiment(Base):
@@ -135,11 +252,15 @@ class AlgorithmExperiment(Base):
     sample_fund_codes: Mapped[list[str] | None] = mapped_column(JSON)
     backtest_start: Mapped[date | None] = mapped_column(Date)
     backtest_end: Mapped[date | None] = mapped_column(Date)
-    status: Mapped[str] = mapped_column(String(20), default="pending")
+    status: Mapped[ExperimentStatus] = mapped_column(
+        SAEnum(ExperimentStatus, native_enum=False, values_callable=enum_values),
+        default=ExperimentStatus.PENDING,
+        server_default=text("'pending'"),
+    )
     started_at: Mapped[datetime | None] = mapped_column(DateTime)
     completed_at: Mapped[datetime | None] = mapped_column(DateTime)
     summary: Mapped[str | None] = mapped_column(Text)
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.now)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
 
 class ExperimentResult(Base):
@@ -153,13 +274,28 @@ class ExperimentResult(Base):
         ForeignKey("algorithm_experiment.id"),
         index=True,
     )
-    fund_code: Mapped[str] = mapped_column(String(20))
+    fund_code: Mapped[str] = mapped_column(String(20), ForeignKey("fund_main.fund_code"))
     calc_date: Mapped[date] = mapped_column(Date)
     is_success: Mapped[bool] = mapped_column(Boolean, default=True)
     metrics: Mapped[dict[str, Any] | None] = mapped_column(JSON)
     error_message: Mapped[str | None] = mapped_column(Text)
     warnings: Mapped[list[str] | None] = mapped_column(JSON)
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.now)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+    __table_args__ = (
+        UniqueConstraint(
+            "experiment_id",
+            "fund_code",
+            "calc_date",
+            name="uq_exp_result_exp_fund_date",
+        ),
+        Index(
+            "ix_exp_result_exp_fund_date",
+            "experiment_id",
+            "fund_code",
+            "calc_date",
+        ),
+    )
 
 
 class ReviewerAnnotation(Base):
@@ -168,13 +304,15 @@ class ReviewerAnnotation(Base):
     __tablename__ = "reviewer_annotation"
 
     id: Mapped[int] = id_column()
-    fund_code: Mapped[str] = mapped_column(String(20), index=True)
+    fund_code: Mapped[str] = mapped_column(
+        String(20), ForeignKey("fund_main.fund_code"), index=True
+    )
     annotation_type: Mapped[str] = mapped_column(String(30))
     target_module: Mapped[str | None] = mapped_column(String(50))
     detail: Mapped[dict[str, Any]] = mapped_column(JSON)
     reason: Mapped[str] = mapped_column(Text)
     evidence_id: Mapped[str | None] = mapped_column(String(64))
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.now)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
 
 class BenchmarkIndexMember(Base):
@@ -187,14 +325,18 @@ class BenchmarkIndexMember(Base):
     index_code: Mapped[str] = mapped_column(String(20))
     index_name: Mapped[str | None] = mapped_column(String(100))
     snapshot_date: Mapped[date] = mapped_column(Date, index=True)
-    stock_code: Mapped[str] = mapped_column(String(20), index=True)
+    stock_code: Mapped[str] = mapped_column(
+        String(20), ForeignKey("stock_main.stock_code"), index=True
+    )
     stock_name: Mapped[str | None] = mapped_column(String(100))
     exchange: Mapped[str | None] = mapped_column(String(20))
     weight_pct: Mapped[float | None] = mapped_column(Float)
     source_name: Mapped[str] = mapped_column(String(80))
-    source_level: Mapped[str] = mapped_column(String(10))
+    source_level: Mapped[DataSourceLevel] = mapped_column(
+        SAEnum(DataSourceLevel, native_enum=False, values_callable=enum_values)
+    )
     raw_payload_hash: Mapped[str | None] = mapped_column(String(64))
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.now)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
     __table_args__ = (
         UniqueConstraint(
@@ -214,7 +356,9 @@ class StockIndustryMembership(Base):
     __tablename__ = "stock_industry_membership"
 
     id: Mapped[int] = id_column()
-    stock_code: Mapped[str] = mapped_column(String(20), index=True)
+    stock_code: Mapped[str] = mapped_column(
+        String(20), ForeignKey("stock_main.stock_code"), index=True
+    )
     stock_name: Mapped[str | None] = mapped_column(String(100))
     classification_type: Mapped[str] = mapped_column(String(30), index=True)
     classification_version: Mapped[str | None] = mapped_column(String(20))
@@ -224,8 +368,10 @@ class StockIndustryMembership(Base):
     parent_industry_code: Mapped[str | None] = mapped_column(String(20))
     effective_date: Mapped[date] = mapped_column(Date, index=True)
     source_name: Mapped[str] = mapped_column(String(80))
-    source_level: Mapped[str] = mapped_column(String(10))
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.now)
+    source_level: Mapped[DataSourceLevel] = mapped_column(
+        SAEnum(DataSourceLevel, native_enum=False, values_callable=enum_values)
+    )
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
     __table_args__ = (
         UniqueConstraint(
@@ -270,7 +416,7 @@ class BenchmarkIndustryWeight(Base):
     source_industry_snapshot: Mapped[date | None] = mapped_column(Date)
     algorithm_version: Mapped[str] = mapped_column(String(20))
     warnings: Mapped[dict[str, Any] | None] = mapped_column(JSON)
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.now)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
     __table_args__ = (
         UniqueConstraint(

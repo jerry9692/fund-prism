@@ -259,3 +259,14 @@ class TaskType(StrEnum):
     ALGORITHM_RUN = "algorithm_run"
     RESEARCH_PACKET = "research_packet"
     EXPORT = "export"
+
+
+class ExperimentStatus(StrEnum):
+    """算法实验状态。"""
+
+    PENDING = "pending"
+    RUNNING = "running"
+    COMPLETED = "completed"
+    COMPLETED_WITH_FAILURES = "completed_with_failures"
+    FAILED = "failed"
+    CANCELLED = "cancelled"

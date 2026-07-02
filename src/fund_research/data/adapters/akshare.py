@@ -271,16 +271,22 @@ class AkshareAdapter(BaseDataAdapter):
         func: Callable[..., Any],
         *args: Any,
         trade_date: date | None = None,
+        max_retries: int = 3,
         **kwargs: Any,
     ) -> FetchResult:
         started_at = perf_counter()
-        try:
-            data = func(*args, **kwargs)
-            if not isinstance(data, pd.DataFrame):
-                data = pd.DataFrame(data)
-            return self._success_result(entity_type, data, started_at, trade_date)
-        except Exception as exc:
-            return self._error_result(entity_type, started_at, exc)
+        last_exc: Exception | None = None
+        for attempt in range(max_retries):
+            try:
+                data = func(*args, **kwargs)
+                if not isinstance(data, pd.DataFrame):
+                    data = pd.DataFrame(data)
+                return self._success_result(entity_type, data, started_at, trade_date)
+            except Exception as exc:
+                last_exc = exc
+                if attempt < max_retries - 1:
+                    sleep(2 ** attempt)
+        return self._error_result(entity_type, started_at, last_exc if last_exc else Exception("Unknown error"))
 
     def _standardize(self, data: pd.DataFrame) -> pd.DataFrame:
         standardized = data.copy()
@@ -298,7 +304,10 @@ class AkshareAdapter(BaseDataAdapter):
         if "daily_return" in standardized.columns:
             standardized["daily_return"] = pd.to_numeric(
                 standardized["daily_return"], errors="coerce"
-            ) / 100
+            )
+            max_abs = standardized["daily_return"].abs().max()
+            if pd.notna(max_abs) and max_abs > 1:
+                standardized["daily_return"] = standardized["daily_return"] / 100
         return standardized
 
     def _success_result_from_canonical(
@@ -469,12 +478,22 @@ class AkshareAdapter(BaseDataAdapter):
         self, fund_code: str, start_date: date | None = None, end_date: date | None = None
     ) -> FetchResult:
         """拉取基金单位净值走势。"""
-        return self._call(
+        result = self._call(
             "fund_nav",
             self.ak.fund_open_fund_info_em,
             symbol=fund_code,
             indicator="单位净值走势",
         )
+        if result.is_success and result.data is not None and "trade_date" in result.data.columns:
+            df = result.data
+            df["trade_date"] = pd.to_datetime(df["trade_date"], errors="coerce")
+            if start_date is not None:
+                df = df[df["trade_date"] >= pd.Timestamp(start_date)]
+            if end_date is not None:
+                df = df[df["trade_date"] <= pd.Timestamp(end_date)]
+            result.data = df.reset_index(drop=True)
+            result.record_count = len(result.data)
+        return result
 
     def fetch_fund_dividends(self, fund_code: str, year: int | None = None) -> FetchResult:
         """拉取基金分红记录；AKShare 该接口按年份返回全表，本地再按基金代码过滤。"""
@@ -688,72 +707,86 @@ class AkshareAdapter(BaseDataAdapter):
 
         started_at = perf_counter()
         url = "https://fundf10.eastmoney.com/FundArchivesDatas.aspx"
-        try:
-            resp = requests.get(
-                url,
-                headers=EASTMONEY_F10_HEADERS,
-                params={"type": "cyrjg", "code": fund_code},
-                timeout=15,
-            )
-            resp.raise_for_status()
-            resp.encoding = "utf-8"
-            match = _re.search(r'content:"(.*?)",summary', resp.text, _re.DOTALL)
-            if not match:
-                return self._error_result(
-                    "holder_structure",
-                    started_at,
-                    RuntimeError(f"无法解析持有人结构响应: {fund_code}"),
+        max_retries = 3
+        for attempt in range(max_retries):
+            try:
+                resp = requests.get(
+                    url,
+                    headers=EASTMONEY_F10_HEADERS,
+                    params={"type": "cyrjg", "code": fund_code},
+                    timeout=15,
                 )
-            html = match.group(1).replace("\\", "")
-            tables: list[pd.DataFrame] = []
-            if html and html.strip():
-                try:
-                    tables = pd.read_html(StringIO(html))
-                except ValueError:
-                    tables = []
-            if not tables:
-                return FetchResult(
-                    source_name="eastmoney_f10",
-                    source_type=DataSourceType.WEB_SCRAPING,
-                    source_level=DataSourceLevel.C,
-                    entity_type="holder_structure",
-                    is_success=True,
-                    data=pd.DataFrame(),
-                    record_count=0,
-                    field_count=0,
-                    coverage_rate=0.0,
-                    fetch_duration_ms=(perf_counter() - started_at) * 1000,
-                    warnings=[f"持有人结构暂无数据: {fund_code}"],
-                )
-            raw = tables[0]
-            standardized = raw.rename(columns=COLUMN_MAP)
-            standardized = _coalesce_duplicate_columns(standardized)
-            if "announcement_date" in standardized.columns and "report_date" not in standardized.columns:
-                standardized = standardized.rename(columns={"announcement_date": "report_date"})
-            for col in ("institutional_pct", "individual_pct", "employee_pct"):
-                if col in standardized.columns:
-                    standardized[col] = (
-                        standardized[col]
-                        .astype(str)
-                        .str.replace("%", "", regex=False)
-                        .apply(pd.to_numeric, errors="coerce")
+                resp.raise_for_status()
+                resp.encoding = "utf-8"
+                match = _re.search(r'content:"(.*?)",summary', resp.text, _re.DOTALL)
+                if not match:
+                    if attempt < max_retries - 1:
+                        sleep(2 ** attempt)
+                        continue
+                    return self._error_result(
+                        "holder_structure",
+                        started_at,
+                        RuntimeError(f"无法解析持有人结构响应: {fund_code}"),
                     )
-            if "total_share_yi" in standardized.columns:
-                standardized["total_share"] = (
-                    pd.to_numeric(standardized["total_share_yi"], errors="coerce") * 1e8
+                html = match.group(1).replace("\\", "")
+                tables: list[pd.DataFrame] = []
+                if html and html.strip():
+                    try:
+                        tables = pd.read_html(StringIO(html))
+                    except ValueError:
+                        tables = []
+                if not tables:
+                    if attempt < max_retries - 1:
+                        sleep(2 ** attempt)
+                        continue
+                    return FetchResult(
+                        source_name="eastmoney_f10",
+                        source_type=DataSourceType.WEB_SCRAPING,
+                        source_level=DataSourceLevel.C,
+                        entity_type="holder_structure",
+                        is_success=True,
+                        data=pd.DataFrame(),
+                        record_count=0,
+                        field_count=0,
+                        coverage_rate=0.0,
+                        fetch_duration_ms=(perf_counter() - started_at) * 1000,
+                        warnings=[f"持有人结构暂无数据: {fund_code}"],
+                    )
+                raw = tables[0]
+                standardized = raw.rename(columns=COLUMN_MAP)
+                standardized = _coalesce_duplicate_columns(standardized)
+                if "announcement_date" in standardized.columns and "report_date" not in standardized.columns:
+                    standardized = standardized.rename(columns={"announcement_date": "report_date"})
+                for col in ("institutional_pct", "individual_pct", "employee_pct"):
+                    if col in standardized.columns:
+                        standardized[col] = (
+                            standardized[col]
+                            .astype(str)
+                            .str.replace("%", "", regex=False)
+                            .apply(pd.to_numeric, errors="coerce")
+                        )
+                if "total_share_yi" in standardized.columns:
+                    standardized["total_share"] = (
+                        pd.to_numeric(standardized["total_share_yi"], errors="coerce") * 1e8
+                    )
+                standardized["fund_code"] = fund_code
+                result = self._success_result_from_canonical(
+                    "holder_structure",
+                    standardized,
+                    started_at,
+                    source_level=DataSourceLevel.C,
                 )
-            standardized["fund_code"] = fund_code
-            result = self._success_result_from_canonical(
-                "holder_structure",
-                standardized,
-                started_at,
-                source_level=DataSourceLevel.C,
-            )
-            result.source_name = "eastmoney_f10"
-            result.source_type = DataSourceType.WEB_SCRAPING
-            return result
-        except Exception as exc:
-            return self._error_result("holder_structure", started_at, exc)
+                result.source_name = "eastmoney_f10"
+                result.source_type = DataSourceType.WEB_SCRAPING
+                return result
+            except Exception as exc:
+                if attempt < max_retries - 1:
+                    sleep(2 ** attempt)
+                    continue
+                return self._error_result("holder_structure", started_at, exc)
+        return self._error_result(
+            "holder_structure", started_at, RuntimeError(f"重试{max_retries}次后仍失败: {fund_code}")
+        )
 
     def fetch_fund_manager_history(self, fund_code: str) -> FetchResult:
         """拉取基金历任经理任期历史（东方财富 F10 jjjl 页面，C级数据源）。
@@ -772,7 +805,7 @@ class AkshareAdapter(BaseDataAdapter):
                 resp.encoding = "utf-8"
                 if "起始期" not in resp.text:
                     if attempt < max_retries - 1:
-                        sleep(1.5 * (attempt + 1))
+                        sleep(2 ** attempt)
                         continue
                     return FetchResult(
                         source_name="eastmoney_f10",
@@ -790,7 +823,7 @@ class AkshareAdapter(BaseDataAdapter):
                 tables = pd.read_html(StringIO(resp.text))
                 if len(tables) < 2:
                     if attempt < max_retries - 1:
-                        sleep(1.5 * (attempt + 1))
+                        sleep(2 ** attempt)
                         continue
                     return FetchResult(
                         source_name="eastmoney_f10",
@@ -810,7 +843,7 @@ class AkshareAdapter(BaseDataAdapter):
                     raw = tables[0]
                 if "起始期" not in raw.columns:
                     if attempt < max_retries - 1:
-                        sleep(1.5 * (attempt + 1))
+                        sleep(2 ** attempt)
                         continue
                     return FetchResult(
                         source_name="eastmoney_f10",
@@ -828,7 +861,7 @@ class AkshareAdapter(BaseDataAdapter):
                 break
             except Exception as exc:
                 if attempt < max_retries - 1:
-                    sleep(1.5 * (attempt + 1))
+                    sleep(2 ** attempt)
                     continue
                 return self._error_result("fund_manager_tenure", started_at, exc)
         else:

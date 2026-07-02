@@ -416,7 +416,7 @@ def test_build_research_packet_returns_packet_and_persists_record(
     )
     test_session.commit()
 
-    response = test_client.post("/api/v1/research/packet?fund_code=000001")
+    response = test_client.post("/api/v1/research/packet", json={"fund_code": "000001"})
 
     assert response.status_code == 200
     payload = response.json()
@@ -528,7 +528,7 @@ def test_run_exposure_analysis_returns_observation_and_persists_result(
     )
     test_session.commit()
 
-    response = test_client.post("/api/v1/analysis/exposure?fund_code=000001&window=30")
+    response = test_client.post("/api/v1/analysis/exposure", json={"fund_code": "000001", "window": 30})
 
     assert response.status_code == 200
     payload = response.json()
@@ -553,7 +553,7 @@ def test_run_exposure_analysis_returns_observation_and_persists_result(
         select(ToolAPICallLog).where(ToolAPICallLog.tool_name == "run_exposure_analysis")
     )
     assert call_log is not None
-    assert call_log.parameters == {"fund_code": "000001", "window": 30}
+    assert call_log.parameters == {"fund_code": "000001", "window": 30, "indexes": None}
     assert call_log.status == ConclusionStatus.OBSERVATION.value
 
 
@@ -561,7 +561,7 @@ def test_run_exposure_analysis_returns_needs_review_without_inputs(
     test_client: TestClient,
 ) -> None:
     """Missing exposure inputs should return a structured needs-review response."""
-    response = test_client.post("/api/v1/analysis/exposure?fund_code=999999&window=30")
+    response = test_client.post("/api/v1/analysis/exposure", json={"fund_code": "999999", "window": 30})
 
     assert response.status_code == 200
     payload = response.json()

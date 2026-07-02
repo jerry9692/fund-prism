@@ -7,9 +7,12 @@ FastAPI 应用入口。
 """
 
 from contextlib import asynccontextmanager
+from pathlib import Path
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
+from fastapi.staticfiles import StaticFiles
 
 from fund_research import __version__
 from fund_research.api.router import router
@@ -65,7 +68,6 @@ AI-oriented 开源个人基金研究平台 — Tool API。
         redoc_url="/redoc",
     )
 
-    # CORS — 本地开发允许所有来源
     app.add_middleware(
         CORSMiddleware,
         allow_origins=["*"],
@@ -74,8 +76,19 @@ AI-oriented 开源个人基金研究平台 — Tool API。
         allow_headers=["*"],
     )
 
-    # 注册路由
     app.include_router(router)
     app.include_router(v2_router)
+
+    project_root = Path(__file__).parent.parent.parent.parent
+    frontend_dist = project_root / "frontend" / "dist"
+    if frontend_dist.exists() and frontend_dist.is_dir():
+        app.mount("/assets", StaticFiles(directory=str(frontend_dist / "assets")), name="assets")
+
+        @app.get("/{full_path:path}")
+        async def serve_spa(full_path: str):
+            file_path = frontend_dist / full_path
+            if file_path.exists() and file_path.is_file():
+                return FileResponse(str(file_path))
+            return FileResponse(str(frontend_dist / "index.html"))
 
     return app

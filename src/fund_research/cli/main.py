@@ -485,7 +485,7 @@ def check_dynamic_attribution(
         help="只检查不晚于该日期的持仓报告期，格式 YYYY-MM-DD",
     ),
     min_return_observations: int = typer.Option(
-        3,
+        20,
         "--min-return-observations",
         help="每个报告期最少基准收益观测数",
     ),
@@ -874,7 +874,7 @@ def create_dynamic_attribution_experiment(
         help="算法版本",
     ),
     min_return_observations: int = typer.Option(
-        3,
+        20,
         "--min-return-observations",
         help="每个报告期最少基准收益观测数",
     ),

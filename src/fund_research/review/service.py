@@ -23,12 +23,7 @@ from fund_research.core.schemas import APIResponse
 from fund_research.db.models import ReviewerAnnotation as DbReviewerAnnotation
 from fund_research.db.models import ToolAPICallLog
 
-# Annotation types control what kind of review decision is being recorded.
-# - "note": informational comment, no state change
-# - "lock": freeze a result so it cannot be overwritten by re-runs
-# - "exclude": mark a result/fund as excluded from default conclusions
-# - "approve": reviewer confirms the result is acceptable
-ANNOTATION_TYPES = {"note", "lock", "exclude", "approve"}
+ANNOTATION_TYPES = {"note", "lock", "exclude", "approve", "benchmark_override", "confidence_override"}
 # Target modules map annotations to the result table they affect.
 TARGET_MODULES = {"scoring", "simulated_holding", "dynamic_attribution"}
 
@@ -37,7 +32,10 @@ class CreateReviewerAnnotationRequest(BaseModel):
     """Create a reviewer annotation for a fund / result module."""
 
     fund_code: str = Field(..., min_length=1, max_length=20)
-    annotation_type: str = Field(..., description="note | lock | exclude | approve")
+    annotation_type: str = Field(
+        ...,
+        description="note | lock | exclude | approve | benchmark_override | confidence_override",
+    )
     target_module: str | None = Field(
         None, description="scoring | simulated_holding | dynamic_attribution"
     )

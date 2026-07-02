@@ -49,10 +49,10 @@ def seed_realistic_data(test_session: Session) -> None:
 
     rng = np.random.default_rng(99)
 
-    # NAV: 242 trading days in 2024
+    # NAV: 455 calendar days covering full 2024 plus Q1 2025
     start = date(2024, 1, 2)
     nav_value = 1.0
-    for i in range(242):
+    for i in range(455):
         ret = float(rng.normal(0.0003, 0.012))
         nav_value *= 1.0 + ret
         test_session.add(FundNAV(
@@ -82,10 +82,10 @@ def seed_realistic_data(test_session: Session) -> None:
                 data_source_level="LOCAL",
             ))
 
-    # Stock daily: one row per stock for the year plus the final Q4 attribution window.
+    # Stock daily: one row per stock per calendar day (aligns with NAV frequency)
     for code, _name, _ind in STOCKS:
         price = float(rng.uniform(10, 500))
-        for i in range(0, 455, 5):  # every 5 calendar days through early 2025
+        for i in range(455):
             ret = float(rng.normal(0.0002, 0.018))
             price *= 1.0 + ret
             test_session.add(StockDaily(
@@ -98,7 +98,7 @@ def seed_realistic_data(test_session: Session) -> None:
 
     # Benchmark index daily: stored in stock_daily with index symbol.
     benchmark_level = 4000.0
-    for i in range(0, 455, 5):
+    for i in range(455):
         ret = float(rng.normal(0.0001, 0.01))
         benchmark_level *= 1.0 + ret
         test_session.add(StockDaily(

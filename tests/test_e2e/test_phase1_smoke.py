@@ -249,7 +249,7 @@ def test_phase1_smoke_update_analyze_and_build_packet(
     assert holdings["conclusion_status"] == ConclusionStatus.COMPUTED.value
     assert holdings["data"]["total_weight_pct"] == 100.0
 
-    exposure = test_client.post("/api/v1/analysis/exposure?fund_code=000001&window=30").json()
+    exposure = test_client.post("/api/v1/analysis/exposure", json={"fund_code": "000001", "window": 30}).json()
     assert exposure["conclusion_status"] == ConclusionStatus.OBSERVATION.value
     assert exposure["data"]["exposure_values"]["large_cap"] == pytest.approx(0.6)
     assert exposure["data"]["exposure_values"]["mid_cap"] == pytest.approx(0.4)
@@ -259,7 +259,7 @@ def test_phase1_smoke_update_analyze_and_build_packet(
     )
     assert attribution_record is not None
 
-    packet_response = test_client.post("/api/v1/research/packet?fund_code=000001").json()
+    packet_response = test_client.post("/api/v1/research/packet", json={"fund_code": "000001"}).json()
     packet = packet_response["data"]["packet"]
     packet_record = test_session.scalar(
         select(ResearchPacketRecord).where(

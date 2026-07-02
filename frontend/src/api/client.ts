@@ -407,6 +407,37 @@ export interface SimulatedHoldingListData {
   count: number;
 }
 
+export interface DynamicAttributionResult {
+  id: number;
+  fund_code: string;
+  period_start: string | null;
+  period_end: string | null;
+  algorithm_name: string;
+  algorithm_version: string;
+  parameters: Record<string, unknown> | null;
+  total_return: number | null;
+  beta_return: number | null;
+  allocation_return: number | null;
+  sector_rotation_return: number | null;
+  stock_selection_return: number | null;
+  convertible_bond_return: number | null;
+  ipo_return: number | null;
+  interaction_return: number | null;
+  residual: number | null;
+  residual_pct: number | null;
+  detail: Record<string, unknown> | null;
+  confidence: string | null;
+  conclusion_status: string | null;
+  warnings: string[] | null;
+  created_at: string | null;
+}
+
+export interface DynamicAttributionListData {
+  fund_code: string;
+  results: DynamicAttributionResult[];
+  count: number;
+}
+
 // ---- Generic fetch wrapper ----
 
 async function request<T>(
@@ -666,4 +697,57 @@ export const api = {
     request<SimulatedHoldingListData>(
       `/api/v2/analysis/simulated-holding?fund_code=${fundCode}&limit=${limit}`
     ),
+
+  runSimulatedHolding: (body: {
+    fund_code: string;
+    start_date?: string | null;
+    end_date?: string | null;
+    candidate_pool?: string;
+    max_positions?: number;
+    sparse_lambda?: number;
+    turnover_lambda?: number;
+  }) =>
+    request<{
+      experiment_id: string;
+      status: string;
+      result: SimulatedHoldingResult | null;
+    }>("/api/v2/analysis/simulated-holding", {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+
+  // ---- Dynamic Attribution ----
+
+  runReturnAttribution: (body: {
+    fund_code: string;
+    report_date?: string | null;
+    benchmark_symbol?: string | null;
+    holdings_source?: string;
+    min_return_observations?: number;
+    max_snapshot_age_days?: number;
+  }) =>
+    request<{
+      experiment_id: string;
+      status: string;
+      result: Record<string, unknown> | null;
+    }>("/api/v2/analysis/return-attribution", {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+
+  listDynamicAttribution: (fundCode: string, params?: {
+    start_date?: string;
+    end_date?: string;
+    algorithm_version?: string;
+    include_backtest?: boolean;
+  }) => {
+    const search = params
+      ? "?" + new URLSearchParams(
+          Object.entries(params).filter(([, v]) => v != null) as [string, string][]
+        ).toString()
+      : "";
+    return request<DynamicAttributionListData>(
+      `/api/v2/analysis/dynamic-attribution/${fundCode}${search}`
+    );
+  },
 };

@@ -1,12 +1,39 @@
 """Experiment CRUD operations for Phase 2."""
 
+import logging
 from dataclasses import dataclass
 from datetime import date, datetime
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from fund_research.db.models import AlgorithmExperiment, ExperimentResult
+from fund_research.db.models import (
+    AlgorithmExperiment,
+    DynamicAttributionResult,
+    ExperimentResult,
+    ScoringResult,
+    SimulatedHoldingResult,
+)
+
+logger = logging.getLogger(__name__)
+
+VALID_STATUS_TRANSITIONS: dict[str, set[str]] = {
+    "pending": {"running"},
+    "running": {"completed", "completed_with_failures", "failed", "cancelled"},
+    "completed": set(),
+    "completed_with_failures": set(),
+    "failed": set(),
+    "cancelled": set(),
+}
+
+
+def _validate_transition(current_status: str, new_status: str) -> None:
+    allowed = VALID_STATUS_TRANSITIONS.get(current_status, set())
+    if new_status not in allowed:
+        raise ValueError(
+            f"Invalid status transition: {current_status} → {new_status}. "
+            f"Allowed transitions from {current_status}: {sorted(allowed)}"
+        )
 
 
 @dataclass
@@ -95,10 +122,18 @@ def update_experiment_status(db: Session, experiment_id: int, status: str, summa
     exp = db.scalar(select(AlgorithmExperiment).where(AlgorithmExperiment.id == experiment_id))
     if exp is None:
         raise ValueError(f"Experiment {experiment_id} not found")
+    current_status = exp.status
+    if current_status == status:
+        if summary:
+            exp.summary = summary
+        db.commit()
+        return
+    _validate_transition(current_status, status)
     exp.status = status
     if status == "running":
         exp.started_at = datetime.now()
-    elif status in ("completed", "completed_with_failures", "failed"):
+        exp.completed_at = None
+    elif status in ("completed", "completed_with_failures", "failed", "cancelled"):
         exp.completed_at = datetime.now()
     if summary:
         exp.summary = summary
@@ -115,7 +150,18 @@ def record_result(
     error_message: str | None = None,
     warnings: list[str] | None = None,
 ) -> ExperimentResult:
-    """Record a single experiment result for one fund."""
+    """Record a single experiment result for one fund (upsert)."""
+    existing = db.scalar(
+        select(ExperimentResult).where(
+            ExperimentResult.experiment_id == experiment_id,
+            ExperimentResult.fund_code == fund_code,
+            ExperimentResult.calc_date == calc_date,
+        )
+    )
+    if existing is not None:
+        db.delete(existing)
+        db.flush()
+
     result = ExperimentResult(
         experiment_id=experiment_id,
         fund_code=fund_code,
@@ -132,18 +178,69 @@ def record_result(
 
 
 def delete_experiment(db: Session, experiment_id: int) -> None:
-    """Delete an experiment and its results."""
+    """Delete an experiment and all its associated results."""
     exp = db.get(AlgorithmExperiment, experiment_id)
     if exp is None:
         raise ValueError(f"Experiment {experiment_id} not found")
+
+    sim_count = 0
+    for r in db.scalars(
+        select(SimulatedHoldingResult).where(SimulatedHoldingResult.experiment_id == experiment_id)
+    ).all():
+        db.delete(r)
+        sim_count += 1
+    db.flush()
+
+    attr_count = 0
+    for r in db.scalars(
+        select(DynamicAttributionResult).where(DynamicAttributionResult.experiment_id == experiment_id)
+    ).all():
+        db.delete(r)
+        attr_count += 1
+    db.flush()
+
+    score_count = 0
+    for r in db.scalars(
+        select(ScoringResult).where(ScoringResult.experiment_id == experiment_id)
+    ).all():
+        db.delete(r)
+        score_count += 1
+    db.flush()
+
+    exp_result_count = 0
     for r in db.scalars(
         select(ExperimentResult).where(ExperimentResult.experiment_id == experiment_id)
     ).all():
         db.delete(r)
+        exp_result_count += 1
     db.flush()
+
+    orphan_sim = db.scalars(
+        select(SimulatedHoldingResult).where(SimulatedHoldingResult.experiment_id.is_(None))
+    ).all()
+    orphan_attr = db.scalars(
+        select(DynamicAttributionResult).where(DynamicAttributionResult.experiment_id.is_(None))
+    ).all()
+    orphan_score = db.scalars(
+        select(ScoringResult).where(ScoringResult.experiment_id.is_(None))
+    ).all()
+    if orphan_sim or orphan_attr or orphan_score:
+        logger.warning(
+            "Experiment %s deleted. There may be orphan Phase 2 results without experiment_id: "
+            "simulated_holding=%d, dynamic_attribution=%d, scoring=%d. "
+            "These may be from older experiments and should be cleaned up manually.",
+            experiment_id, len(orphan_sim), len(orphan_attr), len(orphan_score),
+        )
+
     db.delete(exp)
     db.flush()
     db.commit()
+
+    logger.info(
+        "Deleted experiment %s: removed %d simulated_holding, %d dynamic_attribution, "
+        "%d scoring results, and %d experiment_results",
+        experiment_id, sim_count, attr_count, score_count, exp_result_count,
+    )
 
     remaining = db.get(AlgorithmExperiment, experiment_id)
     if remaining is not None:
@@ -155,10 +252,24 @@ def rerun_experiment(db: Session, experiment_id: int) -> AlgorithmExperiment:
     exp = db.scalar(select(AlgorithmExperiment).where(AlgorithmExperiment.id == experiment_id))
     if exp is None:
         raise ValueError(f"Experiment {experiment_id} not found")
+    if exp.status == "running":
+        raise ValueError(f"Cannot rerun experiment {experiment_id}: currently running")
     exp.status = "pending"
     exp.started_at = None
     exp.completed_at = None
     exp.summary = None
+    for r in db.scalars(
+        select(SimulatedHoldingResult).where(SimulatedHoldingResult.experiment_id == experiment_id)
+    ).all():
+        db.delete(r)
+    for r in db.scalars(
+        select(DynamicAttributionResult).where(DynamicAttributionResult.experiment_id == experiment_id)
+    ).all():
+        db.delete(r)
+    for r in db.scalars(
+        select(ScoringResult).where(ScoringResult.experiment_id == experiment_id)
+    ).all():
+        db.delete(r)
     for result in db.scalars(
         select(ExperimentResult).where(ExperimentResult.experiment_id == experiment_id)
     ).all():

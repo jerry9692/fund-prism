@@ -36,12 +36,12 @@ def test_check_holdings_integrity_flags_duplicate_rows() -> None:
             {
                 "report_date": date(2024, 6, 30),
                 "security_code": "600519",
-                "weight_pct": 8.5,
+                "weight_pct": 50.0,
             },
             {
                 "report_date": date(2024, 6, 30),
                 "security_code": "600519",
-                "weight_pct": 8.5,
+                "weight_pct": 50.0,
             },
         ]
     )

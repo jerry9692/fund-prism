@@ -45,6 +45,56 @@ from fund_research.research.official_pdf import build_official_pdf_evidence
 
 T = TypeVar("T")
 
+DEFAULT_START_DATE = date(2020, 1, 1)
+
+
+def _get_dialect(session: Session) -> str:
+    bind = session.get_bind()
+    return bind.dialect.name
+
+
+def _atomic_upsert(
+    session: Session,
+    model: type,
+    defaults: dict[str, Any],
+    dry_run: bool = False,
+    **filters: Any,
+) -> tuple[Any, str]:
+    """Atomically insert or update a row using dialect-aware UPSERT.
+
+    For SQLite uses INSERT OR REPLACE (which fires delete+insert but is atomic).
+    For DuckDB uses INSERT ... ON CONFLICT DO UPDATE SET.
+    Returns (instance, action) where action is 'inserted' or 'updated'.
+    """
+    table = model.__table__
+    mapper_attrs = {col.key for col in table.columns}
+    clean_defaults = {k: v for k, v in defaults.items() if k in mapper_attrs}
+    values = {**filters, **clean_defaults}
+    if "id" not in values and "id" in mapper_attrs:
+        from fund_research.db.models import generate_int_id
+        values["id"] = generate_int_id()
+
+    stmt = select(model).filter_by(**filters)
+    existing = session.scalar(stmt)
+
+    if dry_run:
+        return existing, "updated" if existing else "inserted"
+
+    if existing is not None and "id" in values:
+        existing_id = existing.id
+        if existing_id is not None:
+            values["id"] = existing_id
+
+    if existing is None:
+        instance = model(**values)
+        session.add(instance)
+    else:
+        for k, v in clean_defaults.items():
+            setattr(existing, k, v)
+    session.flush()
+    instance = existing if existing else session.scalar(stmt)
+    return instance, "updated" if existing else "inserted"
+
 
 @dataclass
 class UpdateSummary:
@@ -109,33 +159,23 @@ def _akshare_company_id(company_name: str) -> str:
 
 def _get_or_create_company(session: Session, company_name: str) -> FundCompany:
     company_id = _local_company_id(company_name)
-    company = session.scalar(select(FundCompany).where(FundCompany.company_id == company_id))
-    if company is not None:
-        return company
-
-    company = FundCompany(
+    company, _ = _atomic_upsert(
+        session,
+        FundCompany,
+        {"name": company_name, "short_name": company_name},
         company_id=company_id,
-        name=company_name,
-        short_name=company_name,
     )
-    session.add(company)
-    session.flush()
     return company
 
 
 def _get_or_create_akshare_company(session: Session, company_name: str) -> FundCompany:
     company_id = _akshare_company_id(company_name)
-    company = session.scalar(select(FundCompany).where(FundCompany.company_id == company_id))
-    if company is not None:
-        return company
-
-    company = FundCompany(
+    company, _ = _atomic_upsert(
+        session,
+        FundCompany,
+        {"name": company_name, "short_name": company_name},
         company_id=company_id,
-        name=company_name,
-        short_name=company_name,
     )
-    session.add(company)
-    session.flush()
     return company
 
 
@@ -252,31 +292,26 @@ def _apply_sample_row(session: Session, row: dict[str, str], dry_run: bool) -> s
     if not fund_code or not short_name:
         return "skipped"
 
-    fund = session.scalar(select(FundMain).where(FundMain.fund_code == fund_code))
+    existing = session.scalar(select(FundMain).where(FundMain.fund_code == fund_code))
     if dry_run:
-        return "updated" if fund else "inserted"
+        return "updated" if existing else "inserted"
 
     company = _get_or_create_company(session, company_name) if company_name else None
-    if fund is None:
-        fund = FundMain(
-            fund_code=fund_code,
-            short_name=short_name,
-            full_name=short_name,
-        )
-        session.add(fund)
-        action = "inserted"
-    else:
-        action = "updated"
+    now = datetime.now()
+    defaults: dict[str, Any] = {
+        "short_name": short_name,
+        "full_name": (existing.full_name if existing and existing.full_name else short_name),
+        "category": "混合型",
+        "sub_category": "主动权益",
+        "investment_type": expected_style or None,
+        "data_source": "sample_funds_v0.1.csv",
+        "data_source_level": DataSourceLevel.LOCAL.value,
+        "updated_at": now,
+    }
+    if company is not None:
+        defaults["fund_company_id"] = company.id
 
-    fund.short_name = short_name
-    fund.full_name = fund.full_name or short_name
-    fund.fund_company_id = company.id if company else None
-    fund.category = "混合型"
-    fund.sub_category = "主动权益"
-    fund.investment_type = expected_style or None
-    fund.data_source = "sample_funds_v0.1.csv"
-    fund.data_source_level = DataSourceLevel.LOCAL.value
-    fund.updated_at = datetime.now()
+    _, action = _atomic_upsert(session, FundMain, defaults, fund_code=fund_code)
     return action
 
 
@@ -348,33 +383,36 @@ def _apply_fund_info_row(session: Session, row: dict, fund_code: str, dry_run: b
     if not code:
         return "skipped"
 
-    fund = session.scalar(select(FundMain).where(FundMain.fund_code == code))
+    existing = session.scalar(select(FundMain).where(FundMain.fund_code == code))
     if dry_run:
-        return "updated" if fund else "inserted"
+        return "updated" if existing else "inserted"
 
     company_name = str(row.get("company_name") or "").strip()
     company = _get_or_create_akshare_company(session, company_name) if company_name else None
-    if fund is None:
-        fund = FundMain(
-            fund_code=code,
-            short_name=short_name,
-            full_name=str(row.get("full_name") or short_name).strip(),
-        )
-        session.add(fund)
-        action = "inserted"
-    else:
-        action = "updated"
+    now = datetime.now()
+    full_name = str(row.get("full_name") or "").strip() or None
+    custodian_bank = row.get("custodian_bank") or None
+    inception_date = _parse_date(row.get("inception_date"))
+    category = row.get("fund_type_raw") or None
+    benchmark = row.get("benchmark") or None
 
-    fund.short_name = short_name
-    fund.full_name = str(row.get("full_name") or fund.full_name or short_name).strip()
-    fund.fund_company_id = company.id if company else fund.fund_company_id
-    fund.custodian_bank = row.get("custodian_bank") or fund.custodian_bank
-    fund.inception_date = _parse_date(row.get("inception_date")) or fund.inception_date
-    fund.category = row.get("fund_type_raw") or fund.category
-    fund.benchmark = row.get("benchmark") or fund.benchmark
-    fund.data_source = "akshare"
-    fund.data_source_level = DataSourceLevel.B.value
-    fund.updated_at = datetime.now()
+    defaults: dict[str, Any] = {
+        "short_name": short_name,
+        "full_name": full_name or (existing.full_name if existing and existing.full_name else short_name),
+        "custodian_bank": custodian_bank or (existing.custodian_bank if existing else None),
+        "inception_date": inception_date or (existing.inception_date if existing else None),
+        "category": category or (existing.category if existing else None),
+        "benchmark": benchmark or (existing.benchmark if existing else None),
+        "data_source": "akshare",
+        "data_source_level": DataSourceLevel.B.value,
+        "updated_at": now,
+    }
+    if company is not None:
+        defaults["fund_company_id"] = company.id
+    elif existing is not None and existing.fund_company_id is not None:
+        defaults["fund_company_id"] = existing.fund_company_id
+
+    _, action = _atomic_upsert(session, FundMain, defaults, fund_code=code)
     return action
 
 
@@ -426,6 +464,8 @@ def _apply_manager_row(
     row: dict,
     fund_code: str,
     dry_run: bool,
+    *,
+    snapshot_warning_list: list[str] | None = None,
 ) -> str:
     name = str(row.get("name") or row.get("manager_names_raw") or "").strip()
     if not name:
@@ -433,43 +473,90 @@ def _apply_manager_row(
     company_name = str(row.get("company_name") or "").strip() or None
     manager_id = str(row.get("manager_id") or _manager_id_from_name(name, company_name)).strip()
     start_date = _parse_date(row.get("start_date"))
+    end_date = _parse_date(row.get("end_date"))
+    is_current = end_date is None
+    tenure_days_raw = _parse_float(row.get("tenure_days"))
+    tenure_days = int(tenure_days_raw) if tenure_days_raw is not None and int(tenure_days_raw) != 0 else None
+    tenure_return = _parse_float(row.get("tenure_return"))
+    education = row.get("education")
+    experience_years = _parse_float(row.get("experience_years"))
+
+    manager_defaults: dict[str, Any] = {
+        "name": name,
+    }
+    existing_manager = session.scalar(
+        select(FundManager).where(FundManager.manager_id == manager_id)
+    )
+    if education:
+        manager_defaults["education"] = education
+    elif existing_manager is not None:
+        manager_defaults["education"] = existing_manager.education
+    if experience_years is not None:
+        manager_defaults["experience_years"] = experience_years
+    elif existing_manager is not None:
+        manager_defaults["experience_years"] = existing_manager.experience_years
+    manager_defaults["updated_at"] = datetime.now()
+
+    if dry_run:
+        manager_action = "updated" if existing_manager else "inserted"
+    else:
+        _, manager_action = _atomic_upsert(
+            session, FundManager, manager_defaults, manager_id=manager_id
+        )
+
+    tenure_defaults: dict[str, Any] = {
+        "end_date": end_date,
+        "is_current": is_current,
+        "tenure_days": tenure_days,
+        "tenure_return": tenure_return,
+    }
+
     if start_date is None:
         start_date = date.today()
+        if snapshot_warning_list is not None:
+            warn_msg = (
+                f"基金 {fund_code} 经理 {name} 缺少任职起始日，"
+                f"使用 {start_date} 作为快照日期"
+            )
+            if warn_msg not in snapshot_warning_list:
+                snapshot_warning_list.append(warn_msg)
 
-    manager = session.scalar(select(FundManager).where(FundManager.manager_id == manager_id))
-    tenure_stmt = (
-        select(FundManagerTenure)
-        .where(FundManagerTenure.manager_id == manager_id)
-        .where(FundManagerTenure.fund_code == fund_code)
-    )
-    tenure_stmt = tenure_stmt.where(FundManagerTenure.start_date == start_date)
-    tenure = session.scalar(tenure_stmt)
-    if dry_run:
-        return "updated" if manager and tenure else "inserted"
-
-    if manager is None:
-        manager = FundManager(manager_id=manager_id, name=name)
-        session.add(manager)
-        action = "inserted"
+        tenure_stmt = (
+            select(FundManagerTenure)
+            .where(FundManagerTenure.manager_id == manager_id)
+            .where(FundManagerTenure.fund_code == fund_code)
+        )
+        tenure = session.scalar(tenure_stmt)
+        if dry_run:
+            return manager_action
+        if tenure is None:
+            _, _ = _atomic_upsert(
+                session,
+                FundManagerTenure,
+                tenure_defaults,
+                manager_id=manager_id,
+                fund_code=fund_code,
+                start_date=start_date,
+            )
+        else:
+            tenure.end_date = end_date
+            tenure.is_current = is_current
+            tenure.tenure_days = tenure_days
+            tenure.tenure_return = tenure_return
+            session.flush()
     else:
-        action = "updated"
-    manager.name = name
-    manager.education = row.get("education") or manager.education
-    manager.experience_years = _parse_float(row.get("experience_years"))
-    manager.updated_at = datetime.now()
-
-    if tenure is None:
-        tenure = FundManagerTenure(
+        if dry_run:
+            return manager_action
+        _, _ = _atomic_upsert(
+            session,
+            FundManagerTenure,
+            tenure_defaults,
             manager_id=manager_id,
             fund_code=fund_code,
             start_date=start_date,
         )
-        session.add(tenure)
-    tenure.end_date = _parse_date(row.get("end_date"))
-    tenure.is_current = tenure.end_date is None
-    tenure.tenure_days = int(_parse_float(row.get("tenure_days")) or 0) or None
-    tenure.tenure_return = _parse_float(row.get("tenure_return"))
-    return action
+
+    return manager_action
 
 
 def upsert_akshare_fund_managers(
@@ -502,14 +589,15 @@ def upsert_akshare_fund_managers(
                 f"start_date 使用抓取日期作为快照日期: {fund_code}"
             )
         for row in result.data.to_dict(orient="records"):
-            action = _apply_manager_row(session, row, fund_code, dry_run)
+            action = _apply_manager_row(
+                session, row, fund_code, dry_run, snapshot_warning_list=summary.warnings
+            )
             if action == "inserted":
                 summary.inserted += 1
             elif action == "updated":
                 summary.updated += 1
             else:
                 summary.skipped += 1
-                summary.warnings.append(f"基金经理任职起始日缺失，已跳过: {fund_code}")
 
     if not dry_run:
         _log_update_task(session, "fund_managers", summary)
@@ -550,8 +638,15 @@ def upsert_eastmoney_fund_manager_history(
             summary.skipped += 1
             summary.warnings.append(result.error_message or f"基金经理历史为空: {fund_code}")
             continue
+        fund = session.scalar(select(FundMain).where(FundMain.fund_code == fund_code))
+        fund_company_name = fund.company_name if fund else None
         for row in result.data.to_dict(orient="records"):
-            action = _apply_manager_row(session, row, fund_code, dry_run)
+            if fund_company_name:
+                row["company_name"] = fund_company_name
+            row["manager_id"] = None
+            action = _apply_manager_row(
+                session, row, fund_code, dry_run, snapshot_warning_list=summary.warnings
+            )
             if action == "inserted":
                 summary.inserted += 1
             elif action == "updated":
@@ -854,26 +949,26 @@ def _apply_nav_row(session: Session, row: dict, fund_code: str, dry_run: bool) -
     if trade_date is None:
         return "skipped"
 
-    nav = session.scalar(
-        select(FundNAV)
-        .where(FundNAV.fund_code == fund_code)
-        .where(FundNAV.trade_date == trade_date)
-    )
     if dry_run:
-        return "updated" if nav else "inserted"
-    if nav is None:
-        nav = FundNAV(fund_code=fund_code, trade_date=trade_date)
-        session.add(nav)
-        action = "inserted"
-    else:
-        action = "updated"
+        existing = session.scalar(
+            select(FundNAV)
+            .where(FundNAV.fund_code == fund_code)
+            .where(FundNAV.trade_date == trade_date)
+        )
+        return "updated" if existing else "inserted"
 
-    nav.unit_nav = _parse_float(row.get("unit_nav"))
-    nav.accumulated_nav = _parse_float(row.get("accumulated_nav"))
-    nav.adjusted_nav = _parse_float(row.get("adjusted_nav"))
-    nav.daily_return = _parse_float(row.get("daily_return"))
-    nav.data_source = "akshare"
-    nav.data_source_level = DataSourceLevel.B.value
+    defaults: dict[str, Any] = {
+        "unit_nav": _parse_float(row.get("unit_nav")),
+        "accumulated_nav": _parse_float(row.get("accumulated_nav")),
+        "adjusted_nav": _parse_float(row.get("adjusted_nav")),
+        "daily_return": _parse_float(row.get("daily_return")),
+        "data_source": "akshare",
+        "data_source_level": DataSourceLevel.B.value,
+    }
+
+    _, action = _atomic_upsert(
+        session, FundNAV, defaults, fund_code=fund_code, trade_date=trade_date
+    )
     return action
 
 
@@ -888,25 +983,46 @@ def _apply_dividend_row(session: Session, row: dict, fund_code: str, dry_run: bo
     if trade_date is None or (dividend is None and split_ratio is None):
         return "skipped"
 
-    nav = session.scalar(
-        select(FundNAV)
-        .where(FundNAV.fund_code == fund_code)
-        .where(FundNAV.trade_date == trade_date)
-    )
     if dry_run:
-        return "updated" if nav else "inserted"
-    if nav is None:
-        nav = FundNAV(fund_code=fund_code, trade_date=trade_date)
-        session.add(nav)
-        action = "inserted"
-    else:
-        action = "updated"
+        existing = session.scalar(
+            select(FundNAV)
+            .where(FundNAV.fund_code == fund_code)
+            .where(FundNAV.trade_date == trade_date)
+        )
+        return "updated" if existing else "inserted"
 
-    nav.dividend = dividend
-    nav.split_ratio = split_ratio
-    nav.data_source = "akshare"
-    nav.data_source_level = DataSourceLevel.B.value
+    defaults: dict[str, Any] = {
+        "dividend": dividend,
+        "split_ratio": split_ratio,
+        "data_source": "akshare",
+        "data_source_level": DataSourceLevel.B.value,
+    }
+
+    _, action = _atomic_upsert(
+        session, FundNAV, defaults, fund_code=fund_code, trade_date=trade_date
+    )
     return action
+
+
+def _resolve_nav_start_date(
+    session: Session,
+    fund_code: str,
+    requested_start: date | None,
+) -> date:
+    if requested_start is not None:
+        return requested_start
+    latest_nav = session.scalar(
+        select(FundNAV.trade_date)
+        .where(FundNAV.fund_code == fund_code)
+        .order_by(FundNAV.trade_date.desc())
+        .limit(1)
+    )
+    if latest_nav is not None:
+        return latest_nav
+    fund = session.scalar(select(FundMain).where(FundMain.fund_code == fund_code))
+    if fund is not None and fund.inception_date is not None:
+        return fund.inception_date
+    return DEFAULT_START_DATE
 
 
 def upsert_akshare_fund_nav(
@@ -928,7 +1044,8 @@ def upsert_akshare_fund_nav(
         warnings=[],
     )
     for fund_code in _progress_iter(sorted(fund_codes), f"更新 {summary.entity}"):
-        result = adapter.fetch_fund_nav(fund_code, start_date=start_date, end_date=end_date)
+        effective_start = _resolve_nav_start_date(session, fund_code, start_date)
+        result = adapter.fetch_fund_nav(fund_code, start_date=effective_start, end_date=end_date)
         if not dry_run:
             _snapshot_from_fetch(session, result)
         if not result.is_success or result.data is None or result.data.empty:

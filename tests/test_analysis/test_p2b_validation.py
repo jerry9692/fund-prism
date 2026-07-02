@@ -586,7 +586,11 @@ class TestRunExperimentPipeline:
 
         create_resp = test_client.post("/api/v2/experiments", json={
             "experiment_name": "attr-test", "algorithm_name": "dynamic_attribution",
-            "parameters": {"benchmark_symbol": "sh000300"},
+            "parameters": {
+                "benchmark_symbol": "sh000300",
+                "min_return_observations": 3,
+                "min_stock_weight_coverage": 0.5,
+            },
             "sample_fund_codes": ["000001"],
         })
         exp_id = create_resp.json()["data"]["id"]
@@ -685,7 +689,10 @@ class TestRunExperimentPipeline:
         create_resp = test_client.post("/api/v2/experiments", json={
             "experiment_name": "attr-auto-benchmark",
             "algorithm_name": "dynamic_attribution",
-            "parameters": {},
+            "parameters": {
+                "min_return_observations": 3,
+                "min_stock_weight_coverage": 0.5,
+            },
             "sample_fund_codes": ["000001"],
         })
         exp_id = create_resp.json()["data"]["id"]
@@ -934,6 +941,8 @@ class TestRunExperimentPipeline:
             "parameters": {
                 "benchmark_symbol": "sh000300",
                 "report_dates": ["2024-06-01"],
+                "min_return_observations": 3,
+                "min_stock_weight_coverage": 0.5,
             },
             "sample_fund_codes": ["000001"],
         })

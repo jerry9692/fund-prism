@@ -7,7 +7,7 @@ from sqlalchemy import insert
 from typer.testing import CliRunner
 
 from fund_research.cli.main import app
-from fund_research.core.enums import DataSourceLevel, DataSourceType
+from fund_research.core.enums import DataSourceLevel, DataSourceType, TaskStatus, TaskType
 from fund_research.data.metric_registry import seed_metric_registry
 from fund_research.db.models import DataSourceSnapshot, TaskLog
 from fund_research.db.session import create_engine_from_path, init_db
@@ -45,8 +45,8 @@ def test_check_data_fails_when_task_log_has_failed_tasks(tmp_path: Path) -> None
         connection.execute(
             insert(TaskLog).values(
                 task_id="task_failed",
-                task_type="fund_nav",
-                status="failed",
+                task_type=TaskType.DATA_UPDATE,
+                status=TaskStatus.FAILED,
                 target_entity="000001",
                 error_message="unit test failure",
             )
@@ -72,8 +72,8 @@ def test_check_data_fails_when_source_snapshot_failed(tmp_path: Path) -> None:
         connection.execute(
             insert(DataSourceSnapshot).values(
                 source_name="akshare",
-                source_type=DataSourceType.OPEN_API.value,
-                source_level=DataSourceLevel.B.value,
+                source_type=DataSourceType.OPEN_API,
+                source_level=DataSourceLevel.B,
                 fetch_timestamp=datetime.now(),
                 entity_type="fund_nav",
                 is_success=False,
@@ -105,8 +105,8 @@ def test_check_data_uses_latest_source_snapshot_status(tmp_path: Path) -> None:
             [
                 {
                     "source_name": "akshare",
-                    "source_type": DataSourceType.OPEN_API.value,
-                    "source_level": DataSourceLevel.B.value,
+                    "source_type": DataSourceType.OPEN_API,
+                    "source_level": DataSourceLevel.B,
                     "fetch_timestamp": now - timedelta(minutes=1),
                     "entity_type": "fund_managers",
                     "is_success": False,
@@ -114,8 +114,8 @@ def test_check_data_uses_latest_source_snapshot_status(tmp_path: Path) -> None:
                 },
                 {
                     "source_name": "akshare",
-                    "source_type": DataSourceType.OPEN_API.value,
-                    "source_level": DataSourceLevel.B.value,
+                    "source_type": DataSourceType.OPEN_API,
+                    "source_level": DataSourceLevel.B,
                     "fetch_timestamp": now,
                     "entity_type": "fund_managers",
                     "is_success": True,

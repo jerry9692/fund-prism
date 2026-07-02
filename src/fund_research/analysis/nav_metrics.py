@@ -6,9 +6,12 @@ from math import sqrt
 
 import pandas as pd
 
+from fund_research.config.settings import get_settings
+
 ALGORITHM_NAME = "nav_metrics"
 ALGORITHM_VERSION = "0.1.0"
-TRADING_DAYS_PER_YEAR = 252
+_settings = get_settings()
+TRADING_DAYS_PER_YEAR = _settings.trading_days_per_year
 MIN_OBSERVATIONS = 20
 
 
@@ -69,7 +72,11 @@ def _prepare_returns(nav_df: pd.DataFrame) -> tuple[pd.DataFrame, list[str]]:
     return data, warnings
 
 
-def calculate_nav_metrics(nav_df: pd.DataFrame, risk_free_rate: float = 0.0) -> NavMetricsResult:
+def calculate_nav_metrics(
+    nav_df: pd.DataFrame,
+    risk_free_rate: float = 0.0,
+    benchmark_nav: pd.DataFrame | None = None,
+) -> NavMetricsResult:
     """Calculate common return and risk metrics from NAV observations."""
     data, warnings = _prepare_returns(nav_df)
     if data.empty:
@@ -126,6 +133,56 @@ def calculate_nav_metrics(nav_df: pd.DataFrame, risk_free_rate: float = 0.0) -> 
         else None
     )
 
+    information_ratio = None
+    benchmark_comparison: dict[str, float | None] | None = None
+    if benchmark_nav is not None and not benchmark_nav.empty:
+        bm_data, bm_warnings = _prepare_returns(benchmark_nav)
+        warnings.extend(bm_warnings)
+        if not bm_data.empty:
+            fund_with_date = data[["trade_date", "daily_return"]].dropna().rename(
+                columns={"daily_return": "fund_return"}
+            )
+            bm_with_date = bm_data[["trade_date", "daily_return"]].dropna().rename(
+                columns={"daily_return": "bm_return"}
+            )
+            merged = fund_with_date.merge(bm_with_date, on="trade_date", how="inner")
+            if len(merged) >= MIN_OBSERVATIONS:
+                aligned_fund = merged["fund_return"]
+                aligned_bm = merged["bm_return"]
+                excess_returns = aligned_fund - aligned_bm
+                bm_total = (1 + aligned_bm).prod() - 1
+                bm_obs = len(aligned_bm)
+                bm_annualized = (1 + bm_total) ** (TRADING_DAYS_PER_YEAR / bm_obs) - 1
+                excess_annualized = annualized_return - bm_annualized
+                tracking_error = excess_returns.std() * sqrt(TRADING_DAYS_PER_YEAR)
+                information_ratio = (
+                    excess_annualized / tracking_error
+                    if tracking_error and tracking_error > 1e-10
+                    else None
+                )
+                bm_var = aligned_bm.var()
+                beta = (
+                    aligned_fund.cov(aligned_bm) / bm_var
+                    if bm_var and bm_var > 1e-15
+                    else None
+                )
+                alpha = (
+                    annualized_return - (risk_free_rate + beta * (bm_annualized - risk_free_rate))
+                    if beta is not None
+                    else None
+                )
+                benchmark_comparison = {
+                    "benchmark_annualized_return": _clean_float(bm_annualized),
+                    "excess_return_annualized": _clean_float(excess_annualized),
+                    "tracking_error": _clean_float(tracking_error),
+                    "information_ratio": _clean_float(information_ratio),
+                    "beta": _clean_float(beta),
+                    "alpha": _clean_float(alpha),
+                    "aligned_observations": len(merged),
+                }
+            else:
+                warnings.append("基金与基准日期对齐后样本不足，无法计算信息比率等基准对比指标")
+
     if observations < MIN_OBSERVATIONS:
         warnings.append(f"可用收益率样本不足 {MIN_OBSERVATIONS} 条，指标仅供复核")
 
@@ -139,7 +196,8 @@ def calculate_nav_metrics(nav_df: pd.DataFrame, risk_free_rate: float = 0.0) -> 
             "sharpe_ratio": _clean_float(sharpe_ratio),
             "calmar_ratio": _clean_float(calmar_ratio),
             "sortino_ratio": _clean_float(sortino_ratio),
-            "information_ratio": None,
+            "information_ratio": _clean_float(information_ratio),
+            "benchmark_comparison": benchmark_comparison,
             "trading_days_per_year": TRADING_DAYS_PER_YEAR,
         },
         observations=observations,

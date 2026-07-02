@@ -24,7 +24,11 @@ from fund_research.core.enums import ConclusionStatus
 from fund_research.core.schemas import APIResponse
 from fund_research.db.models import (
     AlgorithmExperiment,
+    FundMain,
     ToolAPICallLog,
+)
+from fund_research.db.models import (
+    DynamicAttributionResult as DbDynamicAttributionResult,
 )
 from fund_research.db.models import (
     ScoringBacktest as DbScoringBacktest,
@@ -76,6 +80,7 @@ class CreateDynamicAttributionFromReadyRequest(BaseModel):
     benchmark_symbol: str | None = None
     fund_codes: list[str] | None = None
     min_return_observations: int = 3
+    min_stock_weight_coverage: float = 0.5
     max_snapshot_age_days: int = 180
     limit: int | None = None
 
@@ -800,6 +805,10 @@ def dynamic_attribution_readiness_endpoint(
         int,
         Query(description="每个报告期最少基准收益观测数"),
     ] = 3,
+    min_stock_weight_coverage: Annotated[
+        float,
+        Query(description="持仓股票行情权重覆盖率门槛"),
+    ] = 0.5,
     max_snapshot_age_days: Annotated[
         int,
         Query(description="基准行业权重快照最大允许年龄"),
@@ -821,6 +830,7 @@ def dynamic_attribution_readiness_endpoint(
         "min_report_date": str(min_report_date) if min_report_date else None,
         "max_report_date": str(max_report_date) if max_report_date else None,
         "min_return_observations": min_return_observations,
+        "min_stock_weight_coverage": min_stock_weight_coverage,
         "max_snapshot_age_days": max_snapshot_age_days,
         "ready_only": ready_only,
         "limit": limit,
@@ -833,6 +843,7 @@ def dynamic_attribution_readiness_endpoint(
             min_report_date=min_report_date,
             max_report_date=max_report_date,
             min_return_observations=min_return_observations,
+            min_stock_weight_coverage=min_stock_weight_coverage,
             max_snapshot_age_days=max_snapshot_age_days,
             ready_only=ready_only,
             limit=limit,
@@ -890,6 +901,7 @@ def create_dynamic_attribution_from_ready_endpoint(
             min_report_date=body.report_date,
             max_report_date=body.report_date,
             min_return_observations=body.min_return_observations,
+            min_stock_weight_coverage=body.min_stock_weight_coverage,
             max_snapshot_age_days=body.max_snapshot_age_days,
             ready_only=True,
             limit=body.limit,
@@ -1855,7 +1867,7 @@ class ReturnAttributionRequest(BaseModel):
     report_date: date | None = None
     benchmark_symbol: str | None = None
     holdings_source: str = Field(default="disclosed", description="disclosed | estimated")
-    min_return_observations: int = Field(default=3, ge=1)
+    min_return_observations: int = Field(default=20, ge=1)
     max_snapshot_age_days: int = Field(default=180, ge=1)
 
 
@@ -1929,6 +1941,159 @@ def run_return_attribution(
                 data=None,
                 metadata={"tool": "return_attribution"},
                 warnings=[str(exc)],
+                conclusion_status=ConclusionStatus.NEEDS_REVIEW,
+            ),
+            started,
+        )
+
+
+def _dynamic_attribution_to_dict(row: DbDynamicAttributionResult) -> dict:
+    return {
+        "id": row.id,
+        "fund_code": row.fund_code,
+        "period_start": row.period_start.isoformat() if row.period_start else None,
+        "period_end": row.period_end.isoformat() if row.period_end else None,
+        "algorithm_name": row.algorithm_name,
+        "algorithm_version": row.algorithm_version,
+        "parameters": row.parameters,
+        "total_return": row.total_return,
+        "beta_return": row.beta_return,
+        "allocation_return": row.allocation_return,
+        "sector_rotation_return": row.sector_rotation_return,
+        "stock_selection_return": row.stock_selection_return,
+        "convertible_bond_return": row.convertible_bond_return,
+        "ipo_return": row.ipo_return,
+        "interaction_return": row.interaction_return,
+        "residual": row.residual,
+        "residual_pct": row.residual_pct,
+        "detail": row.detail,
+        "confidence": row.confidence.value if row.confidence else None,
+        "conclusion_status": row.conclusion_status.value if row.conclusion_status else None,
+        "warnings": row.warnings,
+        "created_at": row.created_at.isoformat() if row.created_at else None,
+    }
+
+
+@v2_router.get("/analysis/dynamic-attribution")
+def get_dynamic_attribution(
+    fund_code: Annotated[str, Query(description="基金代码")],
+    db: SessionDep,
+    report_date: Annotated[date | None, Query(description="报告日期（精确匹配period_start）")] = None,
+    start_date: Annotated[date | None, Query(description="开始日期（period_start范围）")] = None,
+    end_date: Annotated[date | None, Query(description="结束日期（period_end范围）")] = None,
+    algorithm_version: Annotated[str | None, Query()] = None,
+) -> APIResponse[dict]:
+    """Query dynamic attribution results by fund_code and optional date filters."""
+    started = perf_counter()
+    params = {
+        "fund_code": fund_code,
+        "report_date": str(report_date) if report_date else None,
+        "start_date": str(start_date) if start_date else None,
+        "end_date": str(end_date) if end_date else None,
+        "algorithm_version": algorithm_version,
+    }
+    try:
+        query = select(DbDynamicAttributionResult).where(
+            DbDynamicAttributionResult.fund_code == fund_code
+        )
+        if report_date:
+            query = query.where(DbDynamicAttributionResult.period_start == report_date)
+        if start_date:
+            query = query.where(DbDynamicAttributionResult.period_start >= start_date)
+        if end_date:
+            query = query.where(DbDynamicAttributionResult.period_end <= end_date)
+        if algorithm_version:
+            query = query.where(DbDynamicAttributionResult.algorithm_version == algorithm_version)
+        query = query.order_by(DbDynamicAttributionResult.period_start.desc())
+        rows = db.scalars(query).all()
+
+        return _log(
+            db,
+            "dynamic_attribution_query",
+            params,
+            APIResponse(
+                data={
+                    "fund_code": fund_code,
+                    "results": [_dynamic_attribution_to_dict(r) for r in rows],
+                    "count": len(rows),
+                },
+                metadata={"tool": "dynamic_attribution", "platform_version": __version__},
+                conclusion_status=ConclusionStatus.ESTIMATED,
+            ),
+            started,
+        )
+    except Exception as exc:
+        db.rollback()
+        return _log(
+            db,
+            "dynamic_attribution_query",
+            params,
+            APIResponse(
+                data=None,
+                metadata={"tool": "dynamic_attribution"},
+                warnings=[f"查询动态归因结果失败: {exc}"],
+                conclusion_status=ConclusionStatus.NEEDS_REVIEW,
+            ),
+            started,
+        )
+
+
+@v2_router.get("/analysis/dynamic-attribution/{fund_code}")
+def list_dynamic_attribution(
+    fund_code: str,
+    db: SessionDep,
+    start_date: Annotated[date | None, Query()] = None,
+    end_date: Annotated[date | None, Query()] = None,
+    algorithm_version: Annotated[str | None, Query()] = None,
+    include_backtest: Annotated[bool, Query()] = False,
+) -> APIResponse[dict]:
+    """List dynamic attribution results for a fund."""
+    started = perf_counter()
+    params = {
+        "fund_code": fund_code,
+        "start_date": str(start_date) if start_date else None,
+        "end_date": str(end_date) if end_date else None,
+        "algorithm_version": algorithm_version,
+        "include_backtest": include_backtest,
+    }
+    try:
+        query = select(DbDynamicAttributionResult).where(
+            DbDynamicAttributionResult.fund_code == fund_code
+        )
+        if start_date:
+            query = query.where(DbDynamicAttributionResult.period_start >= start_date)
+        if end_date:
+            query = query.where(DbDynamicAttributionResult.period_start <= end_date)
+        if algorithm_version:
+            query = query.where(DbDynamicAttributionResult.algorithm_version == algorithm_version)
+        query = query.order_by(DbDynamicAttributionResult.period_start.desc())
+        rows = db.scalars(query).all()
+
+        return _log(
+            db,
+            "dynamic_attribution",
+            params,
+            APIResponse(
+                data={
+                    "fund_code": fund_code,
+                    "results": [_dynamic_attribution_to_dict(r) for r in rows],
+                    "count": len(rows),
+                },
+                metadata={"tool": "dynamic_attribution", "platform_version": __version__},
+                conclusion_status=ConclusionStatus.ESTIMATED,
+            ),
+            started,
+        )
+    except Exception as exc:
+        db.rollback()
+        return _log(
+            db,
+            "dynamic_attribution",
+            params,
+            APIResponse(
+                data=None,
+                metadata={"tool": "dynamic_attribution"},
+                warnings=[f"查询动态归因结果失败: {exc}"],
                 conclusion_status=ConclusionStatus.NEEDS_REVIEW,
             ),
             started,
@@ -2087,16 +2252,22 @@ def review_adjust_benchmark(
         detail["benchmark_symbol"] = body.benchmark_symbol
     if body.custom_weights:
         detail["custom_weights"] = body.custom_weights
-    return create_annotation(
+    result = create_annotation(
         db,
         CreateReviewerAnnotationRequest(
             fund_code=body.fund_code,
-            annotation_type="note",
+            annotation_type="benchmark_override",
             target_module="dynamic_attribution",
             detail=detail,
             reason=body.reason,
         ),
     )
+    if body.benchmark_symbol:
+        fund = db.scalar(select(FundMain).where(FundMain.fund_code == body.fund_code))
+        if fund:
+            fund.benchmark = body.benchmark_symbol
+            db.commit()
+    return result
 
 
 @v2_router.post("/review/annotate-confidence")
@@ -2105,8 +2276,13 @@ def review_annotate_confidence(
     body: AnnotateConfidenceRequest,
 ) -> APIResponse[dict]:
     """§5.5.3 — Manually annotate confidence level for algorithm results."""
-    annotation_type = "approve" if body.action == "approve" else "note"
-    return create_annotation(
+    if body.action == "approve":
+        annotation_type = "approve"
+    elif body.action == "flag":
+        annotation_type = "confidence_override"
+    else:
+        annotation_type = "note"
+    result = create_annotation(
         db,
         CreateReviewerAnnotationRequest(
             fund_code=body.fund_code,
@@ -2117,6 +2293,24 @@ def review_annotate_confidence(
             evidence_id=body.evidence_id,
         ),
     )
+    if body.action == "flag" and body.target_module:
+        model_map = {
+            "scoring": DbScoringResult,
+            "simulated_holding": DbSimulatedHoldingResult,
+            "dynamic_attribution": DbDynamicAttributionResult,
+        }
+        model = model_map.get(body.target_module)
+        if model:
+            latest_result = db.scalar(
+                select(model)
+                .where(model.fund_code == body.fund_code)
+                .order_by(model.created_at.desc())
+                .limit(1)
+            )
+            if latest_result:
+                latest_result.conclusion_status = "needs_review"
+                db.commit()
+    return result
 
 
 @v2_router.get("/review/history/{fund_code}")

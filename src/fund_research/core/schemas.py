@@ -10,6 +10,7 @@ from typing import Any, Generic, TypeVar
 
 from pydantic import BaseModel, Field
 
+from fund_research.config.settings import get_settings
 from fund_research.core.enums import (
     ConclusionStatus,
     ConfidenceLevel,
@@ -109,7 +110,7 @@ class ResearchPacketMetadata(BaseModel):
     overall_confidence: ConfidenceLevel = Field(
         ConfidenceLevel.NEEDS_REVIEW, description="研究包整体置信度"
     )
-    disclaimer: str = Field("算法结果仅用于个人研究，不构成投资建议。", description="免责声明")
+    disclaimer: str = Field(default_factory=lambda: get_settings().disclaimer, description="免责声明")
 
 
 class ResearchPacket(BaseModel):

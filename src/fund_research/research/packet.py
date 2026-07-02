@@ -34,6 +34,7 @@ from fund_research.analysis.nav_metrics import (
     ALGORITHM_VERSION as NAV_METRICS_ALGORITHM_VERSION,
 )
 from fund_research.analysis.nav_metrics import calculate_nav_metrics
+from fund_research.config.settings import get_settings
 from fund_research.core.enums import (
     ConclusionStatus,
     ConfidenceLevel,
@@ -70,6 +71,38 @@ SUPPORTED_TEMPLATES = {
     "style_drift",
     "holdings_deep_dive",
 }
+
+
+def _get_packet_disclaimer() -> str:
+    """Return the platform-wide disclaimer text from settings."""
+    return get_settings().disclaimer
+
+
+def _build_packet_metadata(
+    fund_code: str,
+    template: str,
+    data_date: date | None,
+    conclusion_map: dict[str, ConclusionStatus],
+    missing_fields: list[str],
+) -> ResearchPacketMetadata:
+    """Build shared ResearchPacketMetadata to avoid duplication."""
+    return ResearchPacketMetadata(
+        fund_code=fund_code,
+        generated_at=datetime.now(),
+        data_date=data_date,
+        template=template,
+        platform_version=__version__,
+        data_source_levels=[DataSourceLevel.B, DataSourceLevel.LOCAL],
+        algorithm_versions={
+            NAV_METRICS_ALGORITHM_NAME: NAV_METRICS_ALGORITHM_VERSION,
+            HOLDINGS_ALGORITHM_NAME: HOLDINGS_ALGORITHM_VERSION,
+            EXPOSURE_ALGORITHM_NAME: EXPOSURE_ALGORITHM_VERSION,
+            ATTRIBUTION_ALGORITHM_NAME: ATTRIBUTION_ALGORITHM_VERSION,
+        },
+        missing_fields=missing_fields,
+        conclusion_statuses=conclusion_map,
+        overall_confidence=_overall_confidence(conclusion_map),
+    )
 
 
 def _safe_source_level(value: str | None) -> DataSourceLevel:
@@ -862,13 +895,69 @@ def build_single_fund_packet(
     if template not in SUPPORTED_TEMPLATES:
         template = "single_fund_checkup"
 
-    fund_profile, profile_warnings = _fund_profile(db, fund_code)
-    manager_info, manager_status, manager_warnings = _manager_info(fund_profile)
-    nav_metrics, nav_status, nav_warnings = _nav_metrics(db, fund_code)
-    holdings, holdings_status, holdings_warnings, _ = _latest_holdings(db, fund_code)
-    holder_structure, holder_status, holder_warnings = _latest_holder_structure(db, fund_code)
-    exposure, exposure_status, exposure_warnings = _latest_exposure(db, fund_code)
-    attribution, attribution_status, attribution_warnings = _latest_attribution(db, fund_code)
+    warnings: list[str] = []
+    fund_profile = None
+    profile_warnings: list[str] = []
+    try:
+        fund_profile, profile_warnings = _fund_profile(db, fund_code)
+    except Exception as exc:
+        warnings.append(f"fund_profile 模块构建失败: {exc}")
+        profile_warnings = []
+
+    manager_info = None
+    manager_status = ConclusionStatus.NEEDS_REVIEW
+    manager_warnings: list[str] = []
+    try:
+        manager_info, manager_status, manager_warnings = _manager_info(fund_profile)
+    except Exception as exc:
+        warnings.append(f"manager_info 模块构建失败: {exc}")
+        manager_warnings = []
+
+    nav_metrics = None
+    nav_status = ConclusionStatus.NEEDS_REVIEW
+    nav_warnings: list[str] = []
+    try:
+        nav_metrics, nav_status, nav_warnings = _nav_metrics(db, fund_code)
+    except Exception as exc:
+        warnings.append(f"nav_metrics 模块构建失败: {exc}")
+        nav_warnings = []
+
+    holdings = None
+    holdings_status = ConclusionStatus.NEEDS_REVIEW
+    holdings_warnings: list[str] = []
+    _holdings_diagnostics = None
+    try:
+        holdings, holdings_status, holdings_warnings, _holdings_diagnostics = _latest_holdings(db, fund_code)
+    except Exception as exc:
+        warnings.append(f"disclosed_holdings 模块构建失败: {exc}")
+        holdings_warnings = []
+
+    holder_structure = None
+    holder_status = ConclusionStatus.NEEDS_REVIEW
+    holder_warnings: list[str] = []
+    try:
+        holder_structure, holder_status, holder_warnings = _latest_holder_structure(db, fund_code)
+    except Exception as exc:
+        warnings.append(f"holder_structure 模块构建失败: {exc}")
+        holder_warnings = []
+
+    exposure = None
+    exposure_status = ConclusionStatus.NEEDS_REVIEW
+    exposure_warnings: list[str] = []
+    try:
+        exposure, exposure_status, exposure_warnings = _latest_exposure(db, fund_code)
+    except Exception as exc:
+        warnings.append(f"exposure 模块构建失败: {exc}")
+        exposure_warnings = []
+
+    attribution = None
+    attribution_status = ConclusionStatus.NEEDS_REVIEW
+    attribution_warnings: list[str] = []
+    try:
+        attribution, attribution_status, attribution_warnings = _latest_attribution(db, fund_code)
+    except Exception as exc:
+        warnings.append(f"attribution 模块构建失败: {exc}")
+        attribution_warnings = []
 
     conclusion_map = {
         "fund_profile": ConclusionStatus.FACT
@@ -881,7 +970,7 @@ def build_single_fund_packet(
         "exposure": exposure_status,
         "attribution": attribution_status,
     }
-    warnings = [
+    warnings.extend([
         *profile_warnings,
         *manager_warnings,
         *nav_warnings,
@@ -889,7 +978,7 @@ def build_single_fund_packet(
         *holder_warnings,
         *exposure_warnings,
         *attribution_warnings,
-    ]
+    ])
     evidence = _build_evidence(
         fund_code,
         fund_profile,
@@ -915,33 +1004,25 @@ def build_single_fund_packet(
         exposure,
         attribution,
     )
-    metadata = ResearchPacketMetadata(
+    data_date_val = _data_date(db, fund_code)
+    missing_fields_list = [
+        key for key, value in {
+            "fund_profile": fund_profile,
+            "manager_info": manager_info,
+            "nav_metrics": nav_metrics,
+            "disclosed_holdings": holdings,
+            "holder_structure": holder_structure,
+            "exposure": exposure,
+            "attribution": attribution,
+        }.items()
+        if value is None
+    ]
+    metadata = _build_packet_metadata(
         fund_code=fund_code,
-        generated_at=datetime.now(),
-        data_date=_data_date(db, fund_code),
         template=template,
-        platform_version=__version__,
-        data_source_levels=[DataSourceLevel.B, DataSourceLevel.LOCAL],
-        algorithm_versions={
-            NAV_METRICS_ALGORITHM_NAME: NAV_METRICS_ALGORITHM_VERSION,
-            HOLDINGS_ALGORITHM_NAME: HOLDINGS_ALGORITHM_VERSION,
-            EXPOSURE_ALGORITHM_NAME: EXPOSURE_ALGORITHM_VERSION,
-            ATTRIBUTION_ALGORITHM_NAME: ATTRIBUTION_ALGORITHM_VERSION,
-        },
-        missing_fields=[
-            key for key, value in {
-                "fund_profile": fund_profile,
-                "manager_info": manager_info,
-                "nav_metrics": nav_metrics,
-                "disclosed_holdings": holdings,
-                "holder_structure": holder_structure,
-                "exposure": exposure,
-                "attribution": attribution,
-            }.items()
-            if value is None
-        ],
-        conclusion_statuses=conclusion_map,
-        overall_confidence=_overall_confidence(conclusion_map),
+        data_date=data_date_val,
+        conclusion_map=conclusion_map,
+        missing_fields=missing_fields_list,
     )
     return ResearchPacket(
         metadata=metadata,

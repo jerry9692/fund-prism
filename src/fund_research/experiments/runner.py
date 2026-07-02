@@ -32,6 +32,7 @@ from fund_research.db.models import (
     FundDisclosedHoldings,
     FundMain,
     FundNAV,
+    ReviewerAnnotation,
     StockDaily,
 )
 from fund_research.db.models import (
@@ -47,6 +48,7 @@ from fund_research.db.models import (
     SimulatedHoldingResult as DbSimulatedHoldingResult,
 )
 from fund_research.experiments.manager import record_result
+from fund_research.utils.logging import logger
 
 T = TypeVar("T")
 
@@ -59,7 +61,8 @@ def _progress_iter(items: list[T], description: str) -> list[T] | Any:
         from rich.progress import track
 
         return track(items, description=description)
-    except Exception:
+    except Exception as e:
+        logger.debug("rich.progress unavailable, falling back to plain iteration: %s", e)
         return items
 
 
@@ -75,7 +78,7 @@ BENCHMARK_TEXT_SYMBOL_MAP = (
     ("中证500", "sh000905"),
     ("中证1000", "sh000852"),
 )
-MIN_ATTRIBUTION_RETURN_OBSERVATIONS = 3
+MIN_ATTRIBUTION_RETURN_OBSERVATIONS = 20
 MIN_ATTRIBUTION_STOCK_WEIGHT_COVERAGE = 0.8
 MIN_ATTRIBUTION_BENCHMARK_WEIGHT_COVERAGE = 95.0
 WARN_ATTRIBUTION_BENCHMARK_WEIGHT_STALENESS_DAYS = 120
@@ -142,6 +145,7 @@ def _run_simulated_holding_batch(
     results: list[dict] = []
 
     for fund_code in _progress_iter(fund_codes, "运行 simulated_holding"):
+        warnings: list[str] = []
         try:
             nav_rows = db.scalars(
                 sa_select(FundNAV)
@@ -149,8 +153,8 @@ def _run_simulated_holding_batch(
                 .order_by(FundNAV.trade_date)
             ).all()
             if not nav_rows:
-                _record_failure(db, exp.id, fund_code, "无净值数据")
-                results.append(_failure_result(fund_code, "无净值数据"))
+                _record_failure(db, exp.id, fund_code, "无净值数据", warnings=warnings)
+                results.append(_failure_result(fund_code, "无净值数据", warnings))
                 continue
 
             holdings_rows = db.scalars(
@@ -209,12 +213,12 @@ def _run_simulated_holding_batch(
             )
 
             if holdings_df.empty:
-                _record_failure(db, exp.id, fund_code, "无持仓数据")
-                results.append(_failure_result(fund_code, "无持仓数据"))
+                _record_failure(db, exp.id, fund_code, "无持仓数据", warnings=warnings)
+                results.append(_failure_result(fund_code, "无持仓数据", warnings))
                 continue
             if stock_df.empty:
-                _record_failure(db, exp.id, fund_code, "无股票行情数据")
-                results.append(_failure_result(fund_code, "无股票行情数据"))
+                _record_failure(db, exp.id, fund_code, "无股票行情数据", warnings=warnings)
+                results.append(_failure_result(fund_code, "无股票行情数据", warnings))
                 continue
 
             if "daily_return" not in nav_df.columns or nav_df["daily_return"].isna().all():
@@ -258,7 +262,7 @@ def _run_simulated_holding_batch(
                 )
 
             is_success = failure_reason is None
-            warnings = sim_result.warnings if not is_success else []
+            warnings.extend(sim_result.warnings or [])
             _persist_simulated_holding_result(
                 db,
                 exp,
@@ -288,8 +292,8 @@ def _run_simulated_holding_batch(
             })
 
         except Exception as exc:
-            _safe_record_exception(db, exp.id, fund_code, exc)
-            results.append(_failure_result(fund_code, str(exc)[:500]))
+            _safe_record_exception(db, exp.id, fund_code, exc, warnings=warnings)
+            results.append(_failure_result(fund_code, str(exc)[:500], warnings))
 
     return results
 
@@ -591,6 +595,7 @@ def _run_simulated_holding_disclosure_backtest_batch(
     exact_report_dates, min_report_date, max_report_date = _resolve_report_date_filters(params)
 
     for fund_code in fund_codes:
+        warnings: list[str] = []
         try:
             nav_rows = db.scalars(
                 sa_select(FundNAV)
@@ -605,12 +610,12 @@ def _run_simulated_holding_disclosure_backtest_batch(
                 .order_by(FundDisclosedHoldings.report_date, FundDisclosedHoldings.rank_in_holdings)
             ).all()
             if not nav_rows:
-                _record_failure(db, exp.id, fund_code, "无净值数据")
-                results.append(_failure_result(fund_code, "无净值数据"))
+                _record_failure(db, exp.id, fund_code, "无净值数据", warnings=warnings)
+                results.append(_failure_result(fund_code, "无净值数据", warnings))
                 continue
             if not holdings_rows:
-                _record_failure(db, exp.id, fund_code, "无股票持仓数据")
-                results.append(_failure_result(fund_code, "无股票持仓数据"))
+                _record_failure(db, exp.id, fund_code, "无股票持仓数据", warnings=warnings)
+                results.append(_failure_result(fund_code, "无股票持仓数据", warnings))
                 continue
 
             nav_df = _nav_rows_to_return_df(nav_rows)
@@ -623,15 +628,14 @@ def _run_simulated_holding_disclosure_backtest_batch(
             ).all()
             stock_df = _market_rows_to_return_df(stock_rows)
             if stock_df.empty:
-                _record_failure(db, exp.id, fund_code, "无持仓股票行情数据")
-                results.append(_failure_result(fund_code, "无持仓股票行情数据"))
+                _record_failure(db, exp.id, fund_code, "无持仓股票行情数据", warnings=warnings)
+                results.append(_failure_result(fund_code, "无持仓股票行情数据", warnings))
                 continue
 
             periods = []
             disclosed_dict: dict[str, dict[str, float]] = {}
             industry_dict: dict[str, dict[str, str]] = {}
             pair_details: list[dict] = []
-            warnings: list[str] = []
             tracking_errors: list[float] = []
 
             for previous_report, validation_report in zip(report_dates, report_dates[1:], strict=False):
@@ -747,18 +751,14 @@ def _run_simulated_holding_disclosure_backtest_batch(
                 failure_reasons.append(f"重仓召回率不足: {recall}")
 
             is_success = not failure_reasons
-            warning_messages = [
-                *warnings,
-                *backtest.get("warnings", []),
-                *failure_reasons,
-            ]
+            warnings.extend(backtest.get("warnings", []))
             _persist_simulated_holding_result(
                 db,
                 exp,
                 fund_code=fund_code,
                 sim_result=sim_result,
                 metrics=metrics,
-                warning_messages=[] if is_success else warning_messages,
+                warning_messages=warnings,
                 raw_holding_count=max(
                     (pair["estimated_holding_count"] for pair in pair_details),
                     default=0,
@@ -773,18 +773,18 @@ def _run_simulated_holding_disclosure_backtest_batch(
                 is_success=is_success,
                 metrics=metrics,
                 error_message="; ".join(failure_reasons) if failure_reasons else None,
-                warnings=[] if is_success else warning_messages,
+                warnings=warnings,
             )
             results.append({
                 "fund_code": fund_code,
                 "is_success": is_success,
                 "error_message": "; ".join(failure_reasons) if failure_reasons else None,
-                "warnings": [] if is_success else warning_messages,
+                "warnings": warnings,
             })
 
         except Exception as exc:
-            _safe_record_exception(db, exp.id, fund_code, exc)
-            results.append(_failure_result(fund_code, str(exc)[:500]))
+            _safe_record_exception(db, exp.id, fund_code, exc, warnings=warnings)
+            results.append(_failure_result(fund_code, str(exc)[:500], warnings))
 
     return results
 
@@ -1154,14 +1154,14 @@ def _run_dynamic_attribution_batch(
     results: list[dict] = []
 
     for fund_code in _progress_iter(fund_codes, "运行 dynamic_attribution"):
+        warnings: list[str] = []
         try:
             exact_report_dates, min_report_date, max_report_date = _resolve_report_date_filters(params)
+            review_warnings: list[str] = []
+            force_needs_review = False
 
             estimated_holdings_warning: str | None = None
             if holdings_source == "estimated":
-                # Load the latest SimulatedHoldingResult for this fund and
-                # synthesise holding rows in the same shape as
-                # FundDisclosedHoldings so downstream aggregation is uniform.
                 sim_row = db.scalar(
                     sa_select(DbSimulatedHoldingResult)
                     .where(DbSimulatedHoldingResult.fund_code == fund_code)
@@ -1170,8 +1170,8 @@ def _run_dynamic_attribution_batch(
                 )
                 if sim_row is None or not sim_row.holdings_detail:
                     error = "无模拟持仓结果：请先运行 simulated_holding 实验"
-                    _record_failure(db, exp.id, fund_code, error)
-                    results.append(_failure_result(fund_code, error))
+                    _record_failure(db, exp.id, fund_code, error, warnings=warnings)
+                    results.append(_failure_result(fund_code, error, warnings))
                     continue
                 holdings_rows = _simulated_holding_to_rows(sim_row)
                 estimated_holdings_warning = (
@@ -1196,8 +1196,8 @@ def _run_dynamic_attribution_batch(
 
             if not holdings_rows:
                 error = "无符合报告期过滤条件的持仓数据" if _has_report_date_filter(params) else "无持仓数据"
-                _record_failure(db, exp.id, fund_code, error)
-                results.append(_failure_result(fund_code, error))
+                _record_failure(db, exp.id, fund_code, error, warnings=warnings)
+                results.append(_failure_result(fund_code, error, warnings))
                 continue
 
             stock_holdings = [
@@ -1206,12 +1206,28 @@ def _run_dynamic_attribution_batch(
                 if holding.asset_type == "股票" and holding.security_code
             ]
             if not stock_holdings:
-                _record_failure(db, exp.id, fund_code, "无股票持仓数据")
-                results.append(_failure_result(fund_code, "无股票持仓数据"))
+                _record_failure(db, exp.id, fund_code, "无股票持仓数据", warnings=warnings)
+                results.append(_failure_result(fund_code, "无股票持仓数据", warnings))
                 continue
 
             stock_codes = {str(holding.security_code) for holding in stock_holdings}
-            benchmark_symbol, benchmark_source = _resolve_benchmark_symbol(db, fund_code, params)
+            benchmark_symbol, benchmark_source, custom_weights = _resolve_benchmark_symbol(db, fund_code, params)
+            if custom_weights:
+                review_warnings.append(
+                    f"基金 {fund_code} 配置了自定义权重组合，"
+                    f"当前动态归因暂不支持自定义权重，使用基准 {benchmark_symbol}"
+                )
+            has_confidence_override = db.scalar(
+                sa_select(ReviewerAnnotation)
+                .where(ReviewerAnnotation.fund_code == fund_code)
+                .where(ReviewerAnnotation.annotation_type == "confidence_override")
+                .where(ReviewerAnnotation.target_module == "dynamic_attribution")
+                .order_by(ReviewerAnnotation.created_at.desc())
+                .limit(1)
+            ) is not None
+            if has_confidence_override:
+                force_needs_review = True
+                review_warnings.append("研究员标记该基金归因结果需复核")
             market_rows = db.scalars(
                 sa_select(StockDaily)
                 .where(StockDaily.stock_code.in_(stock_codes | {benchmark_symbol}))
@@ -1220,15 +1236,15 @@ def _run_dynamic_attribution_batch(
             market_df = _market_rows_to_return_df(market_rows)
             if market_df.empty:
                 error = "无持仓股票或基准指数行情数据"
-                _record_failure(db, exp.id, fund_code, error)
-                results.append(_failure_result(fund_code, error))
+                _record_failure(db, exp.id, fund_code, error, warnings=warnings)
+                results.append(_failure_result(fund_code, error, warnings))
                 continue
 
             benchmark_returns = market_df[market_df["stock_code"] == benchmark_symbol]
             if benchmark_returns.empty:
                 error = f"缺少基准指数行情: {benchmark_symbol}"
-                _record_failure(db, exp.id, fund_code, error)
-                results.append(_failure_result(fund_code, error))
+                _record_failure(db, exp.id, fund_code, error, warnings=warnings)
+                results.append(_failure_result(fund_code, error, warnings))
                 continue
 
             holding_stock_rows = []
@@ -1258,6 +1274,31 @@ def _run_dynamic_attribution_batch(
                 for report_date, weight_sum in port_weight_df.groupby("report_date")["port_weight"].sum().items()
             }
 
+            report_dates_sorted = sorted(
+                pd.to_datetime(holding_stock_df["report_date"]).dt.date.unique()
+            )
+            benchmark_weight_df, benchmark_weight_stats, benchmark_weight_warnings = (
+                _build_benchmark_industry_weight_df(
+                    db,
+                    benchmark_symbol=benchmark_symbol,
+                    report_dates=report_dates_sorted,
+                    max_snapshot_age_days=max_snapshot_age_days,
+                    warn_snapshot_age_days=warn_snapshot_age_days,
+                )
+            )
+            if benchmark_weight_df.empty:
+                error = f"缺少可用基准行业权重: {benchmark_symbol}"
+                warnings.extend(benchmark_weight_warnings)
+                _record_failure(db, exp.id, fund_code, error, warnings=warnings)
+                results.append(_failure_result(fund_code, error, warnings))
+                continue
+            if len(benchmark_weight_stats) < len(normalized_weight_sums):
+                error = f"基准行业权重覆盖不足: {benchmark_symbol}"
+                warnings.extend(benchmark_weight_warnings)
+                _record_failure(db, exp.id, fund_code, error, warnings=warnings)
+                results.append(_failure_result(fund_code, error, warnings))
+                continue
+
             sector_return_df, return_stats, return_warnings = _build_real_sector_return_df(
                 holding_stock_df,
                 market_df,
@@ -1266,7 +1307,7 @@ def _run_dynamic_attribution_batch(
             )
             if sector_return_df.empty:
                 error = "真实行业/基准收益样本不足"
-                warnings = return_warnings or ["未能从持仓股票行情和基准指数行情构造有效归因周期"]
+                warnings.extend(return_warnings or ["未能从持仓股票行情和基准指数行情构造有效归因周期"])
                 _record_failure(db, exp.id, fund_code, error, warnings=warnings)
                 results.append(_failure_result(fund_code, error, warnings))
                 continue
@@ -1278,43 +1319,17 @@ def _run_dynamic_attribution_batch(
             min_usable_periods = 1
             if usable_period_count < min_usable_periods:
                 error = f"可用归因周期不足: {usable_period_count}/{total_period_count}"
-                warnings = [
-                    *return_warnings,
-                    f"要求至少 {min_usable_periods} 个有效周期",
-                ]
+                warnings.extend(return_warnings)
+                warnings.append(f"要求至少 {min_usable_periods} 个有效周期")
                 _record_failure(db, exp.id, fund_code, error, warnings=warnings)
                 results.append(_failure_result(fund_code, error, warnings))
                 continue
             if median_weight_coverage < min_stock_weight_coverage:
                 error = f"持仓股票行情中位覆盖不足: {median_weight_coverage:.1%} (最低 {min_weight_coverage:.1%})"
-                warnings = [
-                    *return_warnings,
-                    f"要求中位覆盖率 >= {min_stock_weight_coverage:.0%}",
-                ]
+                warnings.extend(return_warnings)
+                warnings.append(f"要求中位覆盖率 >= {min_stock_weight_coverage:.0%}")
                 _record_failure(db, exp.id, fund_code, error, warnings=warnings)
                 results.append(_failure_result(fund_code, error, warnings))
-                continue
-
-            benchmark_weight_df, benchmark_weight_stats, benchmark_weight_warnings = (
-                _build_benchmark_industry_weight_df(
-                    db,
-                    benchmark_symbol=benchmark_symbol,
-                    report_dates=sorted(
-                        pd.to_datetime(holding_stock_df["report_date"]).dt.date.unique()
-                    ),
-                    max_snapshot_age_days=max_snapshot_age_days,
-                    warn_snapshot_age_days=warn_snapshot_age_days,
-                )
-            )
-            if benchmark_weight_df.empty:
-                error = f"缺少可用基准行业权重: {benchmark_symbol}"
-                _record_failure(db, exp.id, fund_code, error, warnings=benchmark_weight_warnings)
-                results.append(_failure_result(fund_code, error, benchmark_weight_warnings))
-                continue
-            if len(benchmark_weight_stats) < len(normalized_weight_sums):
-                error = f"基准行业权重覆盖不足: {benchmark_symbol}"
-                _record_failure(db, exp.id, fund_code, error, warnings=benchmark_weight_warnings)
-                results.append(_failure_result(fund_code, error, benchmark_weight_warnings))
                 continue
 
             holdings_weight_df = port_weight_df.merge(
@@ -1380,13 +1395,16 @@ def _run_dynamic_attribution_batch(
                 "holdings_source": holdings_source,
                 "uses_estimated_holdings": holdings_source == "estimated",
             }
-            is_success = len(attr_result.periods) > 0 and abs(attr_result.total_residual) < 0.05
-            error_message = None if is_success else "归因残差偏高"
-            warnings = [
-                *attr_result.warnings,
-                *return_warnings,
-                *benchmark_weight_warnings,
-            ]
+            is_success = (
+                len(attr_result.periods) > 0
+                and abs(attr_result.total_residual) < 0.05
+                and not force_needs_review
+            )
+            error_message = None if is_success else ("归因残差偏高" if not force_needs_review else "研究员标记需复核")
+            warnings.extend(attr_result.warnings)
+            warnings.extend(return_warnings)
+            warnings.extend(benchmark_weight_warnings)
+            warnings.extend(review_warnings)
             if estimated_holdings_warning:
                 warnings.append(estimated_holdings_warning)
             _persist_dynamic_attribution_result(
@@ -1397,6 +1415,7 @@ def _run_dynamic_attribution_batch(
                 metrics=metrics,
                 warning_messages=warnings,
                 is_success=is_success,
+                force_needs_review=force_needs_review,
             )
 
             record_result(
@@ -1417,8 +1436,8 @@ def _run_dynamic_attribution_batch(
             })
 
         except Exception as exc:
-            _safe_record_exception(db, exp.id, fund_code, exc)
-            results.append(_failure_result(fund_code, str(exc)[:500]))
+            _safe_record_exception(db, exp.id, fund_code, exc, warnings=warnings)
+            results.append(_failure_result(fund_code, str(exc)[:500], warnings))
 
     return results
 
@@ -1555,19 +1574,31 @@ def _resolve_benchmark_symbol(
     db: Session,
     fund_code: str,
     parameters: dict | None,
-) -> tuple[str, str]:
-    """Resolve dynamic attribution benchmark from explicit params or fund profile text."""
+) -> tuple[str, str, dict | None]:
     configured = str((parameters or {}).get("benchmark_symbol") or "").strip()
     if configured:
-        return configured, "parameter"
+        return configured, "parameter", None
+
+    latest_override = db.scalar(
+        sa_select(ReviewerAnnotation)
+        .where(ReviewerAnnotation.fund_code == fund_code)
+        .where(ReviewerAnnotation.annotation_type == "benchmark_override")
+        .order_by(ReviewerAnnotation.created_at.desc())
+        .limit(1)
+    )
+    if latest_override and latest_override.detail:
+        benchmark_symbol = latest_override.detail.get("benchmark_symbol")
+        custom_weights = latest_override.detail.get("custom_weights")
+        if benchmark_symbol:
+            return benchmark_symbol, "reviewer_override", custom_weights
 
     fund = db.scalar(sa_select(FundMain).where(FundMain.fund_code == fund_code))
     benchmark_text = fund.benchmark if fund and fund.benchmark else ""
     for keyword, symbol in BENCHMARK_TEXT_SYMBOL_MAP:
         if keyword in benchmark_text:
-            return symbol, f"fund_benchmark:{keyword}"
+            return symbol, f"fund_benchmark:{keyword}", None
 
-    return DEFAULT_ATTRIBUTION_BENCHMARK_SYMBOL, "default"
+    return DEFAULT_ATTRIBUTION_BENCHMARK_SYMBOL, "default", None
 
 
 def _has_report_date_filter(parameters: dict | None) -> bool:
@@ -1812,6 +1843,7 @@ def _run_scoring_single_point(
     fund_navs: dict[str, list[FundNAV]] = {}
 
     for fund_code in _progress_iter(fund_codes, "准备 scoring"):
+        warnings: list[str] = []
         try:
             nav_rows = db.scalars(
                 sa_select(FundNAV)
@@ -1819,8 +1851,8 @@ def _run_scoring_single_point(
                 .order_by(FundNAV.trade_date)
             ).all()
             if not nav_rows:
-                _record_failure(db, exp.id, fund_code, "无净值数据")
-                results.append(_failure_result(fund_code, "无净值数据"))
+                _record_failure(db, exp.id, fund_code, "无净值数据", warnings=warnings)
+                results.append(_failure_result(fund_code, "无净值数据", warnings))
                 continue
 
             fund_navs[fund_code] = list(nav_rows)
@@ -1833,14 +1865,12 @@ def _run_scoring_single_point(
                 for row in nav_rows
             ])
             history_df = nav_df[pd.to_datetime(nav_df["trade_date"]).dt.date <= scoring_date]
-            # When scoring_date truncation leaves no data, fall back to the
-            # full NAV series so that single-point scoring still works.
             if history_df.empty:
                 history_df = nav_df
             nav_metrics = calculate_nav_metrics(history_df)
             if not nav_metrics.metrics:
-                _record_failure(db, exp.id, fund_code, "净值指标不足")
-                results.append(_failure_result(fund_code, "净值指标不足"))
+                _record_failure(db, exp.id, fund_code, "净值指标不足", warnings=warnings)
+                results.append(_failure_result(fund_code, "净值指标不足", warnings))
                 continue
 
             sample_years[fund_code] = _sample_years_from_nav(nav_rows)
@@ -1873,22 +1903,26 @@ def _run_scoring_single_point(
                         **fwd_metrics,
                     })
         except Exception as exc:
-            _safe_record_exception(db, exp.id, fund_code, exc)
-            results.append(_failure_result(fund_code, str(exc)[:500]))
+            _safe_record_exception(db, exp.id, fund_code, exc, warnings=warnings)
+            results.append(_failure_result(fund_code, str(exc)[:500], warnings))
 
     backtest_summary: dict = {}
     if metrics_rows:
         try:
+            estimated_dims = {"trading", "style_stability"}
             scoring = score_funds(
                 pd.DataFrame(metrics_rows),
                 weights=weights,
                 preset=preset,
                 category=category,
-                contains_estimated={"trading"},
+                contains_estimated=estimated_dims,
                 allow_estimated=True,
                 sample_years_map=sample_years,
             )
             scoring.score_version = score_version
+
+            all_dims = list(scoring.weight_config.keys())
+            verified_dims = [d for d in all_dims if d not in estimated_dims]
 
             # Single-point backtest when future returns are available.
             if future_return_rows:
@@ -1925,6 +1959,15 @@ def _run_scoring_single_point(
                     scoring=scoring,
                     warning_messages=warn_msgs,
                 )
+                fund_missing_dims = set()
+                for reason in fund_score.deduction_reasons:
+                    for dim in all_dims:
+                        if reason.startswith(f"{dim} ") and ("缺失" in reason or "无数据" in reason):
+                            fund_missing_dims.add(dim)
+                fund_verified_dims = [
+                    d for d in verified_dims
+                    if d in fund_score.sub_scores and d not in fund_missing_dims
+                ]
                 record_result(
                     db,
                     experiment_id=exp.id,
@@ -1936,13 +1979,10 @@ def _run_scoring_single_point(
                         "estimated_sub_scores": fund_score.sub_scores,
                         "estimated_percentile_rank": fund_score.percentile_rank,
                         "estimated_deduction_reasons": fund_score.deduction_reasons,
-                        "verified_dimension_count": 7,
-                        "verified_dimensions": [
-                            "return", "risk", "alpha", "style_stability",
-                            "scale", "team", "holder",
-                        ],
+                        "verified_dimension_count": len(fund_verified_dims),
+                        "verified_dimensions": fund_verified_dims,
                         "allow_estimated": True,
-                        "estimated_dimensions": ["trading"],
+                        "estimated_dimensions": list(estimated_dims),
                         "score_version": score_version,
                         "weight_config": scoring.weight_config,
                         "sample_years": fund_score.sample_years,
@@ -1969,11 +2009,12 @@ def _run_scoring_single_point(
                     })
         except Exception as exc:
             error = str(exc)[:500]
+            batch_warnings = [f"评分批次执行失败: {error}"]
             scored_codes = {row["fund_code"] for row in metrics_rows}
             for fund_code in scored_codes:
                 if not any(result["fund_code"] == fund_code for result in results):
-                    _safe_record_exception(db, exp.id, fund_code, exc)
-                    results.append(_failure_result(fund_code, error))
+                    _safe_record_exception(db, exp.id, fund_code, exc, warnings=batch_warnings)
+                    results.append(_failure_result(fund_code, error, batch_warnings))
 
     return results
 
@@ -2095,7 +2136,8 @@ def _run_scoring_backtest(
                 per_fund_results.setdefault(fund_code, {"fund_code": fund_code, "eval_count": 0})
                 per_fund_results[fund_code]["eval_count"] += 1
 
-            except Exception:
+            except Exception as exc:
+                logger.warning(f"评分回测处理基金 {fund_code} 在 {eval_date} 时出错: {exc!s}")
                 continue
 
         if len(period_metrics) < min_funds_per_date:
@@ -2107,7 +2149,7 @@ def _run_scoring_backtest(
             weights=weights,
             preset=preset,
             category=category,
-            contains_estimated={"trading"},
+            contains_estimated={"trading", "style_stability"},
             allow_estimated=True,
             sample_years_map=period_sample_years,
         )
@@ -2116,6 +2158,7 @@ def _run_scoring_backtest(
                 "fund_code": fs.fund_code,
                 "calc_date": eval_date,
                 "score": fs.total_score,
+                "sub_scores": fs.sub_scores,
             })
 
     if not scores_rows or not future_return_rows:
@@ -2365,10 +2408,21 @@ def _persist_scoring_backtest(
     forward_months: int,
     min_forward_observations: int,
 ) -> None:
-    """Persist one ScoringBacktest row summarising the IC run.
+    """Persist one ScoringBacktest row summarising the IC run (upsert).
 
     Accepts both ``compute_ic`` and ``compute_scoring_backtest`` result dicts.
     """
+    backtest_date = date_type.today()
+    existing = db.scalar(
+        sa_select(DbScoringBacktest).where(
+            DbScoringBacktest.score_version == score_version,
+            DbScoringBacktest.backtest_date == backtest_date,
+        )
+    )
+    if existing is not None:
+        db.delete(existing)
+        db.flush()
+
     group_results = (
         ic_result.get("group_metrics")
         or ic_result.get("group_results")
@@ -2380,7 +2434,7 @@ def _persist_scoring_backtest(
     )
     db.add(DbScoringBacktest(
         score_version=score_version,
-        backtest_date=date_type.today(),
+        backtest_date=backtest_date,
         group_count=ic_result.get("group_count") or len(group_results),
         group_results=group_results,
         monotonicity_check=monotonicity_check,
@@ -2407,9 +2461,22 @@ def _persist_scoring_backtest_scores(
     preset: str,
     category: str,
 ) -> None:
-    """Persist individual fund-date scores produced during the backtest."""
+    """Persist individual fund-date scores produced during the backtest (upsert)."""
     weight_config = {"preset": preset, "category": category}
     for row in scores_rows:
+        existing = db.scalar(
+            sa_select(DbScoringResult).where(
+                DbScoringResult.fund_code == row["fund_code"],
+                DbScoringResult.calc_date == row["calc_date"],
+                DbScoringResult.score_version == score_version,
+                DbScoringResult.algorithm_version == exp.algorithm_version,
+                DbScoringResult.is_backtest.is_(True),
+            )
+        )
+        if existing is not None:
+            db.delete(existing)
+            db.flush()
+
         db.add(DbScoringResult(
             fund_code=row["fund_code"],
             calc_date=row["calc_date"],
@@ -2417,11 +2484,12 @@ def _persist_scoring_backtest_scores(
             algorithm_version=exp.algorithm_version,
             weight_config=weight_config,
             total_score=row["score"],
-            sub_scores={"return": 0.0, "risk": 0.0},
-            percentile_rank=0.0,
+            sub_scores=row["sub_scores"],
+            percentile_rank=None,
             contains_estimated=True,
             confidence="low",
             conclusion_status="needs_review",
+            is_backtest=True,
             warnings=["回测评分：仅用于实验验证，不进入默认排名"],
         ))
 
@@ -2437,7 +2505,7 @@ def _persist_simulated_holding_result(
     raw_holding_count: int,
     is_success: bool,
 ) -> None:
-    """Persist simulated holding periods into the Phase 2 result table."""
+    """Persist simulated holding periods into the Phase 2 result table (upsert)."""
     matched_count = int(metrics.get("matched_stock_count") or 0)
     input_coverage = (
         metrics.get("min_stock_return_weight_coverage")
@@ -2455,7 +2523,20 @@ def _persist_simulated_holding_result(
     )
     conclusion_status = "estimated" if is_success else "needs_review"
     for period in sim_result.periods:
+        existing = db.scalar(
+            sa_select(DbSimulatedHoldingResult).where(
+                DbSimulatedHoldingResult.fund_code == fund_code,
+                DbSimulatedHoldingResult.calc_date == period.calc_date,
+                DbSimulatedHoldingResult.algorithm_name == exp.algorithm_name,
+                DbSimulatedHoldingResult.algorithm_version == exp.algorithm_version,
+            )
+        )
+        if existing is not None:
+            db.delete(existing)
+            db.flush()
+
         db.add(DbSimulatedHoldingResult(
+            experiment_id=exp.id,
             fund_code=fund_code,
             calc_date=period.calc_date,
             algorithm_name=exp.algorithm_name,
@@ -2487,10 +2568,24 @@ def _persist_dynamic_attribution_result(
     metrics: dict,
     warning_messages: list[str],
     is_success: bool,
+    force_needs_review: bool = False,
 ) -> None:
-    """Persist Brinson attribution periods into the Phase 2 result table."""
-    conclusion_status = "estimated" if is_success else "needs_review"
+    """Persist Brinson attribution periods into the Phase 2 result table (upsert)."""
+    conclusion_status = "estimated" if (is_success and not force_needs_review) else "needs_review"
     for period in attr_result.periods:
+        existing = db.scalar(
+            sa_select(DbDynamicAttributionResult).where(
+                DbDynamicAttributionResult.fund_code == fund_code,
+                DbDynamicAttributionResult.period_start == period.period_start,
+                DbDynamicAttributionResult.period_end == period.period_end,
+                DbDynamicAttributionResult.algorithm_name == exp.algorithm_name,
+                DbDynamicAttributionResult.algorithm_version == exp.algorithm_version,
+            )
+        )
+        if existing is not None:
+            db.delete(existing)
+            db.flush()
+
         active_return = period.portfolio_return - period.benchmark_return
         residual_pct = (
             abs(period.residual) / abs(active_return)
@@ -2498,6 +2593,7 @@ def _persist_dynamic_attribution_result(
             else None
         )
         db.add(DbDynamicAttributionResult(
+            experiment_id=exp.id,
             fund_code=fund_code,
             period_start=period.period_start,
             period_end=period.period_end,
@@ -2507,10 +2603,11 @@ def _persist_dynamic_attribution_result(
             total_return=period.portfolio_return,
             beta_return=period.benchmark_return,
             allocation_return=period.allocation_effect,
-            sector_rotation_return=period.allocation_effect,
+            sector_rotation_return=None,
             stock_selection_return=period.selection_effect,
             convertible_bond_return=None,
             ipo_return=None,
+            interaction_return=period.interaction_effect,
             residual=period.residual,
             residual_pct=round(residual_pct, 6) if residual_pct is not None else None,
             detail={
@@ -2539,7 +2636,7 @@ def _persist_scoring_result(
     scoring,
     warning_messages: list[str],
 ) -> None:
-    """Persist a composite score into the Phase 2 scoring result table.
+    """Persist a composite score into the Phase 2 scoring result table (upsert).
 
     ``conclusion_status`` reflects data-quality signals, not just whether
     estimated dimensions are present:
@@ -2551,6 +2648,20 @@ def _persist_scoring_result(
     Only scores with adequate history, full dimension coverage, and no
     estimated components are promoted to ``computed``.
     """
+    calc_date = date_type.today()
+    existing = db.scalar(
+        sa_select(DbScoringResult).where(
+            DbScoringResult.fund_code == fund_score.fund_code,
+            DbScoringResult.calc_date == calc_date,
+            DbScoringResult.score_version == scoring.score_version,
+            DbScoringResult.algorithm_version == exp.algorithm_version,
+            DbScoringResult.is_backtest.is_(False),
+        )
+    )
+    if existing is not None:
+        db.delete(existing)
+        db.flush()
+
     needs_review = fund_score.contains_estimated
     if not needs_review and fund_score.sample_years is not None and fund_score.sample_years < 3.0:
         needs_review = True
@@ -2561,8 +2672,9 @@ def _persist_scoring_result(
     confidence = "low" if needs_review else "medium"
 
     db.add(DbScoringResult(
+        experiment_id=exp.id,
         fund_code=fund_score.fund_code,
-        calc_date=date_type.today(),
+        calc_date=calc_date,
         score_version=scoring.score_version,
         algorithm_version=exp.algorithm_version,
         weight_config=scoring.weight_config,
@@ -2600,10 +2712,13 @@ def _safe_record_exception(
     experiment_id: int,
     fund_code: str,
     exc: Exception,
+    *,
+    warnings: list[str] | None = None,
 ) -> None:
     try:
-        _record_failure(db, experiment_id, fund_code, str(exc)[:500])
-    except Exception:
+        _record_failure(db, experiment_id, fund_code, str(exc)[:500], warnings=warnings or [])
+    except Exception as e:
+        logger.warning("Failed to record exception for %s: %s", fund_code, e)
         db.rollback()
 
 
