@@ -4,31 +4,18 @@ import {
   api,
   type SimulatedHoldingResult,
 } from "../api/client";
+import ConfidenceBadge from "../components/ConfidenceBadge";
+import ChartWrapper, { type BarSeries } from "../components/ChartWrapper";
 
-function MetricCard({
-  label,
-  value,
-  suffix,
-}: {
-  label: string;
-  value: number | null | undefined;
-  suffix?: string;
-}) {
-  const display =
-    value === null || value === undefined
-      ? "—"
-      : typeof value === "number"
-        ? value.toFixed(4)
-        : String(value);
-  return (
-    <div className="metric-card">
-      <div className="metric-card-label">{label}</div>
-      <div className="metric-card-value">
-        {display}
-        {suffix && value !== null && value !== undefined ? suffix : ""}
-      </div>
-    </div>
-  );
+function formatMetricValue(label: string, v: number | null | undefined): string {
+  if (v === null || v === undefined) return "—";
+  if (label === "跟踪误差" || label === "日度 RMSE" || label === "Top10 召回率") {
+    return `${(v * 100).toFixed(2)}%`;
+  }
+  if (label === "输入覆盖率") {
+    return `${v.toFixed(1)}%`;
+  }
+  return v.toFixed(4);
 }
 
 function HoldingsTable({
@@ -79,34 +66,30 @@ function HoldingsTable({
 function ResultCard({ result }: { result: SimulatedHoldingResult }) {
   const [expanded, setExpanded] = useState(false);
 
+  const top15 = [...result.holdings_detail]
+    .sort((a, b) => (b.estimated_weight || 0) - (a.estimated_weight || 0))
+    .slice(0, 15);
+  const chartLabels = top15.map((s) => s.stock_name || s.stock_code);
+  const chartValues = top15.map((s) => (s.estimated_weight || 0) * 100);
+  const chartSeries: BarSeries[] = [{ label: "估计权重", values: chartValues }];
+
+  const metricLabels = ["跟踪误差", "日度 RMSE", "行业相关性", "Top10 召回率", "输入覆盖率"];
+  const metricValues: (number | null | undefined)[] = [
+    result.tracking_error,
+    result.daily_rmse,
+    result.industry_correlation,
+    result.top10_recall,
+    result.input_coverage,
+  ];
+
   return (
-    <div
-      style={{
-        border: "1px solid var(--color-border)",
-        borderRadius: 8,
-        padding: 12,
-        marginBottom: 12,
-      }}
-    >
-      <div
-        style={{
-          display: "flex",
-          justifyContent: "space-between",
-          alignItems: "center",
-          marginBottom: 8,
-        }}
-      >
+    <div className="result-card">
+      <div className="result-card-head">
         <div>
-          <span style={{ fontWeight: 600, fontSize: 14 }}>
+          <span className="result-card-title">
             {result.calc_date || "未知日期"}
           </span>
-          <span
-            style={{
-              marginLeft: 8,
-              fontSize: 12,
-              color: "var(--color-text-secondary)",
-            }}
-          >
+          <span className="result-card-meta">
             {result.algorithm_name} v{result.algorithm_version}
           </span>
           {result.is_backtest && (
@@ -124,56 +107,30 @@ function ResultCard({ result }: { result: SimulatedHoldingResult }) {
             </span>
           )}
         </div>
-        <span
-          style={{
-            fontSize: 11,
-            padding: "2px 8px",
-            borderRadius: 10,
-            background: "var(--color-warning)20",
-            color: "var(--color-warning)",
-            border: "1px solid var(--color-warning)40",
-          }}
-        >
-          estimated
-        </span>
+        <ConfidenceBadge status={result.conclusion_status || "estimated"} />
       </div>
 
-      <div
-        style={{
-          display: "flex",
-          gap: 12,
-          flexWrap: "wrap",
-          marginBottom: 8,
-        }}
-      >
-        <MetricCard
-          label="跟踪误差"
-          value={result.tracking_error}
-        />
-        <MetricCard
-          label="日度 RMSE"
-          value={result.daily_rmse}
-        />
-        <MetricCard
-          label="行业相关性"
-          value={result.industry_correlation}
-        />
-        <MetricCard
-          label="Top10 召回率"
-          value={result.top10_recall}
-        />
-        <MetricCard
-          label="输入覆盖率"
-          value={result.input_coverage}
-          suffix="%"
-        />
+      <div className="metric-grid" style={{ marginBottom: 12 }}>
+        {metricLabels.map((label, i) => (
+          <div className="metric-card" key={label}>
+            <div className="metric-card-label">{label}</div>
+            <div className="metric-card-value">{formatMetricValue(label, metricValues[i])}</div>
+          </div>
+        ))}
       </div>
+
+      <ChartWrapper
+        type="bar"
+        title="Top 15 重仓股权重"
+        labels={chartLabels}
+        series={chartSeries}
+        yLabel="权重(%)"
+        height={200}
+        formatY={(v) => `${v.toFixed(1)}%`}
+      />
 
       {result.warnings && result.warnings.length > 0 && (
-        <div
-          className="warning-banner"
-          style={{ marginBottom: 8, fontSize: 12 }}
-        >
+        <div className="warning-banner" style={{ marginBottom: 8, fontSize: 12, marginTop: 12 }}>
           {result.warnings.join("; ")}
         </div>
       )}
@@ -181,6 +138,7 @@ function ResultCard({ result }: { result: SimulatedHoldingResult }) {
       <button
         className="btn btn-sm"
         onClick={() => setExpanded(!expanded)}
+        style={{ marginTop: 8 }}
       >
         {expanded ? "收起持仓明细" : `查看持仓明细 (${result.holdings_detail?.length || 0} 只)`}
       </button>
@@ -225,18 +183,7 @@ export default function SimulatedHoldingPage() {
     <div>
       <h2 style={{ display: "flex", alignItems: "center", gap: 12 }}>
         <span>模拟持仓 — {fundCode}</span>
-        <span
-          style={{
-            fontSize: 12,
-            padding: "2px 10px",
-            borderRadius: 12,
-            background: "var(--color-warning)20",
-            color: "var(--color-warning)",
-            border: "1px solid var(--color-warning)40",
-          }}
-        >
-          estimated
-        </span>
+        <ConfidenceBadge status="estimated" />
       </h2>
 
       <div
@@ -249,7 +196,7 @@ export default function SimulatedHoldingPage() {
       {error && (
         <div
           className="warning-banner"
-          style={{ marginBottom: 16 }}
+          style={{ marginBottom: 16, background: "var(--color-danger-light)", color: "var(--color-danger)", borderColor: "#fecaca" }}
         >
           {error}
         </div>
@@ -258,15 +205,7 @@ export default function SimulatedHoldingPage() {
       {loading ? (
         <p style={{ color: "var(--color-text-secondary)" }}>加载中...</p>
       ) : results.length === 0 ? (
-        <div
-          style={{
-            border: "1px solid var(--color-border)",
-            borderRadius: 8,
-            padding: 24,
-            textAlign: "center",
-            color: "var(--color-text-secondary)",
-          }}
-        >
+        <div className="card empty-state">
           <p style={{ fontSize: 14, marginBottom: 8 }}>
             该基金暂无模拟持仓结果
           </p>

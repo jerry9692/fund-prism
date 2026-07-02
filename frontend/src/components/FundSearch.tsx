@@ -17,7 +17,6 @@ export default function FundSearch() {
   const navigate = useNavigate();
   const containerRef = useRef<HTMLDivElement>(null);
 
-  // Debounced search
   useEffect(() => {
     if (query.length < 1) {
       setResults([]);
@@ -38,7 +37,6 @@ export default function FundSearch() {
     return () => clearTimeout(timer);
   }, [query]);
 
-  // Close on outside click
   useEffect(() => {
     const handler = (e: MouseEvent) => {
       if (containerRef.current && !containerRef.current.contains(e.target as Node)) {
@@ -56,7 +54,7 @@ export default function FundSearch() {
   };
 
   return (
-    <div ref={containerRef} style={{ position: "relative", flex: 1, maxWidth: 300 }}>
+    <div ref={containerRef} style={{ position: "relative", width: 280 }}>
       <input
         type="text"
         placeholder="搜索基金代码 / 名称..."
@@ -66,14 +64,15 @@ export default function FundSearch() {
         style={{
           width: "100%",
           padding: "6px 12px",
-          fontSize: 14,
-          border: "1px solid var(--color-border)",
-          borderRadius: 6,
-          background: "var(--color-background)",
-          color: "var(--color-text)",
+          fontSize: 13,
+          border: "1px solid rgba(255,255,255,0.15)",
+          borderRadius: 4,
+          background: "rgba(255,255,255,0.08)",
+          color: "#e2e8f0",
           outline: "none",
         }}
       />
+      <style>{`.nav-search input::placeholder{color:rgba(200,211,227,0.5)!important}.nav-search input:focus{border-color:var(--nav-brand)!important;background:rgba(255,255,255,0.12)!important;box-shadow:0 0 0 2px rgba(240,201,104,0.15)!important;}`}</style>
       {open && (
         <div
           style={{
@@ -81,12 +80,12 @@ export default function FundSearch() {
             top: "100%",
             left: 0,
             right: 0,
-            marginTop: 4,
-            background: "var(--color-surface)",
+            marginTop: 6,
+            background: "#fff",
             border: "1px solid var(--color-border)",
             borderRadius: 6,
-            boxShadow: "0 4px 12px rgba(0,0,0,0.15)",
-            zIndex: 100,
+            boxShadow: "0 8px 24px rgba(0,0,0,0.18)",
+            zIndex: 200,
             maxHeight: 320,
             overflowY: "auto",
           }}
@@ -104,14 +103,15 @@ export default function FundSearch() {
                 cursor: "pointer",
                 borderBottom: "1px solid var(--color-border)",
                 display: "flex",
-                justifyContent: "space-between",
                 alignItems: "center",
+                gap: 8,
+                transition: "background 100ms",
               }}
-              onMouseEnter={(e) => (e.currentTarget.style.background = "var(--color-background)")}
+              onMouseEnter={(e) => (e.currentTarget.style.background = "var(--color-bg)")}
               onMouseLeave={(e) => (e.currentTarget.style.background = "")}
             >
-              <span style={{ fontWeight: 600, fontSize: 13, color: "var(--color-primary)" }}>{r.fund_code}</span>
-              <span style={{ fontSize: 13, color: "var(--color-text-secondary)", marginLeft: 8, flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+              <span style={{ fontWeight: 600, fontSize: 13, color: "var(--color-primary)", fontFamily: "var(--font-mono)" }}>{r.fund_code}</span>
+              <span style={{ fontSize: 13, color: "var(--color-text)", flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                 {r.short_name || r.full_name}
               </span>
             </div>

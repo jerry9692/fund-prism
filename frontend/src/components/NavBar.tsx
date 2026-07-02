@@ -13,36 +13,24 @@ export default function NavBar() {
   const loc = useLocation();
 
   return (
-    <nav
-      style={{
-        display: "flex",
-        alignItems: "center",
-        gap: 24,
-        padding: "12px 24px",
-        background: "var(--color-surface)",
-        borderBottom: "1px solid var(--color-border)",
-      }}
-    >
-      <Link
-        to="/"
-        style={{ fontWeight: 700, fontSize: 18, color: "var(--color-primary)" }}
-      >
-        Fund Prism
+    <nav className="top-nav">
+      <Link to="/" className="nav-brand">
+        ◈ Fund Prism
       </Link>
-      <FundSearch />
-      {links.map((l) => (
-        <Link
-          key={l.to}
-          to={l.to}
-          style={{
-            fontWeight: loc.pathname === l.to ? 600 : 400,
-            color: loc.pathname === l.to ? "var(--color-primary)" : "var(--color-text-secondary)",
-            fontSize: 14,
-          }}
-        >
-          {l.label}
-        </Link>
-      ))}
+      <div className="nav-links">
+        {links.map((l) => (
+          <Link
+            key={l.to}
+            to={l.to}
+            className={`nav-link${loc.pathname === l.to || (l.to !== "/" && loc.pathname.startsWith(l.to)) ? " active" : ""}`}
+          >
+            {l.label}
+          </Link>
+        ))}
+      </div>
+      <div className="nav-search">
+        <FundSearch />
+      </div>
     </nav>
   );
 }

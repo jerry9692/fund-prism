@@ -420,11 +420,39 @@ python -m pytest tests/ --tb=short -q
 - 现有数据库升级时，0003迁移会跳过DuckDB上的约束添加，依赖ORM层验证
 - 如果需要在DuckDB上添加约束，需要dump→recreate→import
 
-### 6.4 Phase 2 剩余工作
-- **P2C接受度标准**: [p2c_acceptance.py](file:///e:/Vibe/fund-research/src/fund_research/experiments/p2c_acceptance.py) 框架已完成，具体阈值参数需根据实盘数据校准
-- **模拟持仓P2B大规模验证**: 仅在少量样本基金上验证，需要批量跑30+基金
-- **交易能力分析**: 算法框架已有，但具体指标（Brinson模型二期、持仓变化归因）未实现
-- **评分模型权重校准**: DEFAULT_WEIGHTS是初始权重，需要根据回测结果调整
+### 6.4 Phase 2 产品化门禁（已实现）
+
+产品化门禁（productization_gate）已从"全部阻塞"升级为**量化阈值判定**。
+
+P2B报告中的 `productization_gate` 现在检查以下量化标准：
+
+**评分系统 (scoring) 产品化条件：**
+| 指标 | 阈值 | 说明 |
+|------|------|------|
+| backtest_sample_count | ≥ 20 | 回测基金数量 |
+| IC mean (12个月前推) | ≥ 0.10 | Spearman秩相关系数均值 |
+| IC IR | ≥ 0.5 | IC均值/IC标准差（预测一致性） |
+| monotonicity | = True | 分组收益单调性（高分>低分） |
+| min_verified_dimensions | ≥ 4 | 每个基金至少4个验证维度 |
+
+**模拟持仓 (simulated_holding) 产品化条件：**
+| 指标 | 阈值 | 说明 |
+|------|------|------|
+| method | = optimized | 必须使用CVXPY/SciPy优化器 |
+| success_rate | ≥ 70% | 基金级成功率 |
+| mean_TE (daily RMSE) | ≤ 5% | 日均跟踪误差 |
+| mean_Top10_recall | ≥ 50% | 重仓股Top10召回率 |
+
+**动态归因 (dynamic_attribution)**：保持 candidate/experiment_only 级别——
+需要更长窗口的真实基准数据验证，暂不开放产品化。
+
+通过产品化门禁的算法标记为 `level=product_ready`，但 `conclusion_status` 仍保持为
+`estimated`（不进入fact/computed），符合"估计结果隔离"原则。
+
+### 6.5 Phase 2 剩余工作（数据验证+功能增强）
+- **扩展评分回测到更大样本（200+基金）**: 确认IC=+0.26在大规模样本下仍成立，当前30基金样本已通过产品化门禁
+- **模拟持仓CVXPY优化路径A/B测试**: 在30+基金上对比optimized vs naive，验证TE降低和Recall提升
+- **交易能力分析**: 算法框架已有，但具体指标（Brinson模型二期、持仓变化归因）未实现（Phase 3）
 - **CNInfo PDF证据循环**: 仅有1个验证样本，需要扩展到更多公告类型
 
 ---

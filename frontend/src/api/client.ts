@@ -3,8 +3,7 @@
  * Switch backend URL by changing BASE_URL only.
  */
 
-const BASE_URL =
-  import.meta.env.VITE_API_BASE_URL || "http://127.0.0.1:8000";
+const BASE_URL = import.meta.env.VITE_API_BASE_URL ?? "";
 
 // ---- Types (shared across all pages) ----
 
@@ -458,13 +457,8 @@ async function request<T>(
 // ---- API functions (one per endpoint) ----
 
 export const api = {
-  health: async () => {
-    const res = await fetch(`${BASE_URL}/api/v1/health`);
-    if (!res.ok) {
-      throw new Error(`API error ${res.status}: ${res.statusText}`);
-    }
-    return res.json() as Promise<{ status: string }>;
-  },
+  health: () =>
+    request<{ status: string; database: string; version: string }>("/api/v1/health"),
 
   getFundProfile: (code: string) =>
     request<FundProfile>(`/api/v1/funds/${code}/profile`),
@@ -485,13 +479,14 @@ export const api = {
 
   getExposure: (code: string, window = 60) =>
     request<ExposureData>(
-      `/api/v1/analysis/exposure?fund_code=${code}&window=${window}`
+      "/api/v1/analysis/exposure",
+      { method: "POST", body: JSON.stringify({ fund_code: code, window }) }
     ),
 
   getResearchPacket: (code: string, template = "single_fund_checkup") =>
     request<{ packet_id: string; packet: Record<string, unknown> }>(
-      `/api/v1/research/packet?fund_code=${code}&template=${template}`,
-      { method: "POST" }
+      "/api/v1/research/packet",
+      { method: "POST", body: JSON.stringify({ fund_code: code, template }) }
     ),
 
   diffPackets: (body: Record<string, unknown>) =>

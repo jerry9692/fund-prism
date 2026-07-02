@@ -412,7 +412,7 @@ def _run_optimized_simulation(
             if sim_result.overall_industry_correlation is not None
             else backtest.get("industry_correlation")
         ),
-        "method": "optimized_cvxpy_scipy",
+        "method": "optimized",
         "uses_disclosed_holdings": True,
         "period_count": len(sim_result.periods),
         "matched_stock_count": matched_stock_count,

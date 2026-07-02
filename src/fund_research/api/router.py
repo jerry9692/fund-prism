@@ -13,7 +13,7 @@ from uuid import uuid4
 import pandas as pd
 from fastapi import APIRouter, Body, Depends, Query
 from pydantic import BaseModel
-from sqlalchemy import or_, select, text
+from sqlalchemy import func, or_, select, text
 from sqlalchemy.orm import Session
 
 from fund_research import __version__
@@ -1034,10 +1034,12 @@ def screen_funds(
     limit = min(body.limit or 50, 200)
     offset = body.offset or 0
 
-    def _calculate_metrics(fund_code: str) -> dict[str, float | None]:
-        nav_rows = db.scalars(
-            select(FundNAV).where(FundNAV.fund_code == fund_code).order_by(FundNAV.trade_date)
-        ).all()
+    # Bulk NAV rows for metric calculation
+    metric_sort_keys = {"annualized_return_1y", "annualized_return_3y", "max_drawdown_1y", "sharpe_ratio_1y"}
+    nav_by_fund: dict[str, list] = {}
+
+    def _calc_metrics_bulk(fund_code: str) -> dict[str, float | None]:
+        nav_rows = nav_by_fund.get(fund_code, [])
         if not nav_rows:
             return {
                 "annualized_return_1y": None,
@@ -1047,64 +1049,23 @@ def screen_funds(
             }
         latest = nav_rows[-1].trade_date
         nav_data = [
-            {
-                "trade_date": n.trade_date,
-                "unit_nav": n.unit_nav,
-                "accumulated_nav": n.accumulated_nav,
-                "adjusted_nav": n.adjusted_nav,
-                "daily_return": n.daily_return,
-            }
+            {"trade_date": n.trade_date, "unit_nav": n.unit_nav, "accumulated_nav": n.accumulated_nav,
+             "adjusted_nav": n.adjusted_nav, "daily_return": n.daily_return}
             for n in nav_rows
         ]
-
-        def _period_metrics(from_date: date_type) -> dict[str, float | None]:
+        def _period(from_date: date_type) -> dict[str, float | None]:
             sliced = [d for d in nav_data if d["trade_date"] >= from_date]
             if not sliced:
                 return {}
-            result = calculate_nav_metrics(pd.DataFrame(sliced))
-            return result.metrics
-
-        one_year = _period_metrics(latest - relativedelta(years=1))
-        three_year = _period_metrics(latest - relativedelta(years=3))
+            return calculate_nav_metrics(pd.DataFrame(sliced)).metrics
+        one_year = _period(latest - relativedelta(years=1))
+        three_year = _period(latest - relativedelta(years=3))
         return {
             "annualized_return_1y": one_year.get("annualized_return"),
             "annualized_return_3y": three_year.get("annualized_return"),
             "max_drawdown_1y": one_year.get("max_drawdown"),
             "sharpe_ratio_1y": one_year.get("sharpe_ratio"),
         }
-
-    def _data_completeness(
-        fund: FundMain,
-        latest_scale: float | None,
-        manager_start: date_type | None,
-        mgmt_fee: float | None,
-    ) -> float:
-        nav_count = (
-            db.scalar(
-                select(text("count(*)"))
-                .select_from(FundNAV)
-                .where(FundNAV.fund_code == fund.fund_code)
-            )
-            or 0
-        )
-        holdings_count = (
-            db.scalar(
-                select(text("count(*)"))
-                .select_from(FundDisclosedHoldings)
-                .where(FundDisclosedHoldings.fund_code == fund.fund_code)
-            )
-            or 0
-        )
-        checks = [
-            bool(fund.short_name and fund.category),
-            fund.inception_date is not None,
-            latest_scale is not None,
-            manager_start is not None,
-            mgmt_fee is not None,
-            nav_count >= 20,
-            holdings_count > 0,
-        ]
-        return round(sum(1 for item in checks if item) / len(checks), 4)
 
     # 构建基础查询
     stmt = select(FundMain)
@@ -1125,67 +1086,135 @@ def screen_funds(
         )
         return _log_tool_api_call(db, "screen_funds", body.model_dump(), response, started_at)
 
-    # 收集筛选数据
+    candidate_codes = [f.fund_code for f in candidates]
+
+    # Bulk load latest scale for each candidate
+    latest_scales: dict[str, float] = {}
+    scale_rows = db.execute(
+        select(FundScale.fund_code, FundScale.total_nav)
+        .where(FundScale.fund_code.in_(candidate_codes))
+        .order_by(FundScale.fund_code, FundScale.report_date.desc())
+    ).all()
+    seen_codes: set[str] = set()
+    for row in scale_rows:
+        if row.fund_code not in seen_codes:
+            latest_scales[row.fund_code] = float(row.total_nav)
+            seen_codes.add(row.fund_code)
+
+    # Bulk load manager tenure starts
+    mgr_starts: dict[str, date_type] = {}
+    tenure_rows = db.scalars(
+        select(FundManagerTenure)
+        .where(FundManagerTenure.fund_code.in_(candidate_codes), FundManagerTenure.is_current)
+    ).all()
+    for t in tenure_rows:
+        mgr_starts[t.fund_code] = t.start_date
+
+    # Bulk load management fees
+    mgmt_fees: dict[str, float] = {}
+    fee_rows = db.execute(
+        select(FundFee.fund_code, FundFee.mgmt_fee_pct)
+        .where(FundFee.fund_code.in_(candidate_codes))
+        .order_by(FundFee.fund_code, FundFee.effective_date.desc())
+    ).all()
+    seen_fee_codes: set[str] = set()
+    for row in fee_rows:
+        if row.fund_code not in seen_fee_codes:
+            mgmt_fees[row.fund_code] = float(row.mgmt_fee_pct)
+            seen_fee_codes.add(row.fund_code)
+
+    # Bulk load manager names
+    mgr_names: dict[str, str] = {}
+    mgr_name_rows = db.execute(
+        select(FundManagerTenure.fund_code, FundManager.name)
+        .join(FundManager, FundManager.manager_id == FundManagerTenure.manager_id)
+        .where(FundManagerTenure.fund_code.in_(candidate_codes), FundManagerTenure.is_current)
+    ).all()
+    for row in mgr_name_rows:
+        mgr_names[row.fund_code] = row.name
+
+    # Bulk NAV rows for metric calculation
+    all_nav_rows = db.scalars(
+        select(FundNAV)
+        .where(FundNAV.fund_code.in_(candidate_codes))
+        .order_by(FundNAV.fund_code, FundNAV.trade_date)
+    ).all()
+    for n in all_nav_rows:
+        nav_by_fund.setdefault(n.fund_code, []).append(n)
+
+    # NAV counts for data completeness
+    nav_counts: dict[str, int] = {}
+    nav_count_rows = db.execute(
+        select(FundNAV.fund_code, func.count(FundNAV.id).label("cnt"))
+        .where(FundNAV.fund_code.in_(candidate_codes))
+        .group_by(FundNAV.fund_code)
+    ).all()
+    for row in nav_count_rows:
+        nav_counts[row.fund_code] = int(row.cnt)
+
+    # Holdings count for data completeness
+    hold_counts: dict[str, int] = {}
+    hold_count_rows = db.execute(
+        select(FundDisclosedHoldings.fund_code, func.count(FundDisclosedHoldings.id).label("cnt"))
+        .where(FundDisclosedHoldings.fund_code.in_(candidate_codes))
+        .group_by(FundDisclosedHoldings.fund_code)
+    ).all()
+    for row in hold_count_rows:
+        hold_counts[row.fund_code] = int(row.cnt)
+
+    # Company cache
+    company_cache: dict[int, str] = {}
+
+    # ---- Filter and build results ----
     results = []
+    today = date_type.today()
     for fund in candidates:
-        # 规模过滤
-        latest_scale = db.scalar(
-            select(FundScale.total_nav)
-            .where(FundScale.fund_code == fund.fund_code)
-            .order_by(FundScale.report_date.desc()).limit(1)
-        )
+        code = fund.fund_code
+        latest_scale = latest_scales.get(code)
         if filters.get("min_scale_bn") and (latest_scale is None or latest_scale < float(filters["min_scale_bn"])):
             continue
         if filters.get("max_scale_bn") and latest_scale and latest_scale > float(filters["max_scale_bn"]):
             continue
 
-        # 经理任职天数过滤
-        manager_start = db.scalar(
-            select(FundManagerTenure.start_date).where(
-                FundManagerTenure.fund_code == fund.fund_code,
-                FundManagerTenure.is_current,
-            )
-        )
-        tenure_days = (date_type.today() - manager_start).days if manager_start else 0
+        manager_start = mgr_starts.get(code)
+        tenure_days = (today - manager_start).days if manager_start else 0
         if filters.get("min_manager_tenure_days") and tenure_days < int(filters["min_manager_tenure_days"]):
             continue
 
-        # 费率过滤
-        mgmt_fee = None
-        fee_row = db.scalar(
-            select(FundFee).where(FundFee.fund_code == fund.fund_code).order_by(FundFee.effective_date.desc()).limit(1)
-        )
-        if fee_row:
-            mgmt_fee = fee_row.mgmt_fee_pct
+        mgmt_fee = mgmt_fees.get(code)
         if filters.get("max_mgmt_fee_pct") and mgmt_fee and mgmt_fee > float(filters["max_mgmt_fee_pct"]):
             continue
 
-        manager_name = None
-        mgr_row = db.scalar(
-            select(FundManager.name)
-            .join(FundManagerTenure, FundManager.manager_id == FundManagerTenure.manager_id)
-            .where(
-                FundManagerTenure.fund_code == fund.fund_code, FundManagerTenure.is_current
-            )
-        )
-        if mgr_row:
-            manager_name = mgr_row
+        manager_name = mgr_names.get(code)
 
         company_name = None
         if fund.fund_company_id:
-            company = db.get(FundCompany, fund.fund_company_id)
-            company_name = company.name if company else None
+            if fund.fund_company_id not in company_cache:
+                comp = db.get(FundCompany, fund.fund_company_id)
+                company_cache[fund.fund_company_id] = comp.name if comp else None
+            company_name = company_cache[fund.fund_company_id]
 
-        metrics = _calculate_metrics(fund.fund_code)
-        data_completeness = _data_completeness(fund, latest_scale, manager_start, mgmt_fee)
+        # Data completeness
+        checks = [
+            bool(fund.short_name and fund.category),
+            fund.inception_date is not None,
+            latest_scale is not None,
+            manager_start is not None,
+            mgmt_fee is not None,
+            nav_counts.get(code, 0) >= 20,
+            hold_counts.get(code, 0) > 0,
+        ]
+        data_completeness = round(sum(1 for c in checks if c) / len(checks), 4)
         if (
             filters.get("min_data_completeness") is not None
             and data_completeness < float(filters["min_data_completeness"])
         ):
             continue
 
+        metrics = _calc_metrics_bulk(code)
+
         results.append({
-            "fund_code": fund.fund_code,
+            "fund_code": code,
             "short_name": fund.short_name,
             "full_name": fund.full_name,
             "company": company_name,
@@ -1206,7 +1235,6 @@ def screen_funds(
 
     total = len(results)
 
-    metric_sort_keys = {"annualized_return_1y", "annualized_return_3y", "max_drawdown_1y", "sharpe_ratio_1y"}
     if sort_by in metric_sort_keys:
         for r in results:
             r["_sort_value"] = r.get("metrics", {}).get(sort_by)

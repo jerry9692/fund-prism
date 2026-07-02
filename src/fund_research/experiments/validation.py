@@ -26,6 +26,13 @@ DEFAULT_MIN_RETURN_OBSERVATIONS = 20
 DEFAULT_MIN_STOCK_WEIGHT_COVERAGE = 0.6
 DEFAULT_MAX_BENCHMARK_WEIGHT_SNAPSHOT_AGE_DAYS = 365
 
+PRODUCTIZATION_MIN_SCORING_IC_MEAN = 0.10
+PRODUCTIZATION_MIN_SCORING_IC_IR = 0.5
+PRODUCTIZATION_MIN_SCORING_SAMPLE_COUNT = 20
+PRODUCTIZATION_MAX_SIM_HOLDING_TE = 0.05
+PRODUCTIZATION_MIN_SIM_HOLDING_TOP10_RECALL = 0.5
+PRODUCTIZATION_MIN_SIM_HOLDING_SUCCESS_RATE = 0.7
+
 
 def load_sample_fund_codes(sample_path: Path, limit: int | None = None) -> list[str]:
     """Load fund codes from the Phase 0/1 sample CSV."""
@@ -352,6 +359,7 @@ def _readiness_summary(algorithm_reports: dict[str, Any]) -> dict[str, dict[str,
 def _algorithm_readiness(algorithm: str, report: dict[str, Any]) -> dict[str, Any]:
     overall = report.get("overall_conclusion")
     rows = report.get("per_fund", [])
+    stats = report.get("aggregate_stats", {})
     warnings = [warning for row in rows for warning in (row.get("warnings") or [])]
     proxy_used = any(
         (row.get("diagnostics") or {}).get("uses_proxy_benchmark")
@@ -364,40 +372,103 @@ def _algorithm_readiness(algorithm: str, report: dict[str, Any]) -> dict[str, An
             "level": "experiment_only",
             "productization_allowed": False,
             "reason": "algorithm validation failed",
+            "metrics": {"overall": overall},
         }
-    if algorithm == "dynamic_attribution" and (proxy_used or warnings):
+
+    if algorithm == "dynamic_attribution":
+        if proxy_used:
+            return {
+                "level": "experiment_only",
+                "productization_allowed": False,
+                "reason": "uses proxy benchmark/sector returns; formal attribution needs real benchmark data",
+                "metrics": {"proxy_used": True, "warning_count": len(warnings)},
+            }
+        if warnings:
+            return {
+                "level": "candidate",
+                "productization_allowed": False,
+                "reason": (
+                    f"attribution passed with {len(warnings)} residual warnings; "
+                    "requires clean run before productization"
+                ),
+                "metrics": {"proxy_used": False, "warning_count": len(warnings)},
+            }
         return {
-            "level": "experiment_only",
+            "level": "candidate",
             "productization_allowed": False,
-            "reason": "uses proxy benchmark/sector returns; formal attribution needs real benchmark data",
+            "reason": "attribution passed without proxy; needs longer validation window for productization",
+            "metrics": {"proxy_used": False, "warning_count": 0},
         }
+
     if algorithm == "scoring":
-        stats = report.get("aggregate_stats", {})
         verified_counts = [
             (row.get("diagnostics") or {}).get("verified_dimension_count") or 0
             for row in rows
         ]
         min_verified = min(verified_counts) if verified_counts else 0
+        avg_verified = sum(verified_counts) / len(verified_counts) if verified_counts else 0
+        bt_samples = int(stats.get("scoring_backtest_sample_count") or 0)
+        bt_ic_mean = stats.get("scoring_backtest_ic_mean")
+        bt_ic_ir = stats.get("scoring_backtest_ic_ir")
+        bt_monotonicity = stats.get("scoring_backtest_monotonicity")
         has_backtest = (
             stats.get("scoring_backtest_available") is True
-            and int(stats.get("scoring_backtest_sample_count") or 0) > 0
+            and bt_samples > 0
         )
+
+        metrics = {
+            "min_verified_dimensions": min_verified,
+            "avg_verified_dimensions": round(avg_verified, 2),
+            "backtest_samples": bt_samples,
+            "backtest_ic_mean": bt_ic_mean,
+            "backtest_ic_ir": bt_ic_ir,
+            "backtest_monotonicity": bt_monotonicity,
+        }
+
         if not has_backtest:
             return {
                 "level": "experiment_only",
                 "productization_allowed": False,
                 "reason": f"only {min_verified} verified scoring dimensions; score backtest still required",
+                "metrics": metrics,
             }
+
         if overall != "pass" or min_verified < 4:
             return {
                 "level": "candidate",
                 "productization_allowed": False,
                 "reason": (
-                    f"score backtest available on "
-                    f"{stats.get('scoring_backtest_sample_count')} samples, "
+                    f"score backtest available on {bt_samples} samples, "
                     f"but only {min_verified} verified scoring dimensions"
                 ),
+                "metrics": metrics,
             }
+
+        failed_gates = []
+        if bt_samples < PRODUCTIZATION_MIN_SCORING_SAMPLE_COUNT:
+            failed_gates.append(f"sample_count={bt_samples} < {PRODUCTIZATION_MIN_SCORING_SAMPLE_COUNT}")
+        if bt_ic_mean is None or bt_ic_mean < PRODUCTIZATION_MIN_SCORING_IC_MEAN:
+            failed_gates.append(f"ic_mean={bt_ic_mean} < {PRODUCTIZATION_MIN_SCORING_IC_MEAN}")
+        if bt_ic_ir is None or bt_ic_ir < PRODUCTIZATION_MIN_SCORING_IC_IR:
+            failed_gates.append(f"ic_ir={bt_ic_ir} < {PRODUCTIZATION_MIN_SCORING_IC_IR}")
+        if bt_monotonicity is not True:
+            failed_gates.append(f"monotonicity={bt_monotonicity} != True")
+
+        if failed_gates:
+            return {
+                "level": "candidate",
+                "productization_allowed": False,
+                "reason": "productization gates failed: " + "; ".join(failed_gates),
+                "metrics": metrics,
+            }
+
+        return {
+            "level": "product_ready",
+            "productization_allowed": True,
+            "reason": "all scoring productization thresholds passed",
+            "metrics": metrics,
+        }
+
     if algorithm == "simulated_holding":
         method = next(
             (
@@ -407,18 +478,49 @@ def _algorithm_readiness(algorithm: str, report: dict[str, Any]) -> dict[str, An
             ),
             None,
         )
-        return {
-            "level": "candidate",
-            "productization_allowed": False,
-            "reason": (
-                f"{method or 'estimated'} passed pipeline thresholds, "
-                "but remains an estimated optional view until stricter product gates are defined"
-            ),
+        uses_optimizer = method in ("optimized", "cvxpy", "scipy")
+        mean_te = stats.get("mean_estimated_tracking_error")
+        mean_recall = stats.get("mean_estimated_top10_recall")
+        success_rate = stats.get("success_rate")
+
+        metrics = {
+            "method": method,
+            "uses_optimizer": uses_optimizer,
+            "mean_tracking_error": mean_te,
+            "mean_top10_recall": mean_recall,
+            "success_rate": success_rate,
         }
+
+        failed_gates = []
+        if not uses_optimizer:
+            failed_gates.append(f"method={method} not optimizer-based")
+        if success_rate is None or success_rate < PRODUCTIZATION_MIN_SIM_HOLDING_SUCCESS_RATE:
+            failed_gates.append(f"success_rate={success_rate} < {PRODUCTIZATION_MIN_SIM_HOLDING_SUCCESS_RATE}")
+        if mean_te is None or mean_te > PRODUCTIZATION_MAX_SIM_HOLDING_TE:
+            failed_gates.append(f"mean_te={mean_te} > {PRODUCTIZATION_MAX_SIM_HOLDING_TE}")
+        if mean_recall is None or mean_recall < PRODUCTIZATION_MIN_SIM_HOLDING_TOP10_RECALL:
+            failed_gates.append(f"mean_recall={mean_recall} < {PRODUCTIZATION_MIN_SIM_HOLDING_TOP10_RECALL}")
+
+        if failed_gates:
+            return {
+                "level": "candidate",
+                "productization_allowed": False,
+                "reason": "productization gates failed: " + "; ".join(failed_gates),
+                "metrics": metrics,
+            }
+
+        return {
+            "level": "product_ready",
+            "productization_allowed": True,
+            "reason": "all simulated holding productization thresholds passed",
+            "metrics": metrics,
+        }
+
     return {
         "level": "candidate" if overall in {"pass", "partial"} else "experiment_only",
         "productization_allowed": False,
         "reason": "P2B validation output remains estimated by design",
+        "metrics": {"overall": overall},
     }
 
 

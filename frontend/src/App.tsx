@@ -15,6 +15,7 @@ import ScoringBacktestPage from "./pages/ScoringBacktestPage";
 import FundScoringPage from "./pages/FundScoringPage";
 import FundReviewPage from "./pages/FundReviewPage";
 import SimulatedHoldingPage from "./pages/SimulatedHoldingPage";
+import DynamicAttributionPage from "./pages/DynamicAttributionPage";
 
 export default function App() {
   return (
@@ -29,13 +30,14 @@ export default function App() {
           <Route path="/funds/:code/exposure" element={<ExposurePage />} />
           <Route path="/funds/:code/packet" element={<ResearchPacketPage />} />
           <Route path="/funds/:code/diff" element={<PacketDiffPage />} />
+          <Route path="/funds/:code/scoring" element={<FundScoringPage />} />
+          <Route path="/funds/:code/simulated" element={<SimulatedHoldingPage />} />
+          <Route path="/funds/:code/attribution" element={<DynamicAttributionPage />} />
+          <Route path="/funds/:code/review" element={<FundReviewPage />} />
           <Route path="/data-quality" element={<DataQualityPage />} />
           <Route path="/experiments" element={<ExperimentsPage />} />
           <Route path="/experiments/p2b-report" element={<P2BValidationPage />} />
           <Route path="/scoring/backtest" element={<ScoringBacktestPage />} />
-          <Route path="/funds/:code/scoring" element={<FundScoringPage />} />
-          <Route path="/funds/:code/review" element={<FundReviewPage />} />
-          <Route path="/funds/:code/simulated" element={<SimulatedHoldingPage />} />
         </Routes>
       </main>
       <DisclaimerFooter />

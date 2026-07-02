@@ -1,9 +1,3 @@
-/**
- * EvidenceList — expandable evidence chain list.
- * Acceptance criterion §4.3: EvidenceList showing source, date, and confidence
- * for each evidence record, with expandable detail rows.
- */
-
 import { useState } from "react";
 import ConfidenceBadge from "./ConfidenceBadge";
 
@@ -58,12 +52,13 @@ export default function EvidenceList({
   }
 
   return (
-    <div className="card" style={{ padding: 0 }}>
-      <div style={{ padding: "10px 14px", borderBottom: "1px solid var(--color-border)", fontWeight: 600, fontSize: 14 }}>
-        证据链 ({items.length})
+    <div className="evidence-list">
+      <div className="evidence-header">
+        <span>证据链</span>
+        <span className="text-muted" style={{ fontSize: 12 }}>{items.length} 条记录</span>
       </div>
       <ul style={{ listStyle: "none", margin: 0, padding: 0 }}>
-        {items.map((item, idx) => {
+        {items.map((item) => {
           const isExpanded = expandedIds.has(item.evidence_id);
           const dateLabel = item.date_range
             ? item.date_range[0] === item.date_range[1]
@@ -71,72 +66,35 @@ export default function EvidenceList({
               : `${item.date_range[0]} ~ ${item.date_range[1]}`
             : "—";
           return (
-            <li
-              key={item.evidence_id}
-              style={{
-                borderBottom: idx < items.length - 1 ? "1px solid var(--color-border)" : "none",
-              }}
-            >
-              <div
-                onClick={() => toggle(item.evidence_id)}
-                style={{
-                  display: "flex",
-                  alignItems: "center",
-                  gap: 8,
-                  padding: "10px 14px",
-                  cursor: "pointer",
-                  userSelect: "none",
-                }}
-                onMouseEnter={(e) => (e.currentTarget.style.background = "var(--color-bg)")}
-                onMouseLeave={(e) => (e.currentTarget.style.background = "")}
-              >
-                <span style={{ fontSize: 12, color: "var(--color-text-secondary)", width: 16 }}>
-                  {isExpanded ? "▼" : "▶"}
-                </span>
-                <span style={{ flex: 1, fontSize: 13, fontWeight: 600, color: "var(--color-text)" }}>
-                  {item.evidence_type}
-                </span>
-                <span style={{ fontSize: 12, color: "var(--color-text-secondary)", minWidth: 180 }}>
-                  {item.source}
-                </span>
-                <span style={{ fontSize: 12, color: "var(--color-text-secondary)", minWidth: 160 }}>
-                  {dateLabel}
-                </span>
+            <li key={item.evidence_id} className="evidence-item">
+              <div className="evidence-row" onClick={() => toggle(item.evidence_id)}>
+                <span className={`evidence-caret${isExpanded ? " open" : ""}`}>▶</span>
+                <span className="evidence-type">{item.evidence_type}</span>
+                <span className="evidence-source">{item.source}</span>
+                <span className="evidence-date">{dateLabel}</span>
                 <ConfidenceBadge status={item.conclusion_status} />
               </div>
               {isExpanded && (
-                <div
-                  style={{
-                    padding: "8px 14px 12px 38px",
-                    background: "var(--color-bg)",
-                    fontSize: 12,
-                    color: "var(--color-text-secondary)",
-                    display: "grid",
-                    gridTemplateColumns: "auto 1fr",
-                    gap: "4px 12px",
-                  }}
-                >
-                  <span>证据ID</span>
-                  <span style={{ color: "var(--color-text)" }}>{item.evidence_id}</span>
+                <dl className="evidence-detail">
+                  <dt>证据ID</dt>
+                  <dd>{item.evidence_id}</dd>
                   {item.entity_id && (
                     <>
-                      <span>实体ID</span>
-                      <span style={{ color: "var(--color-text)" }}>{item.entity_id}</span>
+                      <dt>实体ID</dt>
+                      <dd>{item.entity_id}</dd>
                     </>
                   )}
-                  <span>来源等级</span>
-                  <span style={{ color: "var(--color-text)" }}>
-                    {SOURCE_LEVEL_LABELS[item.source_level] ?? item.source_level}
-                  </span>
-                  <span>置信度</span>
-                  <span style={{ color: "var(--color-text)" }}>{item.confidence}</span>
+                  <dt>来源等级</dt>
+                  <dd>{SOURCE_LEVEL_LABELS[item.source_level] ?? item.source_level}</dd>
+                  <dt>置信度</dt>
+                  <dd>{item.confidence}</dd>
                   {item.data_summary && (
                     <>
-                      <span>数据摘要</span>
-                      <span style={{ color: "var(--color-text)" }}>{item.data_summary}</span>
+                      <dt>数据摘要</dt>
+                      <dd>{item.data_summary}</dd>
                     </>
                   )}
-                </div>
+                </dl>
               )}
             </li>
           );

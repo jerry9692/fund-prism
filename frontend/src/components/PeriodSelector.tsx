@@ -1,7 +1,4 @@
-/**
- * PeriodSelector — multi-period switcher (YTD/1M/3M/6M/1Y/3Y/5Y).
- * Acceptance criterion §4.3: PeriodSelector for quick interval switching.
- */
+import type { CSSProperties } from "react";
 
 export type PeriodKey = "YTD" | "1M" | "3M" | "6M" | "1Y" | "3Y" | "5Y";
 
@@ -30,20 +27,12 @@ export default function PeriodSelector({
   options = DEFAULT_OPTIONS,
   disabled = false,
 }: PeriodSelectorProps) {
+  const style: CSSProperties = disabled
+    ? { opacity: 0.5, pointerEvents: "none" }
+    : {};
+
   return (
-    <div
-      role="tablist"
-      style={{
-        display: "inline-flex",
-        gap: 2,
-        padding: 2,
-        background: "var(--color-bg)",
-        border: "1px solid var(--color-border)",
-        borderRadius: 6,
-        opacity: disabled ? 0.6 : 1,
-        pointerEvents: disabled ? "none" : "auto",
-      }}
-    >
+    <div className="period-tabs" role="tablist" style={style}>
       {options.map((opt) => {
         const isActive = opt === value;
         return (
@@ -53,18 +42,7 @@ export default function PeriodSelector({
             role="tab"
             aria-selected={isActive}
             onClick={() => onChange(opt)}
-            style={{
-              padding: "4px 12px",
-              fontSize: 13,
-              fontWeight: isActive ? 600 : 400,
-              border: "none",
-              borderRadius: 4,
-              cursor: "pointer",
-              background: isActive ? "var(--color-surface)" : "transparent",
-              color: isActive ? "var(--color-primary)" : "var(--color-text-secondary)",
-              boxShadow: isActive ? "0 1px 2px rgba(0,0,0,0.08)" : "none",
-              transition: "all 0.15s ease",
-            }}
+            className={`period-tab${isActive ? " active" : ""}`}
           >
             {PERIOD_LABELS[opt]}
           </button>
@@ -74,11 +52,6 @@ export default function PeriodSelector({
   );
 }
 
-/**
- * Compute a start date for the given period key, relative to `refDate`.
- * Returns an ISO date string (YYYY-MM-DD). Useful for callers that need
- * to translate a period selection into an explicit date range.
- */
 export function periodToStartDate(period: PeriodKey, refDate: Date = new Date()): string {
   const d = new Date(refDate);
   switch (period) {
