@@ -122,4 +122,5 @@ ignore_missing_imports = true
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["src"]
-addopts = "-v --cov=fund_research --cov-report=term-missing"
+addopts = "-v --cov=fund_research --cov-report=term-missing --basetemp=.pytest_tmp"
+

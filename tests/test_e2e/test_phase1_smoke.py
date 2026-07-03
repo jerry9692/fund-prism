@@ -21,6 +21,7 @@ from fund_research.data.update import (
     upsert_akshare_holder_structure,
     upsert_akshare_index_daily,
     upsert_akshare_stock_daily,
+    upsert_eastmoney_fund_manager_history,
 )
 from fund_research.db.models import ResearchPacketRecord, StaticAttributionResult
 
@@ -70,12 +71,30 @@ class Phase1SmokeAdapter:
             "fund_managers",
             [
                 {
-                    "manager_id": "m_smoke",
+                    "manager_id": "em_mgr_smoke",
                     "name": "测试经理",
                     "current_fund_codes": fund_code,
                     "start_date": "2021-01-01",
                     "experience_years": "6年",
                     "education": "硕士",
+                }
+            ],
+        )
+
+    def fetch_fund_manager_history(self, fund_code: str) -> FetchResult:
+        """Return manager tenure history (required for FundManagerTenure records)."""
+        return self._result(
+            "fund_manager_tenure",
+            [
+                {
+                    "name": "测试经理",
+                    "manager_id": "em_mgr_smoke",
+                    "fund_code": fund_code,
+                    "start_date": date(2021, 1, 1),
+                    "end_date": None,
+                    "is_current": True,
+                    "tenure_days": (date.today() - date(2021, 1, 1)).days,
+                    "tenure_return": 0.15,
                 }
             ],
         )
@@ -219,6 +238,7 @@ def test_phase1_smoke_update_analyze_and_build_packet(
 
     upsert_akshare_fund_info(test_session, fund_codes, adapter=adapter)
     upsert_akshare_fund_managers(test_session, fund_codes, adapter=adapter)
+    upsert_eastmoney_fund_manager_history(test_session, fund_codes, adapter=adapter)
     upsert_akshare_fund_scale(test_session, fund_codes, adapter=adapter)
     upsert_akshare_fund_fees(test_session, fund_codes, adapter=adapter)
     upsert_akshare_fund_nav(test_session, fund_codes, adapter=adapter)

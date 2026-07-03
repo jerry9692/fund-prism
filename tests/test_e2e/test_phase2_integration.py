@@ -280,7 +280,7 @@ class TestPhase2APIContract:
         # Fields expected by ReviewerAnnotation TypeScript interface
         required_fields = {
             "id", "fund_code", "annotation_type", "target_module",
-            "detail", "reason", "evidence_id", "created_at",
+            "detail", "reason", "evidence_ids", "created_at",
         }
         assert required_fields.issubset(data.keys())
 

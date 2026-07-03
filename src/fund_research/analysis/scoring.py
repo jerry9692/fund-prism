@@ -20,44 +20,43 @@ import pandas as pd
 
 ALGORITHM_NAME = "composite_scoring"
 
-# 8 scoring dimensions with default weights.
-# v0.4 rebalance based on per-dimension IC diagnostics (2021-2025):
-#   - trading IC=-0.31 (inverted!) → reversed direction + lower weight
-#   - return  IC=-0.14 (A-share reversal) → lower weight
-#   - risk    IC=+0.22 (stable positive) → raise weight
-#   - style_stability IC=+0.18 but only 12% coverage → lower weight
-# Estimated dimensions keep half-weight.
+# 8 scoring dimensions with default weights per requirements doc v0.1 §5.3.3:
+#   return=20%, risk=20%, alpha=15%, trading=5%, style=15%, scale=10%, team=10%, holder=5%
+# NOTE: trading is an estimated dimension; its effective weight is halved to 2.5%
+# when allow_estimated=True (per v0.4 estimated-isolation principle).
+#
+# Weight adjustments from IC diagnostics are tracked via preset profiles, not
+# by silently changing the default. The default MUST match the product spec so
+# that API consumers see documented behavior; empirical IC-driven adjustments
+# are opt-in via preset or custom weights.
 DEFAULT_WEIGHTS = {
-    "return": 0.03,            # 收益能力 — 降低：A 股反转效应，pooled IC 为负
-    "risk": 0.25,              # 风险控制 — 大幅提高：最稳定的正向信号 (IC=+0.22)
-    "alpha": 0.05,            # Alpha 能力 — 保持：无数据时重分配
-    "trading": 0.15,          # 交易能力 — 降低 + 反转方向：原 IC=-0.31，反转后应正向
-    "style_stability": 0.15,  # 风格稳定性 — 降低：数据覆盖率仅 12%
-    "scale": 0.05,            # 规模适配 — 保持：无数据时重分配
-    "team": 0.17,             # 团队稳定性 — 提高：持久信号
-    "holder": 0.15,           # 持有人稳定性 — 提高：治理信号
+    "return": 0.20,            # 收益能力 — 长期年化收益、超额收益、胜率
+    "risk": 0.20,              # 风险控制 — 最大回撤、波动率、下行风险
+    "alpha": 0.15,             # Alpha 能力 — 选股收益、行业配置收益
+    "trading": 0.05,           # 交易能力 (estimated) — 换手效率；estimated 半权后实际 2.5%
+    "style_stability": 0.15,   # 风格稳定性 — 风格漂移、合同偏离
+    "scale": 0.10,             # 规模适配 — 规模过小/过大风险
+    "team": 0.10,              # 团队稳定性 — 基金经理任职、共管变化
+    "holder": 0.05,            # 持有人稳定性 — 机构集中度、申赎压力
 }
 
-# v0.4: When a dimension has no data for ANY fund in the scoring set
-# (e.g. alpha/scale/team/holder lack historical data sources), its weight
-# is redistributed proportionally to the dimensions that DO have data.
-# This prevents the missing-data penalty (5% of weight) from being too
-# weak to differentiate funds when 4+ dimensions are uniformly absent.
-#
-# v0.4 also reverses the trading dimension direction based on IC
-# diagnostics: in A-shares, low turnover funds underperform (IC=-0.31),
-# so the dimension now rewards active portfolio adjustment.
-ALGORITHM_VERSION = "0.4.0"
+# Dynamic weight redistribution for uniformly-absent dimensions (v0.3+):
+# When a dimension is NaN for ALL funds, its weight is redistributed
+# proportionally to dimensions that have data.
+ALGORITHM_VERSION = "0.5.0"
 
+# Preset profiles — opt-in weight configurations for different investor styles.
+# These are documented alternatives to the default; the default remains aligned
+# with the requirements spec.
 PRESET_WEIGHTS = {
-    "稳健型": {
-        "return": 0.05, "risk": 0.30, "alpha": 0.08, "trading": 0.10,
-        "style_stability": 0.17, "scale": 0.08, "team": 0.12, "holder": 0.10,
-    },
     "均衡型": DEFAULT_WEIGHTS,
+    "稳健型": {
+        "return": 0.15, "risk": 0.30, "alpha": 0.10, "trading": 0.05,
+        "style_stability": 0.15, "scale": 0.10, "team": 0.10, "holder": 0.05,
+    },
     "进取型": {
-        "return": 0.08, "risk": 0.20, "alpha": 0.12, "trading": 0.20,
-        "style_stability": 0.10, "scale": 0.08, "team": 0.12, "holder": 0.10,
+        "return": 0.25, "risk": 0.15, "alpha": 0.20, "trading": 0.05,
+        "style_stability": 0.10, "scale": 0.10, "team": 0.10, "holder": 0.05,
     },
 }
 
@@ -442,9 +441,26 @@ def compute_scoring_backtest(
         for k, value in series.to_dict().items():
             metric_by_group[column][str(int(k))] = round(float(value), 6)
         if len(series) >= 2:
-            monotonicity_by_metric[column] = bool(
-                series.is_monotonic_increasing and series.iloc[-1] > series.iloc[0]
-            )
+            if column == "future_max_drawdown":
+                # Max drawdown may be stored as either:
+                #   (a) positive magnitude (e.g. 0.20 = 20% drawdown; smaller = better)
+                #       → should be monotonic decreasing with score, or
+                #   (b) signed negative return (e.g. -0.20; less negative = better)
+                #       → should be monotonic increasing with score.
+                # Detect convention by the sign of the bottom-group mean.
+                if series.iloc[0] > 0:
+                    monotonicity_by_metric[column] = bool(
+                        series.is_monotonic_decreasing and series.iloc[-1] < series.iloc[0]
+                    )
+                else:
+                    monotonicity_by_metric[column] = bool(
+                        series.is_monotonic_increasing and series.iloc[-1] > series.iloc[0]
+                    )
+            else:
+                # future_return and future_sharpe: higher = better → monotonic increasing.
+                monotonicity_by_metric[column] = bool(
+                    series.is_monotonic_increasing and series.iloc[-1] > series.iloc[0]
+                )
         else:
             monotonicity_by_metric[column] = None
     for bucket in sorted({bucket for values in metric_by_group.values() for bucket in values}):
@@ -559,9 +575,16 @@ def compute_grouped_forward_metrics(merged: pd.DataFrame, group_count: int = 5) 
         group_metrics[column] = values
         if len(series) >= 2:
             if column == "future_max_drawdown":
-                monotonicity_checks[column] = bool(
-                    series.is_monotonic_decreasing and series.iloc[-1] < series.iloc[0]
-                )
+                # See comment in compute_scoring_backtest: support both positive
+                # magnitudes and signed-negative drawdown values.
+                if series.iloc[0] > 0:
+                    monotonicity_checks[column] = bool(
+                        series.is_monotonic_decreasing and series.iloc[-1] < series.iloc[0]
+                    )
+                else:
+                    monotonicity_checks[column] = bool(
+                        series.is_monotonic_increasing and series.iloc[-1] > series.iloc[0]
+                    )
             else:
                 monotonicity_checks[column] = bool(
                     series.is_monotonic_increasing and series.iloc[-1] > series.iloc[0]

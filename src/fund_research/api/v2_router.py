@@ -18,17 +18,18 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from fund_research import __version__
+from fund_research.analysis.scoring import ALGORITHM_VERSION as SCORING_VERSION
 from fund_research.api.deps import get_session
 from fund_research.config.settings import get_settings
-from fund_research.core.enums import ConclusionStatus
-from fund_research.core.schemas import APIResponse
+from fund_research.core.enums import ConclusionStatus, ConfidenceLevel, DataSourceLevel, EvidenceType
+from fund_research.core.schemas import APIResponse, EvidenceRecord
 from fund_research.db.models import (
     AlgorithmExperiment,
-    FundMain,
+    ResearchPacketRecord,
     ToolAPICallLog,
 )
 from fund_research.db.models import (
-    DynamicAttributionResult as DbDynamicAttributionResult,
+    ReviewerAnnotation as DbReviewerAnnotation,
 )
 from fund_research.db.models import (
     ScoringBacktest as DbScoringBacktest,
@@ -57,6 +58,7 @@ from fund_research.experiments.validation import (
     run_p2b_validation_report,
     write_p2b_validation_report,
 )
+from fund_research.research.packet import build_single_fund_packet, persist_research_packet
 
 v2_router = APIRouter(prefix="/api/v2", tags=["Tool API v2"])
 
@@ -80,7 +82,6 @@ class CreateDynamicAttributionFromReadyRequest(BaseModel):
     benchmark_symbol: str | None = None
     fund_codes: list[str] | None = None
     min_return_observations: int = 3
-    min_stock_weight_coverage: float = 0.5
     max_snapshot_age_days: int = 180
     limit: int | None = None
 
@@ -118,6 +119,91 @@ class RecordExperimentResultRequest(BaseModel):
 class RerunP2BValidationRequest(BaseModel):
     algorithms: list[str] | None = None
     limit: int | None = Field(default=None, ge=1, le=30)
+
+
+class SimulatedHoldingRequest(BaseModel):
+    """Request to run simulated holding estimation for a fund.
+
+    Per requirements §5.1.4, triggers the optimization pipeline and
+    persists results to simulated_holding_result table.
+    """
+    fund_code: str = Field(..., min_length=1, max_length=20)
+    start_date: date | None = None
+    end_date: date | None = None
+    max_positions: int = Field(default=30, ge=5, le=50)
+    max_single_weight: float = Field(default=0.10, ge=0.02, le=0.30)
+    turnover_penalty: float = Field(default=0.5, ge=0.0, le=10.0)
+    industry_penalty: float = Field(default=0.5, ge=0.0, le=10.0)
+    window_days: int = Field(default=60, ge=20, le=250)
+    rebalance_freq: str = Field(default="M", pattern="^(M|Q)$")
+
+
+class ReturnAttributionRequest(BaseModel):
+    """Request to run dynamic return attribution for a fund.
+
+    Per requirements §5.2.4, triggers multi-period Brinson attribution
+    with real market/benchmark returns.
+    """
+    fund_code: str = Field(..., min_length=1, max_length=20)
+    method: str = Field(default="BHB", pattern="^(BHB|BF)$")
+    benchmark_symbol: str | None = None
+    start_date: date | None = None
+    end_date: date | None = None
+
+
+class LockSecuritiesRequest(BaseModel):
+    """Lock or exclude specific securities from simulated holdings.
+
+    Per requirements §5.5.3, allows researchers to force-include or
+    force-exclude specific securities.
+    """
+    fund_code: str = Field(..., min_length=1, max_length=20)
+    security_code: str = Field(..., min_length=1, max_length=20)
+    action: str = Field(..., pattern="^(lock|exclude)$")
+    target_module: str = Field(default="simulated_holding", pattern="^(simulated_holding|scoring|dynamic_attribution)$")
+    reason: str = ""
+    lock_weight: float | None = Field(default=None, ge=0.0, le=1.0)
+
+
+class AdjustBenchmarkRequest(BaseModel):
+    """Manually adjust the benchmark for attribution analysis.
+
+    Per requirements §5.5.3, allows overriding the default benchmark.
+    """
+    fund_code: str = Field(..., min_length=1, max_length=20)
+    benchmark_symbol: str = Field(..., min_length=1, max_length=20)
+    custom_weights: dict[str, float] | None = None
+    reason: str = ""
+
+
+class AnnotateConfidenceRequest(BaseModel):
+    """Manually adjust confidence level for an algorithm result.
+
+    Per requirements §5.5.3, allows up/down-grading conclusion status.
+    """
+    fund_code: str = Field(..., min_length=1, max_length=20)
+    target_module: str = Field(..., pattern="^(simulated_holding|scoring|dynamic_attribution)$")
+    original_status: str | None = None
+    adjusted_status: str = Field(..., pattern="^(fact|computed|estimated|observation|needs_review)$")
+    reason: str = ""
+
+
+class BuildResearchPacketRequest(BaseModel):
+    """Request body for generating a research packet."""
+    fund_code: str = Field(..., min_length=1, max_length=20)
+    template: str = Field(
+        default="single_fund_checkup",
+        pattern="^(single_fund_checkup|manager_profile|style_drift|holdings_deep_dive)$",
+    )
+
+
+class DiffResearchPacketRequest(BaseModel):
+    """Request body for comparing two research packets."""
+    fund_code: str | None = Field(None, max_length=20)
+    left_packet_id: str | None = None
+    right_packet_id: str | None = None
+    left_snapshot: date | None = None
+    right_snapshot: date | None = None
 
 
 _P2B_TASKS: dict[str, dict[str, Any]] = {}
@@ -805,10 +891,6 @@ def dynamic_attribution_readiness_endpoint(
         int,
         Query(description="每个报告期最少基准收益观测数"),
     ] = 3,
-    min_stock_weight_coverage: Annotated[
-        float,
-        Query(description="持仓股票行情权重覆盖率门槛"),
-    ] = 0.5,
     max_snapshot_age_days: Annotated[
         int,
         Query(description="基准行业权重快照最大允许年龄"),
@@ -830,7 +912,6 @@ def dynamic_attribution_readiness_endpoint(
         "min_report_date": str(min_report_date) if min_report_date else None,
         "max_report_date": str(max_report_date) if max_report_date else None,
         "min_return_observations": min_return_observations,
-        "min_stock_weight_coverage": min_stock_weight_coverage,
         "max_snapshot_age_days": max_snapshot_age_days,
         "ready_only": ready_only,
         "limit": limit,
@@ -843,7 +924,6 @@ def dynamic_attribution_readiness_endpoint(
             min_report_date=min_report_date,
             max_report_date=max_report_date,
             min_return_observations=min_return_observations,
-            min_stock_weight_coverage=min_stock_weight_coverage,
             max_snapshot_age_days=max_snapshot_age_days,
             ready_only=ready_only,
             limit=limit,
@@ -901,7 +981,6 @@ def create_dynamic_attribution_from_ready_endpoint(
             min_report_date=body.report_date,
             max_report_date=body.report_date,
             min_return_observations=body.min_return_observations,
-            min_stock_weight_coverage=body.min_stock_weight_coverage,
             max_snapshot_age_days=body.max_snapshot_age_days,
             ready_only=True,
             limit=body.limit,
@@ -1105,12 +1184,12 @@ def scoring_endpoint(
     started = perf_counter()
     params = body.model_dump(mode="json")
     try:
-        run_id = f"0.1.0-{uuid4().hex[:8]}"
+        run_id = f"{SCORING_VERSION}-{uuid4().hex[:8]}"
         exp = create_experiment(
             db,
             experiment_name=f"Scoring {run_id}",
             algorithm_name="scoring",
-            algorithm_version="0.1.0",
+            algorithm_version=SCORING_VERSION,
             parameters={
                 "preset": body.preset,
                 "category": body.category,
@@ -1714,18 +1793,6 @@ def _simulated_holding_to_dict(row: DbSimulatedHoldingResult) -> dict:
     }
 
 
-class SimulatedHoldingRequest(BaseModel):
-    """Request body for POST /analysis/simulated-holding (§5.1.4)."""
-
-    fund_code: str = Field(..., min_length=1, max_length=20)
-    start_date: date | None = None
-    end_date: date | None = None
-    candidate_pool: str = "auto"
-    max_positions: int = Field(default=30, ge=1, le=100)
-    sparse_lambda: float = Field(default=0.1, ge=0.0)
-    turnover_lambda: float = Field(default=0.5, ge=0.0)
-
-
 @v2_router.get("/analysis/simulated-holding")
 def list_simulated_holding(
     db: SessionDep,
@@ -1779,245 +1846,242 @@ def list_simulated_holding(
         )
 
 
+# ============================================================
+# Analysis endpoints — trigger algorithm runs
+# ============================================================
+
+
 @v2_router.post("/analysis/simulated-holding")
-def run_simulated_holding(
+def run_simulated_holding_endpoint(
     db: SessionDep,
     body: SimulatedHoldingRequest,
 ) -> APIResponse[dict]:
-    """Run simulated holding analysis for a single fund (§5.1.4).
+    """Run simulated holding estimation for a single fund.
 
-    Creates an experiment, dispatches the run, and returns the latest
-    persisted result.  Results are always ``conclusion_status=estimated``.
+    Creates an experiment, dispatches the optimization runner, and
+    persists results to simulated_holding_result. Per requirements §5.1.4.
     """
     started = perf_counter()
     params = body.model_dump(mode="json")
     try:
+        from fund_research.analysis.simulated_holding import ALGORITHM_VERSION as SH_VERSION
+
+        run_id = f"{SH_VERSION}-{uuid4().hex[:8]}"
         exp = create_experiment(
             db,
-            experiment_name=f"Simulated holding {body.fund_code}",
+            experiment_name=f"SimHolding {body.fund_code} {run_id}",
             algorithm_name="simulated_holding",
-            algorithm_version="0.1.0",
+            algorithm_version=SH_VERSION,
             parameters={
-                "candidate_pool": body.candidate_pool,
+                "method": "optimized",
                 "max_positions": body.max_positions,
-                "sparse_lambda": body.sparse_lambda,
-                "turnover_lambda": body.turnover_lambda,
+                "max_single_weight": body.max_single_weight,
+                "turnover_penalty": body.turnover_penalty,
+                "industry_penalty": body.industry_penalty,
+                "window_days": body.window_days,
+                "rebalance_freq": body.rebalance_freq,
                 "start_date": str(body.start_date) if body.start_date else None,
                 "end_date": str(body.end_date) if body.end_date else None,
             },
             sample_fund_codes=[body.fund_code],
-            backtest_start=body.start_date,
-            backtest_end=body.end_date,
         )
         update_experiment_status(db, exp.id, "running")
         results = dispatch_run(db, exp)
+        success_count = sum(1 for r in results if r["is_success"])
+        status = "completed" if success_count > 0 else "failed"
+        update_experiment_status(db, exp.id, status)
 
-        success = results[0]["is_success"] if results else False
-        final_status = "completed" if success else "failed"
-        update_experiment_status(db, exp.id, final_status)
-
-        row = db.scalar(
+        # Fetch persisted result
+        row = db.scalars(
             select(DbSimulatedHoldingResult)
             .where(DbSimulatedHoldingResult.fund_code == body.fund_code)
-            .order_by(DbSimulatedHoldingResult.calc_date.desc())
-            .limit(1)
-        )
+            .order_by(DbSimulatedHoldingResult.created_at.desc())
+        ).first()
 
         return _log(
-            db,
-            "simulated_holding",
-            params,
+            db, "run_simulated_holding", params,
             APIResponse(
                 data={
                     "experiment_id": str(exp.id),
-                    "status": final_status,
+                    "fund_code": body.fund_code,
+                    "success": success_count > 0,
                     "result": _simulated_holding_to_dict(row) if row else None,
                 },
                 metadata={"tool": "simulated_holding", "platform_version": __version__},
-                warnings=[] if success else ["模拟持仓计算失败"],
-                conclusion_status=ConclusionStatus.ESTIMATED if success else ConclusionStatus.NEEDS_REVIEW,
+                conclusion_status=ConclusionStatus.ESTIMATED if success_count > 0 else ConclusionStatus.NEEDS_REVIEW,
             ),
             started,
         )
     except Exception as exc:
         db.rollback()
         return _log(
-            db,
-            "simulated_holding",
-            params,
+            db, "run_simulated_holding", params,
             APIResponse(
-                data=None,
-                metadata={"tool": "simulated_holding"},
-                warnings=[str(exc)],
-                conclusion_status=ConclusionStatus.NEEDS_REVIEW,
+                data=None, metadata={"tool": "simulated_holding"},
+                warnings=[str(exc)], conclusion_status=ConclusionStatus.NEEDS_REVIEW,
             ),
             started,
         )
 
 
-# ============================================================
-# Dynamic Attribution — independent endpoint (§5.2.4)
-# ============================================================
-
-
-class ReturnAttributionRequest(BaseModel):
-    """Request body for POST /analysis/return-attribution (§5.2.4)."""
-
-    fund_code: str = Field(..., min_length=1, max_length=20)
-    report_date: date | None = None
-    benchmark_symbol: str | None = None
-    holdings_source: str = Field(default="disclosed", description="disclosed | estimated")
-    min_return_observations: int = Field(default=20, ge=1)
-    max_snapshot_age_days: int = Field(default=180, ge=1)
-
-
 @v2_router.post("/analysis/return-attribution")
-def run_return_attribution(
+def run_return_attribution_endpoint(
     db: SessionDep,
     body: ReturnAttributionRequest,
 ) -> APIResponse[dict]:
-    """Run dynamic return attribution for a single fund (§5.2.4).
+    """Run dynamic return attribution for a single fund.
 
-    Creates an experiment, dispatches the dynamic attribution runner,
-    and returns the persisted result.  Results are always
-    ``conclusion_status=estimated``.
+    Creates an experiment, dispatches the dynamic attribution runner
+    using real market/benchmark returns. Per requirements §5.2.4.
     """
     started = perf_counter()
     params = body.model_dump(mode="json")
     try:
-        experiment_params: dict[str, Any] = {
-            "holdings_source": body.holdings_source,
-            "min_return_observations": body.min_return_observations,
-            "max_benchmark_weight_snapshot_age_days": body.max_snapshot_age_days,
-        }
-        if body.report_date:
-            experiment_params["report_dates"] = [str(body.report_date)]
-        if body.benchmark_symbol:
-            experiment_params["benchmark_symbol"] = body.benchmark_symbol
+        from fund_research.analysis.dynamic_attribution import ALGORITHM_VERSION as DA_VERSION
 
+        run_id = f"{DA_VERSION}-{uuid4().hex[:8]}"
         exp = create_experiment(
             db,
-            experiment_name=f"Dynamic attribution {body.fund_code}",
+            experiment_name=f" DynAttr {body.fund_code} {run_id}",
             algorithm_name="dynamic_attribution",
-            algorithm_version="0.1.0",
-            parameters=experiment_params,
+            algorithm_version=DA_VERSION,
+            parameters={
+                "method": body.method,
+                "benchmark_symbol": body.benchmark_symbol,
+                "start_date": str(body.start_date) if body.start_date else None,
+                "end_date": str(body.end_date) if body.end_date else None,
+            },
             sample_fund_codes=[body.fund_code],
         )
         update_experiment_status(db, exp.id, "running")
         results = dispatch_run(db, exp)
+        success_count = sum(1 for r in results if r["is_success"])
+        status = "completed" if success_count > 0 else "failed"
+        update_experiment_status(db, exp.id, status)
 
-        success = results[0]["is_success"] if results else False
-        final_status = "completed" if success else "failed"
-        update_experiment_status(db, exp.id, final_status)
+        # Fetch the latest TOTAL-level result (is_total=True) for the summary
+        from fund_research.db.models import DynamicAttributionResult as DbDynAttr
 
-        result_data = results[0] if results else None
-        warnings: list[str] = []
-        if not success:
-            warnings.append(result_data.get("error_message", "动态归因计算失败") if result_data else "动态归因计算失败")
+        row = db.scalars(
+            select(DbDynAttr)
+            .where(DbDynAttr.fund_code == body.fund_code)
+            .where(DbDynAttr.is_total == True)  # noqa: E712
+            .order_by(DbDynAttr.created_at.desc())
+        ).first()
 
+        # Fallback: if no total row exists (old data), get latest row
+        if row is None:
+            row = db.scalars(
+                select(DbDynAttr)
+                .where(DbDynAttr.fund_code == body.fund_code)
+                .order_by(DbDynAttr.created_at.desc())
+            ).first()
+
+        result_dict = None
+        if row:
+            result_dict = {
+                "id": row.id,
+                "fund_code": row.fund_code,
+                "calc_date": str(row.calc_date) if row.calc_date else None,
+                "period_start": str(row.period_start) if row.period_start else None,
+                "period_end": str(row.period_end) if row.period_end else None,
+                "algorithm_name": row.algorithm_name,
+                "algorithm_version": row.algorithm_version,
+                "benchmark_symbol": row.benchmark_symbol,
+                "uses_simulated_holdings": row.uses_simulated_holdings,
+                "estimated_total_portfolio_return": row.total_return,
+                "estimated_total_benchmark_return": row.benchmark_return,
+                "estimated_total_allocation_effect": row.allocation_return,
+                "estimated_total_selection_effect": row.selection_return,
+                "estimated_total_interaction_effect": row.interaction_return,
+                "estimated_total_residual": row.residual,
+                "estimated_residual_ratio": row.residual_pct,
+                "estimated_ipo_return": row.ipo_return,
+                "estimated_convertible_bond_return": row.convertible_bond_return,
+                "estimated_invisible_return": row.invisible_return,
+                "confidence": row.confidence,
+                "conclusion_status": row.conclusion_status,
+                "warnings": row.warnings,
+                "detail": row.detail,
+                "waterfall_data": (row.detail or {}).get("waterfall_data", []),
+                "created_at": row.created_at.isoformat() if row.created_at else None,
+            }
+
+        conclusion = ConclusionStatus.ESTIMATED if success_count > 0 else ConclusionStatus.NEEDS_REVIEW
         return _log(
-            db,
-            "return_attribution",
-            params,
+            db, "run_return_attribution", params,
             APIResponse(
                 data={
                     "experiment_id": str(exp.id),
-                    "status": final_status,
-                    "result": result_data,
+                    "fund_code": body.fund_code,
+                    "success": success_count > 0,
+                    "result": result_dict,
                 },
                 metadata={"tool": "return_attribution", "platform_version": __version__},
-                warnings=warnings,
-                conclusion_status=ConclusionStatus.ESTIMATED if success else ConclusionStatus.NEEDS_REVIEW,
+                conclusion_status=conclusion,
             ),
             started,
         )
     except Exception as exc:
         db.rollback()
         return _log(
-            db,
-            "return_attribution",
-            params,
+            db, "run_return_attribution", params,
             APIResponse(
-                data=None,
-                metadata={"tool": "return_attribution"},
-                warnings=[str(exc)],
-                conclusion_status=ConclusionStatus.NEEDS_REVIEW,
+                data=None, metadata={"tool": "return_attribution"},
+                warnings=[str(exc)], conclusion_status=ConclusionStatus.NEEDS_REVIEW,
             ),
             started,
         )
 
 
-def _dynamic_attribution_to_dict(row: DbDynamicAttributionResult) -> dict:
-    return {
-        "id": row.id,
-        "fund_code": row.fund_code,
-        "period_start": row.period_start.isoformat() if row.period_start else None,
-        "period_end": row.period_end.isoformat() if row.period_end else None,
-        "algorithm_name": row.algorithm_name,
-        "algorithm_version": row.algorithm_version,
-        "parameters": row.parameters,
-        "total_return": row.total_return,
-        "beta_return": row.beta_return,
-        "allocation_return": row.allocation_return,
-        "sector_rotation_return": row.sector_rotation_return,
-        "stock_selection_return": row.stock_selection_return,
-        "convertible_bond_return": row.convertible_bond_return,
-        "ipo_return": row.ipo_return,
-        "interaction_return": row.interaction_return,
-        "residual": row.residual,
-        "residual_pct": row.residual_pct,
-        "detail": row.detail,
-        "confidence": row.confidence.value if row.confidence else None,
-        "conclusion_status": row.conclusion_status.value if row.conclusion_status else None,
-        "warnings": row.warnings,
-        "created_at": row.created_at.isoformat() if row.created_at else None,
-    }
-
-
-@v2_router.get("/analysis/dynamic-attribution")
-def get_dynamic_attribution(
-    fund_code: Annotated[str, Query(description="基金代码")],
+@v2_router.get("/analysis/return-attribution")
+def list_return_attribution(
     db: SessionDep,
-    report_date: Annotated[date | None, Query(description="报告日期（精确匹配period_start）")] = None,
-    start_date: Annotated[date | None, Query(description="开始日期（period_start范围）")] = None,
-    end_date: Annotated[date | None, Query(description="结束日期（period_end范围）")] = None,
-    algorithm_version: Annotated[str | None, Query()] = None,
+    fund_code: str = Query(..., min_length=1, max_length=20),
+    limit: int = Query(10, ge=1, le=50),
 ) -> APIResponse[dict]:
-    """Query dynamic attribution results by fund_code and optional date filters."""
+    """List the most recent dynamic attribution results for a fund."""
     started = perf_counter()
-    params = {
-        "fund_code": fund_code,
-        "report_date": str(report_date) if report_date else None,
-        "start_date": str(start_date) if start_date else None,
-        "end_date": str(end_date) if end_date else None,
-        "algorithm_version": algorithm_version,
-    }
+    params = {"fund_code": fund_code, "limit": limit}
     try:
-        query = select(DbDynamicAttributionResult).where(
-            DbDynamicAttributionResult.fund_code == fund_code
-        )
-        if report_date:
-            query = query.where(DbDynamicAttributionResult.period_start == report_date)
-        if start_date:
-            query = query.where(DbDynamicAttributionResult.period_start >= start_date)
-        if end_date:
-            query = query.where(DbDynamicAttributionResult.period_end <= end_date)
-        if algorithm_version:
-            query = query.where(DbDynamicAttributionResult.algorithm_version == algorithm_version)
-        query = query.order_by(DbDynamicAttributionResult.period_start.desc())
-        rows = db.scalars(query).all()
+        from fund_research.db.models import DynamicAttributionResult as DbDynAttr
+
+        rows = db.scalars(
+            select(DbDynAttr)
+            .where(DbDynAttr.fund_code == fund_code)
+            .where(DbDynAttr.is_total == True)  # noqa: E712
+            .order_by(DbDynAttr.created_at.desc())
+            .limit(limit)
+        ).all()
+
+        items = []
+        for row in rows:
+            items.append({
+                "id": row.id,
+                "fund_code": row.fund_code,
+                "calc_date": str(row.calc_date) if row.calc_date else None,
+                "period_start": str(row.period_start) if row.period_start else None,
+                "period_end": str(row.period_end) if row.period_end else None,
+                "benchmark_symbol": row.benchmark_symbol,
+                "uses_simulated_holdings": row.uses_simulated_holdings,
+                "estimated_total_portfolio_return": row.total_return,
+                "estimated_total_benchmark_return": row.benchmark_return,
+                "estimated_total_allocation_effect": row.allocation_return,
+                "estimated_total_selection_effect": row.selection_return,
+                "estimated_total_interaction_effect": row.interaction_return,
+                "estimated_total_residual": row.residual,
+                "estimated_residual_ratio": row.residual_pct,
+                "confidence": row.confidence,
+                "conclusion_status": row.conclusion_status,
+                "warnings": row.warnings,
+                "created_at": row.created_at.isoformat() if row.created_at else None,
+            })
 
         return _log(
-            db,
-            "dynamic_attribution_query",
-            params,
+            db, "list_return_attribution", params,
             APIResponse(
-                data={
-                    "fund_code": fund_code,
-                    "results": [_dynamic_attribution_to_dict(r) for r in rows],
-                    "count": len(rows),
-                },
-                metadata={"tool": "dynamic_attribution", "platform_version": __version__},
+                data={"fund_code": fund_code, "results": items, "count": len(items)},
+                metadata={"tool": "return_attribution", "platform_version": __version__},
                 conclusion_status=ConclusionStatus.ESTIMATED,
             ),
             started,
@@ -2025,76 +2089,177 @@ def get_dynamic_attribution(
     except Exception as exc:
         db.rollback()
         return _log(
-            db,
-            "dynamic_attribution_query",
-            params,
+            db, "list_return_attribution", params,
             APIResponse(
-                data=None,
-                metadata={"tool": "dynamic_attribution"},
-                warnings=[f"查询动态归因结果失败: {exc}"],
+                data=None, metadata={"tool": "return_attribution"},
+                warnings=[f"查询动态归因失败: {exc}"],
                 conclusion_status=ConclusionStatus.NEEDS_REVIEW,
             ),
             started,
         )
 
 
-@v2_router.get("/analysis/dynamic-attribution/{fund_code}")
-def list_dynamic_attribution(
+# ============================================================
+# Review — specialized endpoints per requirements §5.5.3
+# ============================================================
+
+
+@v2_router.post("/review/lock-securities")
+def lock_securities_endpoint(
+    db: SessionDep,
+    body: LockSecuritiesRequest,
+) -> APIResponse[dict]:
+    """Lock or exclude a specific security from simulated holdings.
+
+    Per requirements §5.5.3: allows researchers to force-include (lock)
+    or force-exclude (exclude) specific securities. Recorded as a
+    reviewer annotation with security_code in the detail dict.
+    """
+    started = perf_counter()
+    params = body.model_dump(mode="json")
+    try:
+        annotation_type = "lock" if body.action == "lock" else "exclude"
+        detail = {
+            "security_code": body.security_code,
+            "lock_weight": body.lock_weight,
+            "action": body.action,
+        }
+        req = CreateReviewerAnnotationRequest(
+            fund_code=body.fund_code,
+            annotation_type=annotation_type,
+            target_module=body.target_module,
+            detail=detail,
+            reason=body.reason or f"{body.action} security {body.security_code}",
+        )
+        return create_annotation(db, req)
+    except Exception as exc:
+        db.rollback()
+        return _log(
+            db, "lock_securities", params,
+            APIResponse(
+                data=None, metadata={"tool": "lock_securities"},
+                warnings=[str(exc)], conclusion_status=ConclusionStatus.NEEDS_REVIEW,
+            ),
+            started,
+        )
+
+
+@v2_router.post("/review/adjust-benchmark")
+def adjust_benchmark_endpoint(
+    db: SessionDep,
+    body: AdjustBenchmarkRequest,
+) -> APIResponse[dict]:
+    """Manually adjust the benchmark for attribution analysis.
+
+    Per requirements §5.5.3: allows overriding the default benchmark
+    symbol and providing custom sector weights.
+    """
+    started = perf_counter()
+    params = body.model_dump(mode="json")
+    try:
+        detail = {
+            "benchmark_symbol": body.benchmark_symbol,
+            "custom_weights": body.custom_weights,
+            "action": "adjust_benchmark",
+        }
+        req = CreateReviewerAnnotationRequest(
+            fund_code=body.fund_code,
+            annotation_type="lock",
+            target_module="dynamic_attribution",
+            detail=detail,
+            reason=body.reason or f"Adjust benchmark to {body.benchmark_symbol}",
+        )
+        return create_annotation(db, req)
+    except Exception as exc:
+        db.rollback()
+        return _log(
+            db, "adjust_benchmark", params,
+            APIResponse(
+                data=None, metadata={"tool": "adjust_benchmark"},
+                warnings=[str(exc)], conclusion_status=ConclusionStatus.NEEDS_REVIEW,
+            ),
+            started,
+        )
+
+
+@v2_router.post("/review/annotate-confidence")
+def annotate_confidence_endpoint(
+    db: SessionDep,
+    body: AnnotateConfidenceRequest,
+) -> APIResponse[dict]:
+    """Manually adjust confidence level for an algorithm result.
+
+    Per requirements §5.5.3: allows up/down-grading the conclusion
+    status of a specific algorithm result for a fund.
+    """
+    started = perf_counter()
+    params = body.model_dump(mode="json")
+    try:
+        detail = {
+            "action": "annotate_confidence",
+            "original_status": body.original_status,
+            "adjusted_status": body.adjusted_status,
+        }
+        req = CreateReviewerAnnotationRequest(
+            fund_code=body.fund_code,
+            annotation_type="note",
+            target_module=body.target_module,
+            detail=detail,
+            reason=body.reason or f"Adjust confidence to {body.adjusted_status}",
+        )
+        return create_annotation(db, req)
+    except Exception as exc:
+        db.rollback()
+        return _log(
+            db, "annotate_confidence", params,
+            APIResponse(
+                data=None, metadata={"tool": "annotate_confidence"},
+                warnings=[str(exc)], conclusion_status=ConclusionStatus.NEEDS_REVIEW,
+            ),
+            started,
+        )
+
+
+@v2_router.get("/review/history/{fund_code}")
+def review_history_endpoint(
+    db: SessionDep,
     fund_code: str,
-    db: SessionDep,
-    start_date: Annotated[date | None, Query()] = None,
-    end_date: Annotated[date | None, Query()] = None,
-    algorithm_version: Annotated[str | None, Query()] = None,
-    include_backtest: Annotated[bool, Query()] = False,
 ) -> APIResponse[dict]:
-    """List dynamic attribution results for a fund."""
+    """Get review/annotation history for a fund.
+
+    Per requirements §5.5.3: returns all reviewer annotations for a fund
+    across all modules, ordered by creation time.
+    """
     started = perf_counter()
-    params = {
-        "fund_code": fund_code,
-        "start_date": str(start_date) if start_date else None,
-        "end_date": str(end_date) if end_date else None,
-        "algorithm_version": algorithm_version,
-        "include_backtest": include_backtest,
-    }
+    params = {"fund_code": fund_code}
     try:
-        query = select(DbDynamicAttributionResult).where(
-            DbDynamicAttributionResult.fund_code == fund_code
-        )
-        if start_date:
-            query = query.where(DbDynamicAttributionResult.period_start >= start_date)
-        if end_date:
-            query = query.where(DbDynamicAttributionResult.period_start <= end_date)
-        if algorithm_version:
-            query = query.where(DbDynamicAttributionResult.algorithm_version == algorithm_version)
-        query = query.order_by(DbDynamicAttributionResult.period_start.desc())
-        rows = db.scalars(query).all()
+        rows = db.scalars(
+            select(DbReviewerAnnotation)
+            .where(DbReviewerAnnotation.fund_code == fund_code)
+            .order_by(DbReviewerAnnotation.created_at.desc())
+        ).all()
+        from fund_research.review.service import annotation_to_dict
 
         return _log(
-            db,
-            "dynamic_attribution",
-            params,
+            db, "review_history", params,
             APIResponse(
                 data={
                     "fund_code": fund_code,
-                    "results": [_dynamic_attribution_to_dict(r) for r in rows],
+                    "annotations": [annotation_to_dict(r) for r in rows],
                     "count": len(rows),
                 },
-                metadata={"tool": "dynamic_attribution", "platform_version": __version__},
-                conclusion_status=ConclusionStatus.ESTIMATED,
+                metadata={"tool": "review_history", "platform_version": __version__},
+                conclusion_status=ConclusionStatus.FACT,
             ),
             started,
         )
     except Exception as exc:
         db.rollback()
         return _log(
-            db,
-            "dynamic_attribution",
-            params,
+            db, "review_history", params,
             APIResponse(
-                data=None,
-                metadata={"tool": "dynamic_attribution"},
-                warnings=[f"查询动态归因结果失败: {exc}"],
-                conclusion_status=ConclusionStatus.NEEDS_REVIEW,
+                data=None, metadata={"tool": "review_history"},
+                warnings=[str(exc)], conclusion_status=ConclusionStatus.NEEDS_REVIEW,
             ),
             started,
         )
@@ -2125,9 +2290,9 @@ def create_reviewer_annotation(
 ) -> APIResponse[dict]:
     """Create a reviewer annotation (note / lock / exclude / approve).
 
-    Annotations are the manual-review layer on top of algorithm results.
-    ``lock`` and ``exclude`` annotations can downgrade or block estimated
-    conclusions from appearing in default views.
+    Delegates to ``review.service.create_annotation()`` which handles
+    validation, Evidence-record creation (reviewer_note type), and
+    evidence_ids linkage (fixes EV-2 code duplication).
     """
     return create_annotation(db, body)
 
@@ -2189,134 +2354,508 @@ def get_fund_review_status(
 
 
 # ============================================================
-# Review API — specialized endpoints (§5.5.3)
-# These are convenience wrappers over the generic annotation CRUD.
+# Research Packet endpoints (Phase 1 P1-05/06)
 # ============================================================
 
 
-class LockSecuritiesRequest(BaseModel):
-    """§5.5.3 — Lock or exclude securities in simulated holding pool."""
-
-    fund_code: str = Field(..., min_length=1, max_length=20)
-    action: str = Field(..., description="lock (必选) | exclude (排除)")
-    security_codes: list[str] = Field(default_factory=list)
-    reason: str = Field(..., min_length=1, max_length=2000)
-
-
-class AdjustBenchmarkRequest(BaseModel):
-    """§5.5.3 — Manually adjust benchmark for attribution."""
-
-    fund_code: str = Field(..., min_length=1, max_length=20)
-    benchmark_symbol: str | None = None
-    custom_weights: dict[str, float] | None = None
-    reason: str = Field(..., min_length=1, max_length=2000)
-
-
-class AnnotateConfidenceRequest(BaseModel):
-    """§5.5.3 — Manually annotate confidence level."""
-
-    fund_code: str = Field(..., min_length=1, max_length=20)
-    action: str = Field(..., description="approve (上调置信度) | flag (下调置信度)")
-    target_module: str | None = Field(None, description="scoring | simulated_holding | dynamic_attribution")
-    reason: str = Field(..., min_length=1, max_length=2000)
-    evidence_id: str | None = Field(None, max_length=64)
-
-
-@v2_router.post("/review/lock-securities")
-def review_lock_securities(
+@v2_router.post("/research/packet")
+def build_research_packet_endpoint(
     db: SessionDep,
-    body: LockSecuritiesRequest,
+    body: BuildResearchPacketRequest,
 ) -> APIResponse[dict]:
-    """§5.5.3 — Lock or exclude securities in simulated holding candidate pool."""
-    annotation_type = "lock" if body.action == "lock" else "exclude"
-    return create_annotation(
-        db,
-        CreateReviewerAnnotationRequest(
-            fund_code=body.fund_code,
-            annotation_type=annotation_type,
-            target_module="simulated_holding",
-            detail={"action": body.action, "security_codes": body.security_codes},
-            reason=body.reason,
-        ),
-    )
+    """生成标准化研究包（Phase 2 v2 版本，含 Phase2 评分/模拟/归因结果）。"""
+    started = perf_counter()
+    params = body.model_dump(mode="json")
+    try:
+        packet = build_single_fund_packet(db, fund_code=body.fund_code, template=body.template)
+        record = persist_research_packet(db, packet)
+        warnings = packet.warnings.copy()
+        if packet.metadata.overall_confidence.value == "needs_review":
+            warnings.append("研究包存在待复核模块，不能作为高置信度结论")
 
-
-@v2_router.post("/review/adjust-benchmark")
-def review_adjust_benchmark(
-    db: SessionDep,
-    body: AdjustBenchmarkRequest,
-) -> APIResponse[dict]:
-    """§5.5.3 — Manually adjust benchmark for attribution analysis."""
-    detail: dict[str, Any] = {"action": "adjust_benchmark"}
-    if body.benchmark_symbol:
-        detail["benchmark_symbol"] = body.benchmark_symbol
-    if body.custom_weights:
-        detail["custom_weights"] = body.custom_weights
-    result = create_annotation(
-        db,
-        CreateReviewerAnnotationRequest(
-            fund_code=body.fund_code,
-            annotation_type="benchmark_override",
-            target_module="dynamic_attribution",
-            detail=detail,
-            reason=body.reason,
-        ),
-    )
-    if body.benchmark_symbol:
-        fund = db.scalar(select(FundMain).where(FundMain.fund_code == body.fund_code))
-        if fund:
-            fund.benchmark = body.benchmark_symbol
-            db.commit()
-    return result
-
-
-@v2_router.post("/review/annotate-confidence")
-def review_annotate_confidence(
-    db: SessionDep,
-    body: AnnotateConfidenceRequest,
-) -> APIResponse[dict]:
-    """§5.5.3 — Manually annotate confidence level for algorithm results."""
-    if body.action == "approve":
-        annotation_type = "approve"
-    elif body.action == "flag":
-        annotation_type = "confidence_override"
-    else:
-        annotation_type = "note"
-    result = create_annotation(
-        db,
-        CreateReviewerAnnotationRequest(
-            fund_code=body.fund_code,
-            annotation_type=annotation_type,
-            target_module=body.target_module,
-            detail={"action": body.action},
-            reason=body.reason,
-            evidence_id=body.evidence_id,
-        ),
-    )
-    if body.action == "flag" and body.target_module:
-        model_map = {
-            "scoring": DbScoringResult,
-            "simulated_holding": DbSimulatedHoldingResult,
-            "dynamic_attribution": DbDynamicAttributionResult,
-        }
-        model = model_map.get(body.target_module)
-        if model:
-            latest_result = db.scalar(
-                select(model)
-                .where(model.fund_code == body.fund_code)
-                .order_by(model.created_at.desc())
-                .limit(1)
+        # 标记 estimated 模块的警告
+        estimated_modules = [
+            name for name, status in packet.conclusion_map.items()
+            if status == ConclusionStatus.ESTIMATED
+        ]
+        if estimated_modules:
+            warnings.append(
+                f"以下模块为 estimated（模型估算），不可作为确定性结论: {', '.join(estimated_modules)}"
             )
-            if latest_result:
-                latest_result.conclusion_status = "needs_review"
-                db.commit()
-    return result
+
+        conclusion_status = (
+            ConclusionStatus.NEEDS_REVIEW
+            if packet.metadata.overall_confidence.value == "needs_review"
+            else ConclusionStatus.ESTIMATED
+            if estimated_modules
+            else ConclusionStatus.COMPUTED
+        )
+
+        return _log(
+            db,
+            "build_research_packet",
+            params,
+            APIResponse(
+                data={
+                    "packet_id": record.packet_id,
+                    "packet": packet.model_dump(mode="json"),
+                    "markdown": record.markdown_text,
+                },
+                metadata={
+                    "tool": "build_research_packet",
+                    "fund_code": body.fund_code,
+                    "template": body.template,
+                    "platform_version": __version__,
+                    "packet_id": record.packet_id,
+                },
+                evidence=packet.evidence,
+                warnings=warnings,
+                conclusion_status=conclusion_status,
+            ),
+            started,
+        )
+    except Exception as exc:
+        db.rollback()
+        return _log(
+            db,
+            "build_research_packet",
+            params,
+            APIResponse(
+                data=None,
+                metadata={"tool": "build_research_packet", "fund_code": body.fund_code},
+                warnings=[f"生成研究包失败: {exc}"],
+                conclusion_status=ConclusionStatus.NEEDS_REVIEW,
+            ),
+            started,
+        )
 
 
-@v2_router.get("/review/history/{fund_code}")
-def review_history(
+@v2_router.post("/research/diff")
+def diff_research_packets_endpoint(
     db: SessionDep,
-    fund_code: str,
+    body: DiffResearchPacketRequest,
 ) -> APIResponse[dict]:
-    """§5.5.3 — Get review history for a fund (alias for fund review status)."""
-    return _get_fund_review_status(db, fund_code)
+    """对比同一基金两个日期/两个 packet_id 的 Research Packet。"""
+    started = perf_counter()
+    params = body.model_dump(mode="json")
+    try:
+        fund_code = body.fund_code or ""
+        warnings: list[str] = []
+
+        # 获取两个 packet
+        left = None
+        right = None
+        if body.left_packet_id:
+            left = db.scalar(
+                select(ResearchPacketRecord).where(
+                    ResearchPacketRecord.packet_id == body.left_packet_id
+                )
+            )
+        elif body.left_snapshot:
+            left = db.scalar(
+                select(ResearchPacketRecord).where(
+                    ResearchPacketRecord.fund_code == fund_code,
+                    ResearchPacketRecord.data_date <= body.left_snapshot,
+                ).order_by(ResearchPacketRecord.data_date.desc()).limit(1)
+            )
+        if body.right_packet_id:
+            right = db.scalar(
+                select(ResearchPacketRecord).where(
+                    ResearchPacketRecord.packet_id == body.right_packet_id
+                )
+            )
+        elif body.right_snapshot:
+            right = db.scalar(
+                select(ResearchPacketRecord).where(
+                    ResearchPacketRecord.fund_code == fund_code,
+                    ResearchPacketRecord.data_date <= body.right_snapshot,
+                ).order_by(ResearchPacketRecord.data_date.desc()).limit(1)
+            )
+
+        if not left or not right:
+            missing = []
+            if not left:
+                missing.append("left")
+            if not right:
+                missing.append("right")
+            return _log(
+                db,
+                "diff_research_packets",
+                params,
+                APIResponse(
+                    data=None,
+                    metadata={"tool": "diff_research_packets", "fund_code": fund_code},
+                    warnings=[f"缺少研究包: {', '.join(missing)}"],
+                    conclusion_status=ConclusionStatus.NEEDS_REVIEW,
+                ),
+                started,
+            )
+
+        lp = left.packet_json if isinstance(left.packet_json, dict) else {}
+        rp = right.packet_json if isinstance(right.packet_json, dict) else {}
+        if not fund_code:
+            fund_code = left.fund_code
+        if left.fund_code != right.fund_code:
+            return _log(
+                db,
+                "diff_research_packets",
+                params,
+                APIResponse(
+                    data=None,
+                    metadata={"tool": "diff_research_packets", "fund_code": fund_code},
+                    warnings=["左右研究包不属于同一基金，不能进行同基金 diff"],
+                    conclusion_status=ConclusionStatus.NEEDS_REVIEW,
+                ),
+                started,
+            )
+
+        diffs: dict[str, Any] = {}
+
+        # 规模变化
+        ls = (lp.get("fund_profile") or {}).get("latest_scale") if isinstance(lp.get("fund_profile"), dict) else None
+        rs = (rp.get("fund_profile") or {}).get("latest_scale") if isinstance(rp.get("fund_profile"), dict) else None
+        if ls and rs and ls != rs:
+            diffs["scale"] = {"left": ls, "right": rs, "delta": round(float(rs) - float(ls), 2) if ls and rs else None}
+
+        # 经理变化
+        _lm_dict = lp.get("manager_info") if isinstance(lp.get("manager_info"), dict) else {}
+        _rm_dict = rp.get("manager_info") if isinstance(rp.get("manager_info"), dict) else {}
+        lm = (_lm_dict or {}).get("current_managers", [])
+        rm = (_rm_dict or {}).get("current_managers", [])
+        if lm != rm:
+            diffs["manager"] = {"left": lm, "right": rm, "changed": True}
+
+        # 净值指标变化
+        lp_metrics = (lp.get("nav_metrics") or {}).get("metrics", {}) if isinstance(lp.get("nav_metrics"), dict) else {}
+        rp_metrics = (rp.get("nav_metrics") or {}).get("metrics", {}) if isinstance(rp.get("nav_metrics"), dict) else {}
+        metric_diffs = {}
+        for key in set(lp_metrics) | set(rp_metrics):
+            lv = lp_metrics.get(key)
+            rv = rp_metrics.get(key)
+            if (
+                lv is not None and rv is not None
+                and isinstance(lv, (int, float)) and isinstance(rv, (int, float))
+                and abs(float(lv) - float(rv)) > 0.0001
+            ):
+                metric_diffs[key] = {"left": float(lv), "right": float(rv), "delta": round(float(rv) - float(lv), 4)}
+        if metric_diffs:
+            diffs["nav_metrics"] = metric_diffs
+
+        # 风格暴露变化
+        _le_dict = lp.get("exposure") if isinstance(lp.get("exposure"), dict) else {}
+        _re_dict = rp.get("exposure") if isinstance(rp.get("exposure"), dict) else {}
+        lp_exposure = (_le_dict or {}).get("exposure_values", {})
+        rp_exposure = (_re_dict or {}).get("exposure_values", {})
+        exposure_diffs = {}
+        for key in set(lp_exposure) | set(rp_exposure):
+            lv = lp_exposure.get(key)
+            rv = rp_exposure.get(key)
+            if (
+                lv is not None and rv is not None
+                and isinstance(lv, (int, float)) and isinstance(rv, (int, float))
+                and abs(float(lv) - float(rv)) > 0.0001
+            ):
+                exposure_diffs[key] = {"left": float(lv), "right": float(rv), "delta": round(float(rv) - float(lv), 4)}
+        if exposure_diffs:
+            diffs["exposure"] = exposure_diffs
+
+        # 评分变化 (Phase 2)
+        lp_scoring = lp.get("scoring") if isinstance(lp.get("scoring"), dict) else None
+        rp_scoring = rp.get("scoring") if isinstance(rp.get("scoring"), dict) else None
+        if lp_scoring or rp_scoring:
+            scoring_diff = {}
+            lts = lp_scoring.get("total_score") if lp_scoring else None
+            rts = rp_scoring.get("total_score") if rp_scoring else None
+            if lts is not None and rts is not None and abs(float(lts) - float(rts)) > 0.01:
+                scoring_diff["total_score"] = {
+                    "left": float(lts),
+                    "right": float(rts),
+                    "delta": round(float(rts) - float(lts), 2),
+                }
+            ls_sub = (lp_scoring or {}).get("sub_scores", {})
+            rs_sub = (rp_scoring or {}).get("sub_scores", {})
+            sub_diffs = {}
+            for key in set(ls_sub) | set(rs_sub):
+                lv = ls_sub.get(key)
+                rv = rs_sub.get(key)
+                if (
+                    lv is not None and rv is not None
+                    and isinstance(lv, (int, float)) and isinstance(rv, (int, float))
+                    and abs(float(lv) - float(rv)) > 0.5
+                ):
+                    sub_diffs[key] = {"left": float(lv), "right": float(rv), "delta": round(float(rv) - float(lv), 2)}
+            if sub_diffs:
+                scoring_diff["sub_scores"] = sub_diffs
+            if scoring_diff:
+                diffs["scoring"] = scoring_diff
+
+        # 持仓变化
+        def _get_holdings(p: dict) -> list:
+            dh = p.get("disclosed_holdings") if isinstance(p.get("disclosed_holdings"), dict) else {}
+            return dh.get("holdings", [])
+        lh = _get_holdings(lp)
+        rh = _get_holdings(rp)
+        if lh or rh:
+            left_codes = {h.get("security_code"): h for h in lh}
+            right_codes = {h.get("security_code"): h for h in rh}
+            new_positions = [right_codes[c] for c in right_codes if c not in left_codes]
+            exited_positions = [left_codes[c] for c in left_codes if c not in right_codes]
+            weight_changes = []
+            for c in set(left_codes) & set(right_codes):
+                lw = left_codes[c].get("weight_pct")
+                rw = right_codes[c].get("weight_pct")
+                if lw is not None and rw is not None and abs(float(rw) - float(lw)) > 0.1:
+                    weight_changes.append({
+                        "code": c, "name": left_codes[c].get("security_name"),
+                        "from": round(float(lw), 2),
+                        "to": round(float(rw), 2),
+                    })
+            if new_positions or exited_positions or weight_changes:
+                diffs["holdings"] = {
+                    "new_positions": new_positions[:10],
+                    "exited_positions": exited_positions[:10],
+                    "weight_changes": weight_changes[:10],
+                }
+
+        # 风险提示变化
+        lr = lp.get("risk_alerts", []) if isinstance(lp.get("risk_alerts"), list) else []
+        rr = rp.get("risk_alerts", []) if isinstance(rp.get("risk_alerts"), list) else []
+        if lr != rr:
+            diffs["risk_alerts"] = {"left": lr, "right": rr}
+
+        # 证据变化
+        def _evidence_ids(p: dict) -> set[str]:
+            evidence_items = p.get("evidence", [])
+            if not isinstance(evidence_items, list):
+                return set()
+            return {
+                str(item.get("evidence_id"))
+                for item in evidence_items
+                if isinstance(item, dict) and item.get("evidence_id")
+            }
+        le = _evidence_ids(lp)
+        re = _evidence_ids(rp)
+        if le != re:
+            diffs["evidence"] = {
+                "new": sorted(re - le),
+                "removed": sorted(le - re),
+                "unchanged_count": len(le & re),
+            }
+
+        lc = lp.get("conclusion_map", {}) if isinstance(lp.get("conclusion_map"), dict) else {}
+        rc = rp.get("conclusion_map", {}) if isinstance(rp.get("conclusion_map"), dict) else {}
+        conclusion_diffs = {
+            key: {"left": lc.get(key), "right": rc.get(key)}
+            for key in set(lc) | set(rc)
+            if lc.get(key) != rc.get(key)
+        }
+        if conclusion_diffs:
+            diffs["conclusion_status"] = conclusion_diffs
+
+        changed = len(diffs) > 0
+        evidence_records = [
+            EvidenceRecord(
+                evidence_id=f"research_packet:{left.packet_id}",
+                entity_id=f"fund:{left.fund_code}",
+                evidence_type=EvidenceType.RAW_DATA,
+                source="research_packet",
+                source_level=DataSourceLevel.LOCAL,
+                date_range=(left.data_date, left.data_date),
+                data_summary="左侧 Research Packet 快照",
+                confidence=ConfidenceLevel.MEDIUM,
+                conclusion_status=ConclusionStatus.OBSERVATION,
+            ),
+            EvidenceRecord(
+                evidence_id=f"research_packet:{right.packet_id}",
+                entity_id=f"fund:{right.fund_code}",
+                evidence_type=EvidenceType.RAW_DATA,
+                source="research_packet",
+                source_level=DataSourceLevel.LOCAL,
+                date_range=(right.data_date, right.data_date),
+                data_summary="右侧 Research Packet 快照",
+                confidence=ConfidenceLevel.MEDIUM,
+                conclusion_status=ConclusionStatus.OBSERVATION,
+            ),
+        ]
+        return _log(
+            db,
+            "diff_research_packets",
+            params,
+            APIResponse(
+                data={
+                    "fund_code": fund_code,
+                    "left_info": {"packet_id": left.packet_id, "data_date": str(left.data_date)},
+                    "right_info": {"packet_id": right.packet_id, "data_date": str(right.data_date)},
+                    "changed": changed,
+                    "diffs": diffs,
+                },
+                metadata={
+                    "tool": "diff_research_packets",
+                    "fund_code": fund_code,
+                    "platform_version": __version__,
+                },
+                evidence=evidence_records,
+                warnings=warnings if changed else [*warnings, "两个研究包在各模块上均无显著差异"],
+                conclusion_status=ConclusionStatus.OBSERVATION if changed else ConclusionStatus.COMPUTED,
+            ),
+            started,
+        )
+    except Exception as exc:
+        db.rollback()
+        return _log(
+            db,
+            "diff_research_packets",
+            params,
+            APIResponse(
+                data=None,
+                metadata={"tool": "diff_research_packets"},
+                warnings=[f"对比研究包失败: {exc}"],
+                conclusion_status=ConclusionStatus.NEEDS_REVIEW,
+            ),
+            started,
+        )
+
+
+@v2_router.get("/research/packets")
+def list_research_packets(
+    db: SessionDep,
+    fund_code: str | None = Query(None, description="按基金代码过滤", max_length=20),
+    limit: int = Query(20, ge=1, le=100, description="分页数量"),
+) -> APIResponse[dict]:
+    """列出已保存的研究包，支持 fund_code 过滤和 limit 分页。"""
+    started = perf_counter()
+    params = {"fund_code": fund_code, "limit": limit}
+    try:
+        stmt = select(ResearchPacketRecord)
+        if fund_code:
+            stmt = stmt.where(ResearchPacketRecord.fund_code == fund_code)
+        stmt = stmt.order_by(
+            ResearchPacketRecord.generated_at.desc()
+        ).limit(limit)
+        rows = db.scalars(stmt).all()
+
+        items = []
+        for row in rows:
+            items.append({
+                "packet_id": row.packet_id,
+                "fund_code": row.fund_code,
+                "template": row.template,
+                "generated_at": row.generated_at.isoformat() if row.generated_at else None,
+                "data_date": str(row.data_date) if row.data_date else None,
+                "platform_version": row.platform_version,
+                "overall_confidence": row.overall_confidence,
+                "is_latest": row.is_latest,
+            })
+
+        return _log(
+            db,
+            "list_research_packets",
+            params,
+            APIResponse(
+                data={"packets": items, "count": len(items)},
+                metadata={"tool": "list_research_packets", "platform_version": __version__},
+                conclusion_status=ConclusionStatus.COMPUTED,
+            ),
+            started,
+        )
+    except Exception as exc:
+        db.rollback()
+        return _log(
+            db,
+            "list_research_packets",
+            params,
+            APIResponse(
+                data=None,
+                metadata={"tool": "list_research_packets"},
+                warnings=[f"查询研究包列表失败: {exc}"],
+                conclusion_status=ConclusionStatus.NEEDS_REVIEW,
+            ),
+            started,
+        )
+
+
+@v2_router.get("/research/packets/{packet_id}")
+def get_research_packet(
+    db: SessionDep,
+    packet_id: str,
+) -> APIResponse[dict]:
+    """获取单个研究包详情。"""
+    started = perf_counter()
+    params = {"packet_id": packet_id}
+    try:
+        record = db.scalar(
+            select(ResearchPacketRecord).where(
+                ResearchPacketRecord.packet_id == packet_id
+            )
+        )
+        if record is None:
+            return _log(
+                db,
+                "get_research_packet",
+                params,
+                APIResponse(
+                    data=None,
+                    metadata={"tool": "get_research_packet"},
+                    warnings=[f"研究包不存在: {packet_id}"],
+                    conclusion_status=ConclusionStatus.NEEDS_REVIEW,
+                ),
+                started,
+            )
+
+        packet_json = record.packet_json if isinstance(record.packet_json, dict) else {}
+
+        # 判断是否包含 estimated 模块
+        conclusion_map = packet_json.get("conclusion_map", {}) if isinstance(packet_json, dict) else {}
+        has_estimated = any(
+            status == "estimated" for status in conclusion_map.values()
+        )
+        has_needs_review = any(
+            status == "needs_review" for status in conclusion_map.values()
+        )
+
+        conclusion_status = (
+            ConclusionStatus.NEEDS_REVIEW if has_needs_review
+            else ConclusionStatus.ESTIMATED if has_estimated
+            else ConclusionStatus.COMPUTED
+        )
+
+        return _log(
+            db,
+            "get_research_packet",
+            params,
+            APIResponse(
+                data={
+                    "packet_id": record.packet_id,
+                    "fund_code": record.fund_code,
+                    "template": record.template,
+                    "generated_at": record.generated_at.isoformat() if record.generated_at else None,
+                    "data_date": str(record.data_date) if record.data_date else None,
+                    "platform_version": record.platform_version,
+                    "overall_confidence": record.overall_confidence,
+                    "is_latest": record.is_latest,
+                    "packet": packet_json,
+                    "markdown": record.markdown_text,
+                },
+                metadata={
+                    "tool": "get_research_packet",
+                    "platform_version": __version__,
+                    "packet_id": packet_id,
+                },
+                conclusion_status=conclusion_status,
+            ),
+            started,
+        )
+    except Exception as exc:
+        db.rollback()
+        return _log(
+            db,
+            "get_research_packet",
+            params,
+            APIResponse(
+                data=None,
+                metadata={"tool": "get_research_packet"},
+                warnings=[f"查询研究包详情失败: {exc}"],
+                conclusion_status=ConclusionStatus.NEEDS_REVIEW,
+            ),
+            started,
+        )

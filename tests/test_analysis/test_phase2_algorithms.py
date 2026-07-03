@@ -187,11 +187,81 @@ class TestDynamicAttribution:
             {"report_date": "2026-02-01", "sector": "A", "port_return": 0.10, "bench_return": 0.00},
         ])
 
+        # Default: uses_simulated_holdings=False → computed level, no estimated_ prefix
         result = run_attribution("000001", holdings, returns)
 
         assert result.total_portfolio_return == pytest.approx(0.21)
         assert abs(result.total_residual) < 1e-3
-        assert "estimated_total_portfolio_return" in result.to_api_data()
+        api = result.to_api_data()
+        assert "total_portfolio_return" in api
+        assert "estimated_total_portfolio_return" not in api
+        assert "total_benchmark_return" in api
+        assert "estimated_total_residual" in api  # residual always estimated
+        assert "estimated_residual_ratio" in api
+        assert api["conclusion_status"] == "computed"
+        assert api["uses_simulated_holdings"] is False
+        # Period-level fields also follow the same rule
+        assert "portfolio_return" in api["periods"][0]
+        assert "estimated_residual" in api["periods"][0]
+
+    def test_run_attribution_with_simulated_holdings_uses_estimated_prefix(self):
+        from fund_research.analysis.dynamic_attribution import run_attribution
+
+        holdings = pd.DataFrame([
+            {"report_date": "2026-01-01", "sector": "A", "port_weight": 1.0, "bench_weight": 1.0},
+        ])
+        returns = pd.DataFrame([
+            {"report_date": "2026-01-01", "sector": "A", "port_return": 0.10, "bench_return": 0.05},
+        ])
+
+        result = run_attribution(
+            "000001", holdings, returns, uses_simulated_holdings=True,
+        )
+
+        api = result.to_api_data()
+        assert "estimated_total_portfolio_return" in api
+        assert "total_portfolio_return" not in api
+        assert "estimated_total_benchmark_return" in api
+        assert "estimated_total_allocation_effect" in api
+        assert "estimated_total_residual" in api
+        assert api["conclusion_status"] == "estimated"
+        assert api["uses_simulated_holdings"] is True
+        assert "estimated_portfolio_return" in api["periods"][0]
+        assert "estimated_residual" in api["periods"][0]
+
+    def test_run_attribution_large_residual_degrades_to_needs_review(self):
+        """When residual ratio exceeds MAX_RESIDUAL_RATIO, conclusion_status is needs_review."""
+        from fund_research.analysis.dynamic_attribution import (
+            MAX_RESIDUAL_RATIO,
+            AttributionPeriod,
+            AttributionResult,
+        )
+
+        # Construct a result directly with a large residual ratio
+        period = AttributionPeriod(
+            period_start=date(2026, 1, 1),
+            period_end=date(2026, 1, 31),
+            portfolio_return=0.10,
+            benchmark_return=0.00,
+            allocation_effect=0.01,
+            selection_effect=0.01,
+            interaction_effect=0.00,
+            residual=0.08,  # large unexplained residual
+        )
+        result = AttributionResult(
+            fund_code="000001",
+            periods=[period],
+            total_portfolio_return=0.10,
+            total_benchmark_return=0.00,
+            total_allocation_effect=0.01,
+            total_selection_effect=0.01,
+            total_interaction_effect=0.00,
+            total_residual=0.08,
+            residual_ratio=MAX_RESIDUAL_RATIO + 0.1,  # above threshold
+            confidence="needs_review",
+        )
+        api = result.to_api_data()
+        assert api["conclusion_status"] == "needs_review"
 
 
 class TestScoring:

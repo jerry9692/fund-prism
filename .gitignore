@@ -48,6 +48,8 @@ htmlcov/
 .coverage.*
 *.lcov
 coverage.xml
+.pytest_cache/
+.pytest_tmp/
 
 # MyPy
 .mypy_cache/

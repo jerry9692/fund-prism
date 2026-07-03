@@ -759,10 +759,17 @@ def test_upsert_akshare_fund_portfolio_changes_marks_matching_holding(
     assert snapshot is not None
 
 
-def test_upsert_akshare_fund_managers_writes_manager_and_tenure(
+def test_upsert_akshare_fund_managers_writes_manager_only(
     test_session: Session,
 ) -> None:
-    """AKShare manager update should populate manager and tenure tables."""
+    """AKShare manager snapshot should populate FundManager only (no tenure).
+
+    Tenure records are populated by ``upsert_eastmoney_fund_manager_history``
+    from the F10 page which has reliable start/end dates; the AKShare
+    ``fund_manager_em`` endpoint is a current-manager snapshot and must not
+    create tenure rows (which previously caused tenure_days=0 bugs when
+    start_date defaulted to date.today()).
+    """
     summary = upsert_akshare_fund_managers(
         test_session,
         {"000001"},
@@ -777,15 +784,19 @@ def test_upsert_akshare_fund_managers_writes_manager_and_tenure(
     assert manager is not None
     assert manager.name == "张三"
     assert manager.experience_years == 8.0
-    assert tenure is not None
-    assert tenure.start_date == date(2020, 1, 1)
-    assert tenure.is_current is True
+    # Must NOT create a tenure record from the snapshot endpoint.
+    assert tenure is None
 
 
 def test_upsert_akshare_fund_managers_allows_missing_start_date(
     test_session: Session,
 ) -> None:
-    """Current manager snapshots without start_date should still populate managers."""
+    """Current manager snapshots without start_date should still populate managers.
+
+    When start_date is missing we still upsert FundManager but must NOT
+    create a FundManagerTenure with start_date defaulting to date.today()
+    (which caused tenure_days=0).
+    """
     summary = upsert_akshare_fund_managers(
         test_session,
         {"000001"},
@@ -799,12 +810,10 @@ def test_upsert_akshare_fund_managers_allows_missing_start_date(
     )
 
     assert summary.inserted == 1
-    assert any("start_date 使用抓取日期" in warning for warning in summary.warnings)
     assert manager is not None
     assert manager.experience_years == 3.77
-    assert tenure is not None
-    assert tenure.start_date == date.today()
-    assert tenure.is_current is True
+    # Must NOT create a bogus tenure with start_date = today.
+    assert tenure is None
 
 
 def test_upsert_akshare_fund_fees_writes_fee_detail(test_session: Session) -> None:

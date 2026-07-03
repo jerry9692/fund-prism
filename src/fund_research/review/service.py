@@ -9,6 +9,8 @@ returns an ``APIResponse[dict]`` matching the unified Tool API contract.
 
 from __future__ import annotations
 
+from contextlib import suppress
+from dataclasses import dataclass, field
 from time import perf_counter
 from typing import Any
 from uuid import uuid4
@@ -20,6 +22,7 @@ from sqlalchemy.orm import Session
 from fund_research import __version__
 from fund_research.core.enums import ConclusionStatus
 from fund_research.core.schemas import APIResponse
+from fund_research.db.models import EvidenceRecord as DbEvidenceRecord
 from fund_research.db.models import ReviewerAnnotation as DbReviewerAnnotation
 from fund_research.db.models import ToolAPICallLog
 
@@ -41,7 +44,7 @@ class CreateReviewerAnnotationRequest(BaseModel):
     )
     detail: dict[str, Any] = Field(default_factory=dict)
     reason: str = Field(..., min_length=1, max_length=2000)
-    evidence_id: str | None = Field(None, max_length=64)
+    evidence_ids: list[str] = Field(default_factory=list)
 
 
 class UpdateReviewerAnnotationRequest(BaseModel):
@@ -50,7 +53,7 @@ class UpdateReviewerAnnotationRequest(BaseModel):
     annotation_type: str | None = None
     detail: dict[str, Any] | None = None
     reason: str | None = Field(None, min_length=1, max_length=2000)
-    evidence_id: str | None = Field(None, max_length=64)
+    evidence_ids: list[str] | None = None
 
 
 def annotation_to_dict(row: DbReviewerAnnotation) -> dict:
@@ -61,9 +64,110 @@ def annotation_to_dict(row: DbReviewerAnnotation) -> dict:
         "target_module": row.target_module,
         "detail": row.detail,
         "reason": row.reason,
-        "evidence_id": row.evidence_id,
+        "evidence_ids": row.evidence_ids or [],
         "created_at": row.created_at.isoformat() if row.created_at else None,
     }
+
+
+@dataclass
+class ModuleOverrides:
+    """Per-fund, per-module overrides derived from reviewer annotations.
+
+    Produced by :func:`get_module_overrides` and consumed by the experiment
+    runner to apply manual-review constraints before algorithm execution.
+    """
+
+    excluded: bool = False
+    locked: bool = False
+    confidence_override: str | None = None
+    locked_securities: list[str] = field(default_factory=list)
+    locked_security_weights: dict[str, float] = field(default_factory=dict)
+    excluded_securities: list[str] = field(default_factory=list)
+    benchmark_override: str | None = None
+
+
+def get_module_overrides(
+    db: Session,
+    fund_code: str,
+    target_module: str,
+) -> ModuleOverrides:
+    """Collect all annotation-derived overrides for a fund in a given module.
+
+    Reads every :class:`DbReviewerAnnotation` row for *fund_code* whose
+    ``target_module`` either matches *target_module* or is ``None``
+    (cross-module / fund-level annotations), then distills them into a
+    :class:`ModuleOverrides` dataclass that the runner can apply directly.
+
+    The three special endpoints produce annotations with predictable
+    ``detail`` shapes:
+
+    * ``lock-securities`` → ``annotation_type`` "lock"/"exclude" with
+      ``detail.security_code`` and ``detail.action`` ∈ {"lock","exclude"}
+    * ``adjust-benchmark`` → ``annotation_type`` "lock",
+      ``target_module`` "dynamic_attribution",
+      ``detail.action`` "adjust_benchmark", ``detail.benchmark_symbol``
+    * ``annotate-confidence`` → ``annotation_type`` "note",
+      ``detail.action`` "annotate_confidence",
+      ``detail.adjusted_status``
+    """
+    overrides = ModuleOverrides()
+
+    rows = db.scalars(
+        select(DbReviewerAnnotation)
+        .where(DbReviewerAnnotation.fund_code == fund_code)
+        .where(
+            (DbReviewerAnnotation.target_module == target_module)
+            | (DbReviewerAnnotation.target_module.is_(None))
+        )
+        .order_by(DbReviewerAnnotation.created_at.asc())
+    ).all()
+
+    for row in rows:
+        detail = row.detail or {}
+        action = detail.get("action")
+        has_security = "security_code" in detail and detail.get("security_code")
+
+        # --- Security-level lock / exclude (from lock-securities endpoint) ---
+        if has_security and row.annotation_type in ("lock", "exclude"):
+            code = str(detail["security_code"])
+            if row.annotation_type == "lock" or action == "lock":
+                if code not in overrides.locked_securities:
+                    overrides.locked_securities.append(code)
+                lock_weight = detail.get("lock_weight")
+                if lock_weight is not None:
+                    with suppress(TypeError, ValueError):
+                        overrides.locked_security_weights[code] = float(lock_weight)
+            if (row.annotation_type == "exclude" or action == "exclude") and code not in overrides.excluded_securities:
+                overrides.excluded_securities.append(code)
+            continue
+
+        # --- Benchmark override (from adjust-benchmark endpoint) ---
+        if (
+            action == "adjust_benchmark"
+            and row.annotation_type == "lock"
+            and target_module == "dynamic_attribution"
+        ):
+            benchmark = detail.get("benchmark_symbol")
+            if benchmark:
+                overrides.benchmark_override = str(benchmark)
+            continue
+
+        # --- Confidence override (from annotate-confidence endpoint) ---
+        if action == "annotate_confidence" and row.annotation_type == "note":
+            adjusted = detail.get("adjusted_status")
+            if adjusted:
+                overrides.confidence_override = str(adjusted)
+            continue
+
+        # --- Fund-level lock / exclude ---
+        # (Generic lock/exclude without a special action — i.e. module-level,
+        # not security-level and not benchmark/confidence special cases.)
+        if row.annotation_type == "exclude":
+            overrides.excluded = True
+        if row.annotation_type == "lock":
+            overrides.locked = True
+
+    return overrides
 
 
 def _log_call(
@@ -99,6 +203,9 @@ def create_annotation(db: Session, body: CreateReviewerAnnotationRequest) -> API
     Annotations are the manual-review layer on top of algorithm results.
     ``lock`` and ``exclude`` annotations can downgrade or block estimated
     conclusions from appearing in default views.
+
+    When a reason is provided, an EvidenceRecord (reviewer_note type) is
+    automatically created and linked via evidence_ids (EV-1/EV-5 fix).
     """
     started = perf_counter()
     params = body.model_dump(mode="json")
@@ -112,24 +219,58 @@ def create_annotation(db: Session, body: CreateReviewerAnnotationRequest) -> API
                 f"target_module must be one of {sorted(TARGET_MODULES)} or null"
             )
 
+        # Determine conclusion_status for evidence based on annotation type
+        evidence_conclusion_status: str | None = None
+        if body.annotation_type == "approve":
+            evidence_conclusion_status = "computed"
+        elif body.annotation_type == "exclude":
+            evidence_conclusion_status = "needs_review"
+        elif body.annotation_type == "lock":
+            evidence_conclusion_status = "observation"
+
+        # Build evidence_ids list: start with user-provided IDs
+        evidence_ids = list(body.evidence_ids) if body.evidence_ids else []
+
+        # Auto-create a reviewer_note Evidence record if reason is provided
+        new_evidence_id: str | None = None
+        if body.reason:
+            new_evidence_id = f"reviewer_note:auto:{uuid4().hex[:12]}"
+            evidence_row = DbEvidenceRecord(
+                evidence_id=new_evidence_id,
+                entity_id=body.fund_code,
+                entity_type="fund",
+                evidence_type="reviewer_note",
+                source="manual_review",
+                source_level="LOCAL",
+                data_summary=body.reason[:200],
+                confidence="high",
+                conclusion_status=evidence_conclusion_status or "observation",
+            )
+            db.add(evidence_row)
+            evidence_ids.append(new_evidence_id)
+
         row = DbReviewerAnnotation(
             fund_code=body.fund_code,
             annotation_type=body.annotation_type,
             target_module=body.target_module,
             detail=body.detail,
             reason=body.reason,
-            evidence_id=body.evidence_id,
+            evidence_ids=evidence_ids,
         )
         db.add(row)
         db.commit()
         db.refresh(row)
+
+        result_data = annotation_to_dict(row)
+        if new_evidence_id:
+            result_data["evidence_id"] = new_evidence_id
 
         return _log_call(
             db,
             "reviewer_annotation",
             params,
             APIResponse(
-                data=annotation_to_dict(row),
+                data=result_data,
                 metadata={"tool": "reviewer_annotation", "platform_version": __version__},
                 conclusion_status=ConclusionStatus.FACT,
             ),
@@ -299,8 +440,8 @@ def update_annotation(
             row.detail = body.detail
         if body.reason is not None:
             row.reason = body.reason
-        if body.evidence_id is not None:
-            row.evidence_id = body.evidence_id
+        if body.evidence_ids is not None:
+            row.evidence_ids = body.evidence_ids
 
         db.commit()
         db.refresh(row)

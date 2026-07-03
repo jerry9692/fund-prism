@@ -1,0 +1,29 @@
+{
+  "industry_penalty_0.05": {
+    "config": {
+      "turnover_penalty": 0.0,
+      "industry_penalty": 0.05
+    },
+    "total_funds": 30,
+    "success_count": 0,
+    "fail_count": 30
+  },
+  "baseline_no_penalty": {
+    "config": {
+      "turnover_penalty": 0.0,
+      "industry_penalty": 0.0
+    },
+    "total_funds": 30,
+    "success_count": 0,
+    "fail_count": 30
+  },
+  "turnover_penalty_0.01": {
+    "config": {
+      "turnover_penalty": 0.01,
+      "industry_penalty": 0.0
+    },
+    "total_funds": 30,
+    "success_count": 0,
+    "fail_count": 30
+  }
+}

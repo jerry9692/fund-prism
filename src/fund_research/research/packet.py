@@ -14,6 +14,12 @@ from fund_research.analysis.attribution import (
 from fund_research.analysis.attribution import (
     ALGORITHM_VERSION as ATTRIBUTION_ALGORITHM_VERSION,
 )
+from fund_research.analysis.dynamic_attribution import (
+    ALGORITHM_NAME as DYNAMIC_ATTRIBUTION_ALGORITHM_NAME,
+)
+from fund_research.analysis.dynamic_attribution import (
+    ALGORITHM_VERSION as DYNAMIC_ATTRIBUTION_ALGORITHM_VERSION,
+)
 from fund_research.analysis.exposure import (
     ALGORITHM_NAME as EXPOSURE_ALGORITHM_NAME,
 )
@@ -34,7 +40,18 @@ from fund_research.analysis.nav_metrics import (
     ALGORITHM_VERSION as NAV_METRICS_ALGORITHM_VERSION,
 )
 from fund_research.analysis.nav_metrics import calculate_nav_metrics
-from fund_research.config.settings import get_settings
+from fund_research.analysis.scoring import (
+    ALGORITHM_NAME as SCORING_ALGORITHM_NAME,
+)
+from fund_research.analysis.scoring import (
+    ALGORITHM_VERSION as SCORING_ALGORITHM_VERSION,
+)
+from fund_research.analysis.simulated_holding import (
+    ALGORITHM_NAME as SIMULATED_HOLDING_ALGORITHM_NAME,
+)
+from fund_research.analysis.simulated_holding import (
+    ALGORITHM_VERSION as SIMULATED_HOLDING_ALGORITHM_VERSION,
+)
 from fund_research.core.enums import (
     ConclusionStatus,
     ConfidenceLevel,
@@ -48,9 +65,7 @@ from fund_research.core.schemas import (
     ResearchPacketMetadata,
 )
 from fund_research.db.models import (
-    EvidenceRecord as DBEvidenceRecord,
-)
-from fund_research.db.models import (
+    DynamicAttributionResult,
     FundCompany,
     FundDisclosedHoldings,
     FundFee,
@@ -61,8 +76,13 @@ from fund_research.db.models import (
     FundScale,
     HolderStructure,
     ResearchPacketRecord,
+    ScoringResult,
+    SimulatedHoldingResult,
     StaticAttributionResult,
     StyleExposureResult,
+)
+from fund_research.db.models import (
+    EvidenceRecord as DBEvidenceRecord,
 )
 
 SUPPORTED_TEMPLATES = {
@@ -71,38 +91,6 @@ SUPPORTED_TEMPLATES = {
     "style_drift",
     "holdings_deep_dive",
 }
-
-
-def _get_packet_disclaimer() -> str:
-    """Return the platform-wide disclaimer text from settings."""
-    return get_settings().disclaimer
-
-
-def _build_packet_metadata(
-    fund_code: str,
-    template: str,
-    data_date: date | None,
-    conclusion_map: dict[str, ConclusionStatus],
-    missing_fields: list[str],
-) -> ResearchPacketMetadata:
-    """Build shared ResearchPacketMetadata to avoid duplication."""
-    return ResearchPacketMetadata(
-        fund_code=fund_code,
-        generated_at=datetime.now(),
-        data_date=data_date,
-        template=template,
-        platform_version=__version__,
-        data_source_levels=[DataSourceLevel.B, DataSourceLevel.LOCAL],
-        algorithm_versions={
-            NAV_METRICS_ALGORITHM_NAME: NAV_METRICS_ALGORITHM_VERSION,
-            HOLDINGS_ALGORITHM_NAME: HOLDINGS_ALGORITHM_VERSION,
-            EXPOSURE_ALGORITHM_NAME: EXPOSURE_ALGORITHM_VERSION,
-            ATTRIBUTION_ALGORITHM_NAME: ATTRIBUTION_ALGORITHM_VERSION,
-        },
-        missing_fields=missing_fields,
-        conclusion_statuses=conclusion_map,
-        overall_confidence=_overall_confidence(conclusion_map),
-    )
 
 
 def _safe_source_level(value: str | None) -> DataSourceLevel:
@@ -115,9 +103,11 @@ def _confidence_for_status(status: ConclusionStatus) -> ConfidenceLevel:
     if status == ConclusionStatus.NEEDS_REVIEW:
         return ConfidenceLevel.NEEDS_REVIEW
     if status == ConclusionStatus.FACT:
-        return ConfidenceLevel.MEDIUM
+        return ConfidenceLevel.HIGH
     if status == ConclusionStatus.COMPUTED:
         return ConfidenceLevel.MEDIUM
+    if status == ConclusionStatus.ESTIMATED:
+        return ConfidenceLevel.LOW
     return ConfidenceLevel.LOW
 
 
@@ -507,6 +497,119 @@ def _latest_attribution(
     )
 
 
+def _latest_scoring(
+    db: Session, fund_code: str
+) -> tuple[dict | None, ConclusionStatus, list[str]]:
+    """获取最新综合评分结果。"""
+    scoring = db.scalar(
+        select(ScoringResult)
+        .where(ScoringResult.fund_code == fund_code)
+        .order_by(ScoringResult.calc_date.desc(), ScoringResult.created_at.desc())
+        .limit(1)
+    )
+    if scoring is None:
+        return None, ConclusionStatus.NEEDS_REVIEW, ["综合评分模块尚未运行"]
+
+    # scoring 的 conclusion_status 默认是 computed，但如果 contains_estimated=True，应降为 estimated
+    base_status = ConclusionStatus(scoring.conclusion_status)
+    if scoring.contains_estimated:
+        base_status = ConclusionStatus.ESTIMATED
+
+    return (
+        {
+            "calc_date": str(scoring.calc_date),
+            "score_version": scoring.score_version,
+            "algorithm_version": scoring.algorithm_version,
+            "weight_config": scoring.weight_config,
+            "total_score": scoring.total_score,
+            "sub_scores": scoring.sub_scores,
+            "percentile_rank": scoring.percentile_rank,
+            "deduction_reasons": scoring.deduction_reasons,
+            "contains_estimated": scoring.contains_estimated,
+            "confidence": scoring.confidence,
+            "algorithm_name": SCORING_ALGORITHM_NAME,
+            "warnings": scoring.warnings,
+        },
+        base_status,
+        [],
+    )
+
+
+def _latest_simulated_holding(
+    db: Session, fund_code: str
+) -> tuple[dict | None, ConclusionStatus, list[str]]:
+    """获取最新模拟持仓结果（estimated 模块）。"""
+    sim = db.scalar(
+        select(SimulatedHoldingResult)
+        .where(SimulatedHoldingResult.fund_code == fund_code)
+        .order_by(SimulatedHoldingResult.calc_date.desc(), SimulatedHoldingResult.created_at.desc())
+        .limit(1)
+    )
+    if sim is None:
+        return None, ConclusionStatus.NEEDS_REVIEW, ["模拟持仓模块尚未运行"]
+
+    return (
+        {
+            "calc_date": str(sim.calc_date),
+            "algorithm_name": sim.algorithm_name,
+            "algorithm_version": sim.algorithm_version,
+            "parameters": sim.parameters,
+            "holdings_detail": sim.holdings_detail,
+            "tracking_error": sim.tracking_error,
+            "daily_rmse": sim.daily_rmse,
+            "industry_correlation": sim.industry_correlation,
+            "top10_recall": sim.top10_recall,
+            "stock_weight_pct": sim.stock_weight_pct,
+            "bond_weight_pct": sim.bond_weight_pct,
+            "cash_weight_pct": sim.cash_weight_pct,
+            "confidence": sim.confidence,
+            "is_backtest": sim.is_backtest,
+            "input_coverage": sim.input_coverage,
+            "warnings": sim.warnings,
+        },
+        ConclusionStatus.ESTIMATED,
+        ["模拟持仓为模型估算结果，非真实披露持仓"],
+    )
+
+
+def _latest_dynamic_attribution(
+    db: Session, fund_code: str
+) -> tuple[dict | None, ConclusionStatus, list[str]]:
+    """获取最新动态归因结果（estimated 模块）。"""
+    dyn = db.scalar(
+        select(DynamicAttributionResult)
+        .where(DynamicAttributionResult.fund_code == fund_code)
+        .order_by(DynamicAttributionResult.created_at.desc())
+        .limit(1)
+    )
+    if dyn is None:
+        return None, ConclusionStatus.NEEDS_REVIEW, ["动态归因模块尚未运行"]
+
+    return (
+        {
+            "period_start": str(dyn.period_start),
+            "period_end": str(dyn.period_end),
+            "algorithm_name": dyn.algorithm_name,
+            "algorithm_version": dyn.algorithm_version,
+            "parameters": dyn.parameters,
+            "total_return": dyn.total_return,
+            "beta_return": dyn.beta_return,
+            "allocation_return": dyn.allocation_return,
+            "sector_rotation_return": dyn.sector_rotation_return,
+            "stock_selection_return": dyn.stock_selection_return,
+            "convertible_bond_return": dyn.convertible_bond_return,
+            "ipo_return": dyn.ipo_return,
+            "residual": dyn.residual,
+            "residual_pct": dyn.residual_pct,
+            "detail": dyn.detail,
+            "confidence": dyn.confidence,
+            "warnings": dyn.warnings,
+        },
+        ConclusionStatus.ESTIMATED,
+        ["动态归因为模型估算结果，基于模拟持仓分解收益"],
+    )
+
+
 def _data_date(db: Session, fund_code: str) -> date:
     nav_date = db.scalar(
         select(FundNAV.trade_date)
@@ -538,18 +641,48 @@ def _data_date(db: Session, fund_code: str) -> date:
         .order_by(StaticAttributionResult.report_date.desc())
         .limit(1)
     )
+    scoring_date = db.scalar(
+        select(ScoringResult.calc_date)
+        .where(ScoringResult.fund_code == fund_code)
+        .order_by(ScoringResult.calc_date.desc())
+        .limit(1)
+    )
+    sim_date = db.scalar(
+        select(SimulatedHoldingResult.calc_date)
+        .where(SimulatedHoldingResult.fund_code == fund_code)
+        .order_by(SimulatedHoldingResult.calc_date.desc())
+        .limit(1)
+    )
+    dyn_date = db.scalar(
+        select(DynamicAttributionResult.period_end)
+        .where(DynamicAttributionResult.fund_code == fund_code)
+        .order_by(DynamicAttributionResult.period_end.desc())
+        .limit(1)
+    )
     dates = [
         item
-        for item in (nav_date, holdings_date, holder_date, exposure_date, attribution_date)
+        for item in (
+            nav_date, holdings_date, holder_date, exposure_date, attribution_date,
+            scoring_date, sim_date, dyn_date,
+        )
         if item is not None
     ]
     return max(dates) if dates else date.today()
 
 
 def _overall_confidence(statuses: dict[str, ConclusionStatus]) -> ConfidenceLevel:
-    if not statuses or any(status == ConclusionStatus.NEEDS_REVIEW for status in statuses.values()):
+    # Per AGENTS.md principle #2 (estimated pollution isolation):
+    # Phase 2 estimated/optional modules (scoring, simulated_holding,
+    # dynamic_attribution) do NOT gate core conclusion credibility.
+    # Only Phase 1 core modules determine overall confidence.
+    core_modules = {
+        "fund_profile", "manager_info", "nav_metrics", "disclosed_holdings",
+        "holder_structure", "exposure", "attribution",
+    }
+    core_statuses = {k: v for k, v in statuses.items() if k in core_modules}
+    if not core_statuses or any(status == ConclusionStatus.NEEDS_REVIEW for status in core_statuses.values()):
         return ConfidenceLevel.NEEDS_REVIEW
-    if any(status == ConclusionStatus.OBSERVATION for status in statuses.values()):
+    if any(status == ConclusionStatus.OBSERVATION for status in core_statuses.values()):
         return ConfidenceLevel.LOW
     return ConfidenceLevel.MEDIUM
 
@@ -569,6 +702,12 @@ def _build_evidence(
     exposure_status: ConclusionStatus,
     attribution: dict | None,
     attribution_status: ConclusionStatus,
+    scoring: dict | None = None,
+    scoring_status: ConclusionStatus | None = None,
+    simulated_holding: dict | None = None,
+    sim_status: ConclusionStatus | None = None,
+    dynamic_attribution: dict | None = None,
+    dyn_status: ConclusionStatus | None = None,
 ) -> list[EvidenceRecord]:
     evidence: list[EvidenceRecord] = []
     entity_id = f"fund:{fund_code}"
@@ -739,10 +878,103 @@ def _build_evidence(
             )
         )
 
+    # Phase 2: scoring evidence
+    if scoring is not None and scoring_status is not None:
+        calc_date = _parse_iso_date(scoring.get("calc_date"))
+        evidence.append(
+            EvidenceRecord(
+                evidence_id=f"scoring:{fund_code}:{calc_date}",
+                entity_id=entity_id,
+                evidence_type=EvidenceType.ALGORITHM_RESULT,
+                source="scoring_result",
+                source_level=DataSourceLevel.B,
+                date_range=(calc_date, calc_date) if calc_date else None,
+                algorithm_metadata=AlgorithmMetadata(
+                    algorithm_name=scoring.get("algorithm_name") or SCORING_ALGORITHM_NAME,
+                    algorithm_version=scoring.get("algorithm_version") or SCORING_ALGORITHM_VERSION,
+                    parameters=scoring.get("weight_config") or {},
+                    confidence=_confidence_for_status(scoring_status),
+                    warnings=_warning_items(scoring.get("warnings")),
+                ),
+                data_summary=(
+                    f"综合评分 {scoring.get('total_score')}，"
+                    f"百分位 {scoring.get('percentile_rank')}，"
+                    f"含estimated维度: {scoring.get('contains_estimated')}"
+                ),
+                confidence=_confidence_for_status(scoring_status),
+                conclusion_status=scoring_status,
+            )
+        )
+
+    # Phase 2: simulated holding evidence (estimated)
+    if simulated_holding is not None and sim_status is not None:
+        calc_date = _parse_iso_date(simulated_holding.get("calc_date"))
+        evidence.append(
+            EvidenceRecord(
+                evidence_id=f"simulated_holding:{fund_code}:{calc_date}",
+                entity_id=entity_id,
+                evidence_type=EvidenceType.ALGORITHM_RESULT,
+                source="simulated_holding_result",
+                source_level=DataSourceLevel.B,
+                date_range=(calc_date, calc_date) if calc_date else None,
+                algorithm_metadata=AlgorithmMetadata(
+                    algorithm_name=simulated_holding.get("algorithm_name") or SIMULATED_HOLDING_ALGORITHM_NAME,
+                    algorithm_version=(
+                        simulated_holding.get("algorithm_version") or SIMULATED_HOLDING_ALGORITHM_VERSION
+                    ),
+                    parameters=simulated_holding.get("parameters") or {},
+                    confidence=_confidence_for_status(sim_status),
+                    warnings=_warning_items(simulated_holding.get("warnings")),
+                ),
+                data_summary=(
+                    f"模拟持仓 {len(simulated_holding.get('holdings_detail') or [])} 只标的，"
+                    f"tracking_error={simulated_holding.get('tracking_error')}，"
+                    f"top10_recall={simulated_holding.get('top10_recall')}"
+                ),
+                confidence=_confidence_for_status(sim_status),
+                conclusion_status=sim_status,
+            )
+        )
+
+    # Phase 2: dynamic attribution evidence (estimated)
+    if dynamic_attribution is not None and dyn_status is not None:
+        period_start = _parse_iso_date(dynamic_attribution.get("period_start"))
+        period_end = _parse_iso_date(dynamic_attribution.get("period_end"))
+        evidence.append(
+            EvidenceRecord(
+                evidence_id=f"dynamic_attribution:{fund_code}:{period_start}:{period_end}",
+                entity_id=entity_id,
+                evidence_type=EvidenceType.ALGORITHM_RESULT,
+                source="dynamic_attribution_result",
+                source_level=DataSourceLevel.B,
+                date_range=(period_start, period_end) if period_start and period_end else None,
+                algorithm_metadata=AlgorithmMetadata(
+                    algorithm_name=dynamic_attribution.get("algorithm_name") or DYNAMIC_ATTRIBUTION_ALGORITHM_NAME,
+                    algorithm_version=(
+                        dynamic_attribution.get("algorithm_version") or DYNAMIC_ATTRIBUTION_ALGORITHM_VERSION
+                    ),
+                    parameters=dynamic_attribution.get("parameters") or {},
+                    confidence=_confidence_for_status(dyn_status),
+                    warnings=_warning_items(dynamic_attribution.get("warnings")),
+                ),
+                data_summary=(
+                    f"动态归因 total_return={dynamic_attribution.get('total_return')}，"
+                    f"residual={dynamic_attribution.get('residual')}，"
+                    f"residual_pct={dynamic_attribution.get('residual_pct')}"
+                ),
+                confidence=_confidence_for_status(dyn_status),
+                conclusion_status=dyn_status,
+            )
+        )
+
     return evidence
 
 
-def _build_residuals(exposure: dict | None, attribution: dict | None) -> dict | None:
+def _build_residuals(
+    exposure: dict | None,
+    attribution: dict | None,
+    dynamic_attribution: dict | None = None,
+) -> dict | None:
     residuals: dict[str, float | None] = {}
     if exposure is not None:
         residuals["style_exposure_residual"] = exposure.get("residual")
@@ -750,6 +982,9 @@ def _build_residuals(exposure: dict | None, attribution: dict | None) -> dict | 
     if attribution is not None:
         residuals["static_attribution_residual"] = attribution.get("residual")
         residuals["static_attribution_residual_pct"] = attribution.get("residual_pct")
+    if dynamic_attribution is not None:
+        residuals["dynamic_attribution_residual"] = dynamic_attribution.get("residual")
+        residuals["dynamic_attribution_residual_pct"] = dynamic_attribution.get("residual_pct")
     return residuals or None
 
 
@@ -760,6 +995,9 @@ def _build_risk_alerts(
     holder_structure: dict | None,
     exposure: dict | None,
     attribution: dict | None,
+    scoring: dict | None = None,
+    simulated_holding: dict | None = None,
+    dynamic_attribution: dict | None = None,
 ) -> list[dict]:
     alerts: list[dict] = []
 
@@ -883,6 +1121,97 @@ def _build_risk_alerts(
                 }
             )
 
+    # Phase 2: scoring risk signals
+    if scoring is not None:
+        total_score = scoring.get("total_score")
+        if total_score is not None and total_score < 40:
+            alerts.append(
+                {
+                    "type": "low_composite_score",
+                    "severity": "medium",
+                    "message": "综合评分偏低，需结合各维度子分复核",
+                    "value": total_score,
+                    "conclusion_status": (
+                        ConclusionStatus.ESTIMATED.value
+                        if scoring.get("contains_estimated")
+                        else ConclusionStatus.COMPUTED.value
+                    ),
+                }
+            )
+        sub_scores = scoring.get("sub_scores") or {}
+        for dim_name, dim_score in sub_scores.items():
+            if isinstance(dim_score, (int, float)) and dim_score < 30:
+                alerts.append(
+                    {
+                        "type": f"low_dimension_score:{dim_name}",
+                        "severity": "info",
+                        "message": f"评分维度 {dim_name} 得分偏低({dim_score})，需关注该维度风险",
+                        "value": dim_score,
+                        "conclusion_status": (
+                            ConclusionStatus.ESTIMATED.value
+                            if scoring.get("contains_estimated")
+                            else ConclusionStatus.COMPUTED.value
+                        ),
+                    }
+                )
+        deduction_reasons = scoring.get("deduction_reasons") or []
+        if deduction_reasons:
+            alerts.append(
+                {
+                    "type": "scoring_deductions",
+                    "severity": "info",
+                    "message": (
+                        f"评分扣分项 {len(deduction_reasons)} 条: "
+                        f"{'; '.join(str(r) for r in deduction_reasons[:3])}"
+                    ),
+                    "value": len(deduction_reasons),
+                    "conclusion_status": (
+                        ConclusionStatus.ESTIMATED.value
+                        if scoring.get("contains_estimated")
+                        else ConclusionStatus.COMPUTED.value
+                    ),
+                }
+            )
+
+    # Phase 2: simulated holding quality alerts
+    if simulated_holding is not None:
+        tracking_error = simulated_holding.get("tracking_error")
+        if tracking_error is not None and tracking_error > 0.1:
+            alerts.append(
+                {
+                    "type": "high_sim_tracking_error",
+                    "severity": "review",
+                    "message": "模拟持仓跟踪误差较大，估算持仓可靠性较低",
+                    "value": tracking_error,
+                    "conclusion_status": ConclusionStatus.ESTIMATED.value,
+                }
+            )
+        input_coverage = simulated_holding.get("input_coverage")
+        if input_coverage is not None and input_coverage < 0.5:
+            alerts.append(
+                {
+                    "type": "low_sim_input_coverage",
+                    "severity": "review",
+                    "message": "模拟持仓输入数据覆盖率不足，估算结果需谨慎使用",
+                    "value": input_coverage,
+                    "conclusion_status": ConclusionStatus.ESTIMATED.value,
+                }
+            )
+
+    # Phase 2: dynamic attribution residual alerts
+    if dynamic_attribution is not None:
+        dyn_residual_pct = dynamic_attribution.get("residual_pct")
+        if dyn_residual_pct is not None and abs(dyn_residual_pct) >= 0.5:
+            alerts.append(
+                {
+                    "type": "high_dynamic_attribution_residual",
+                    "severity": "review",
+                    "message": "动态归因未解释残差占比较高，交易能力判断需复核",
+                    "value": dyn_residual_pct,
+                    "conclusion_status": ConclusionStatus.ESTIMATED.value,
+                }
+            )
+
     return alerts
 
 
@@ -895,69 +1224,18 @@ def build_single_fund_packet(
     if template not in SUPPORTED_TEMPLATES:
         template = "single_fund_checkup"
 
-    warnings: list[str] = []
-    fund_profile = None
-    profile_warnings: list[str] = []
-    try:
-        fund_profile, profile_warnings = _fund_profile(db, fund_code)
-    except Exception as exc:
-        warnings.append(f"fund_profile 模块构建失败: {exc}")
-        profile_warnings = []
+    fund_profile, profile_warnings = _fund_profile(db, fund_code)
+    manager_info, manager_status, manager_warnings = _manager_info(fund_profile)
+    nav_metrics, nav_status, nav_warnings = _nav_metrics(db, fund_code)
+    holdings, holdings_status, holdings_warnings, _ = _latest_holdings(db, fund_code)
+    holder_structure, holder_status, holder_warnings = _latest_holder_structure(db, fund_code)
+    exposure, exposure_status, exposure_warnings = _latest_exposure(db, fund_code)
+    attribution, attribution_status, attribution_warnings = _latest_attribution(db, fund_code)
 
-    manager_info = None
-    manager_status = ConclusionStatus.NEEDS_REVIEW
-    manager_warnings: list[str] = []
-    try:
-        manager_info, manager_status, manager_warnings = _manager_info(fund_profile)
-    except Exception as exc:
-        warnings.append(f"manager_info 模块构建失败: {exc}")
-        manager_warnings = []
-
-    nav_metrics = None
-    nav_status = ConclusionStatus.NEEDS_REVIEW
-    nav_warnings: list[str] = []
-    try:
-        nav_metrics, nav_status, nav_warnings = _nav_metrics(db, fund_code)
-    except Exception as exc:
-        warnings.append(f"nav_metrics 模块构建失败: {exc}")
-        nav_warnings = []
-
-    holdings = None
-    holdings_status = ConclusionStatus.NEEDS_REVIEW
-    holdings_warnings: list[str] = []
-    _holdings_diagnostics = None
-    try:
-        holdings, holdings_status, holdings_warnings, _holdings_diagnostics = _latest_holdings(db, fund_code)
-    except Exception as exc:
-        warnings.append(f"disclosed_holdings 模块构建失败: {exc}")
-        holdings_warnings = []
-
-    holder_structure = None
-    holder_status = ConclusionStatus.NEEDS_REVIEW
-    holder_warnings: list[str] = []
-    try:
-        holder_structure, holder_status, holder_warnings = _latest_holder_structure(db, fund_code)
-    except Exception as exc:
-        warnings.append(f"holder_structure 模块构建失败: {exc}")
-        holder_warnings = []
-
-    exposure = None
-    exposure_status = ConclusionStatus.NEEDS_REVIEW
-    exposure_warnings: list[str] = []
-    try:
-        exposure, exposure_status, exposure_warnings = _latest_exposure(db, fund_code)
-    except Exception as exc:
-        warnings.append(f"exposure 模块构建失败: {exc}")
-        exposure_warnings = []
-
-    attribution = None
-    attribution_status = ConclusionStatus.NEEDS_REVIEW
-    attribution_warnings: list[str] = []
-    try:
-        attribution, attribution_status, attribution_warnings = _latest_attribution(db, fund_code)
-    except Exception as exc:
-        warnings.append(f"attribution 模块构建失败: {exc}")
-        attribution_warnings = []
+    # Phase 2 results (estimated modules)
+    scoring, scoring_status, scoring_warnings = _latest_scoring(db, fund_code)
+    simulated_holding, sim_status, sim_warnings = _latest_simulated_holding(db, fund_code)
+    dynamic_attribution, dyn_status, dyn_warnings = _latest_dynamic_attribution(db, fund_code)
 
     conclusion_map = {
         "fund_profile": ConclusionStatus.FACT
@@ -969,8 +1247,11 @@ def build_single_fund_packet(
         "holder_structure": holder_status,
         "exposure": exposure_status,
         "attribution": attribution_status,
+        "scoring": scoring_status,
+        "simulated_holding": sim_status,
+        "dynamic_attribution": dyn_status,
     }
-    warnings.extend([
+    warnings = [
         *profile_warnings,
         *manager_warnings,
         *nav_warnings,
@@ -978,7 +1259,10 @@ def build_single_fund_packet(
         *holder_warnings,
         *exposure_warnings,
         *attribution_warnings,
-    ])
+        *scoring_warnings,
+        *sim_warnings,
+        *dyn_warnings,
+    ]
     evidence = _build_evidence(
         fund_code,
         fund_profile,
@@ -994,8 +1278,14 @@ def build_single_fund_packet(
         exposure_status,
         attribution,
         attribution_status,
+        scoring=scoring,
+        scoring_status=scoring_status,
+        simulated_holding=simulated_holding,
+        sim_status=sim_status,
+        dynamic_attribution=dynamic_attribution,
+        dyn_status=dyn_status,
     )
-    residuals = _build_residuals(exposure, attribution)
+    residuals = _build_residuals(exposure, attribution, dynamic_attribution)
     risk_alerts = _build_risk_alerts(
         nav_metrics,
         manager_info,
@@ -1003,26 +1293,46 @@ def build_single_fund_packet(
         holder_structure,
         exposure,
         attribution,
+        scoring=scoring,
+        simulated_holding=simulated_holding,
+        dynamic_attribution=dynamic_attribution,
     )
-    data_date_val = _data_date(db, fund_code)
-    missing_fields_list = [
-        key for key, value in {
-            "fund_profile": fund_profile,
-            "manager_info": manager_info,
-            "nav_metrics": nav_metrics,
-            "disclosed_holdings": holdings,
-            "holder_structure": holder_structure,
-            "exposure": exposure,
-            "attribution": attribution,
-        }.items()
-        if value is None
-    ]
-    metadata = _build_packet_metadata(
+    metadata = ResearchPacketMetadata(
         fund_code=fund_code,
+        generated_at=datetime.now(),
+        data_date=_data_date(db, fund_code),
         template=template,
-        data_date=data_date_val,
-        conclusion_map=conclusion_map,
-        missing_fields=missing_fields_list,
+        platform_version=__version__,
+        data_source_levels=[DataSourceLevel.B, DataSourceLevel.LOCAL],
+        algorithm_versions={
+            NAV_METRICS_ALGORITHM_NAME: NAV_METRICS_ALGORITHM_VERSION,
+            HOLDINGS_ALGORITHM_NAME: HOLDINGS_ALGORITHM_VERSION,
+            EXPOSURE_ALGORITHM_NAME: EXPOSURE_ALGORITHM_VERSION,
+            ATTRIBUTION_ALGORITHM_NAME: ATTRIBUTION_ALGORITHM_VERSION,
+            SCORING_ALGORITHM_NAME: SCORING_ALGORITHM_VERSION,
+            SIMULATED_HOLDING_ALGORITHM_NAME: SIMULATED_HOLDING_ALGORITHM_VERSION,
+            DYNAMIC_ATTRIBUTION_ALGORITHM_NAME: DYNAMIC_ATTRIBUTION_ALGORITHM_VERSION,
+        },
+        missing_fields=[
+            key for key, value in {
+                "fund_profile": fund_profile,
+                "manager_info": manager_info,
+                "nav_metrics": nav_metrics,
+                "disclosed_holdings": holdings,
+                "holder_structure": holder_structure,
+                "exposure": exposure,
+                "attribution": attribution,
+                # Phase 2 modules are optional/estimated per AGENTS.md principle #2
+                # (estimated pollution isolation) — they do NOT gate core
+                # conclusion credibility and are excluded from missing_fields.
+                # "scoring": scoring,
+                # "simulated_holding": simulated_holding,
+                # "dynamic_attribution": dynamic_attribution,
+            }.items()
+            if value is None
+        ],
+        conclusion_statuses=conclusion_map,
+        overall_confidence=_overall_confidence(conclusion_map),
     )
     return ResearchPacket(
         metadata=metadata,
@@ -1033,6 +1343,9 @@ def build_single_fund_packet(
         holder_structure=holder_structure,
         exposure=exposure,
         attribution=attribution,
+        scoring=scoring,
+        simulated_holding=simulated_holding,
+        dynamic_attribution=dynamic_attribution,
         residuals=residuals,
         risk_alerts=risk_alerts,
         evidence=evidence,
@@ -1043,6 +1356,9 @@ def build_single_fund_packet(
             "holder_structure_status": holder_status.value,
             "exposure_status": exposure_status.value,
             "attribution_status": attribution_status.value,
+            "scoring_status": scoring_status.value,
+            "simulated_holding_status": sim_status.value,
+            "dynamic_attribution_status": dyn_status.value,
             "evidence_count": len(evidence),
             "risk_alert_count": len(risk_alerts),
         },

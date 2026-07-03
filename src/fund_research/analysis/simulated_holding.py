@@ -31,7 +31,15 @@ except ImportError:
     SCIPY_AVAILABLE = False
 
 ALGORITHM_NAME = "simulated_holding"
-ALGORITHM_VERSION = "0.1.0"
+ALGORITHM_VERSION = "0.2.0"
+
+# Reliability thresholds per requirements §5.1.3:
+# - Industry correlation >= 0.7
+# - Top10 recall >= 50%
+# - Tracking error < 2x fund historical vol (checked by caller)
+MIN_INDUSTRY_CORRELATION = 0.70
+MIN_TOP10_RECALL = 0.50
+MAX_TRACKING_ERROR = 0.05  # 5% daily RMSE — fallback threshold when fund_volatility is unavailable
 
 
 @dataclass
@@ -61,15 +69,36 @@ class SimulatedHoldingResult:
     confidence: str = "medium"
     warnings: list[str] = field(default_factory=list)
 
-    @property
-    def is_reliable(self) -> bool:
-        if not self.periods or self.overall_tracking_error >= 0.05:
+    def is_reliable(self, fund_volatility: float | None = None) -> bool:
+        """Check if simulated holding results meet acceptance thresholds.
+
+        Per requirements §5.1.3:
+        - overall_tracking_error < MAX_TRACKING_ERROR (5% daily RMSE, fallback
+          when fund_volatility is unavailable)
+        - When fund_volatility is provided: overall_tracking_error < 2 * fund_volatility
+        - top10_recall >= MIN_TOP10_RECALL (50%)
+        - industry_correlation >= MIN_INDUSTRY_CORRELATION (0.7) when available.
+          If industry data is unavailable (None), this check is skipped with a warning.
+
+        Args:
+            fund_volatility: Standard deviation of fund daily returns. When
+                provided, the tighter 2x-vol gate replaces the fixed
+                MAX_TRACKING_ERROR fallback.
+        """
+        # Determine tracking-error gate: prefer 2x fund vol when available
+        te_gate = 2.0 * fund_volatility if (fund_volatility is not None and fund_volatility > 0) else MAX_TRACKING_ERROR
+        if not self.periods or self.overall_tracking_error >= te_gate:
             return False
         if not self.backtest_report:
             return False
-        if self.overall_top10_recall is None or self.overall_top10_recall < 0.5:
+        if self.overall_top10_recall is None or self.overall_top10_recall < MIN_TOP10_RECALL:
             return False
-        return self.overall_industry_correlation is None or self.overall_industry_correlation >= 0.5
+        # Industry correlation is optional — if computed, it must meet threshold;
+        # if unavailable, skip this gate (a warning will be emitted in to_api_data).
+        return not (
+            self.overall_industry_correlation is not None
+            and self.overall_industry_correlation < MIN_INDUSTRY_CORRELATION
+        )
 
     def to_api_data(self) -> dict:
         return {
@@ -87,8 +116,8 @@ class SimulatedHoldingResult:
                 else None
             ),
             "confidence": self.confidence,
-            "is_reliable": self.is_reliable,
-            "conclusion_status": "estimated" if self.is_reliable else "needs_review",
+            "is_reliable": self.is_reliable(),
+            "conclusion_status": "estimated" if self.is_reliable() else "needs_review",
             "warnings": self.warnings,
             "periods": [
                 {
@@ -113,28 +142,60 @@ def build_candidate_pool(
     current_holdings: list[str],
     all_stocks: pd.DataFrame,
     *,
-    max_pool_size: int = 100,
+    max_pool_size: int = 150,
+    same_manager_holdings: list[str] | None = None,
+    newly_added_stocks: list[str] | None = None,
+    style_similar_stocks: list[str] | None = None,
+    top_n_per_industry: int = 5,
 ) -> list[str]:
     """
-    Build candidate stock pool for optimization.
+    Build candidate stock pool for optimization per requirements §5.1.2.
 
-    current_holdings: stock codes from the latest disclosed quarter.
-    all_stocks: DataFrame with columns [stock_code, industry, market_cap].
+    Pool sources (in priority order):
+    1. Current/recent disclosed holdings (always included)
+    2. Same-manager preferred stocks (cross-fund holdings of same manager)
+    3. Top N by market cap in each disclosed industry ("industry leaders")
+    4. Newly added stocks in the most recent report (report-period additions)
+    5. Style-similar stocks (same size/value/growth characteristics)
 
-    Pool = disclosed holdings + top 3 by market cap in each disclosed industry.
+    Args:
+        current_holdings: stock codes from the latest disclosed quarter.
+        all_stocks: DataFrame with columns [stock_code, industry, market_cap].
+        max_pool_size: cap on total candidate pool size.
+        same_manager_holdings: stocks held by same manager across other funds.
+        newly_added_stocks: stocks newly added in the latest disclosure.
+        style_similar_stocks: stocks with similar style factor exposure.
+        top_n_per_industry: number of top-market-cap stocks to include per
+            disclosed industry (default 5, up from 3 for better coverage).
     """
     if all_stocks.empty:
         return list(current_holdings)
 
-    pool_set = set(current_holdings)
+    same_manager_holdings = same_manager_holdings or []
+    newly_added_stocks = newly_added_stocks or []
+    style_similar_stocks = style_similar_stocks or []
+
+    pool_set: set[str] = set(current_holdings)
+
+    # Source 2: same-manager preferred stocks (if available in all_stocks)
+    valid_codes = set(all_stocks["stock_code"].tolist())
+    pool_set.update(c for c in same_manager_holdings if c in valid_codes)
+
+    # Source 3: top N by market cap in each disclosed industry
     disclosed = all_stocks[all_stocks["stock_code"].isin(current_holdings)]
     industries = disclosed["industry"].dropna().unique()
-
     for ind in industries:
         ind_stocks = all_stocks[all_stocks["industry"] == ind]
-        top3 = ind_stocks.nlargest(3, "market_cap")["stock_code"].tolist()
-        pool_set.update(top3)
+        top = ind_stocks.nlargest(top_n_per_industry, "market_cap")["stock_code"].tolist()
+        pool_set.update(top)
 
+    # Source 4: newly added stocks (from report-period changes)
+    pool_set.update(c for c in newly_added_stocks if c in valid_codes)
+
+    # Source 5: style-similar stocks
+    pool_set.update(c for c in style_similar_stocks if c in valid_codes)
+
+    # Preserve priority: current holdings first, then other sources
     pool = [s for s in current_holdings if s in pool_set]
     for s in pool_set:
         if s not in pool:
@@ -266,14 +327,8 @@ def _optimize_cvxpy(
     return _equal_weight(n_stocks, max_positions), 0.0
 
 
-def _equal_weights(n_stocks: int) -> tuple[np.ndarray, float]:
-    """Equal-weight fallback when optimization fails."""
-    w = np.ones(n_stocks) / n_stocks
-    return w, 0.0
-
-
 def _equal_weight(n_stocks: int, max_positions: int) -> np.ndarray:
-    """Equal-weight fallback that still respects the position limit."""
+    """Equal-weight fallback that respects the position limit."""
     weights = np.zeros(n_stocks)
     keep_count = max(1, min(max_positions, n_stocks))
     weights[:keep_count] = 1.0 / keep_count
@@ -285,32 +340,57 @@ def _enforce_position_limit(
     max_positions: int,
     max_single_weight: float,
 ) -> np.ndarray:
-    """Keep the largest weights and redistribute under the single-name cap."""
+    """Enforce hard constraints: at most max_positions holdings, single weight <= cap.
+
+    Iteratively:
+    1. Zero out weights below a small threshold, keeping only top max_positions.
+    2. Cap weights exceeding max_single_weight and redistribute excess to
+       non-capped positions proportionally.
+    3. Repeat until no weights exceed the cap.
+    4. Normalize so weights sum to 1.0.
+
+    This implements hard post-processing constraints per requirements §5.1.2
+    (max 30 positions, single-name cap). The optimizer's L1 regularization
+    encourages sparsity, and this function guarantees the constraints are met.
+    """
     cleaned = np.nan_to_num(np.maximum(weights, 0.0), nan=0.0)
-    if cleaned.sum() <= 0:
+    total = cleaned.sum()
+    if total <= 0:
         return _equal_weight(len(cleaned), max_positions)
 
+    cleaned /= total  # normalize first
+
+    # Step 1: Keep only top max_positions
     keep_count = max(1, min(max_positions, len(cleaned)))
     keep_idx = np.argsort(cleaned)[::-1][:keep_count]
     limited = np.zeros_like(cleaned)
     limited[keep_idx] = cleaned[keep_idx]
-    limited /= limited.sum() if limited.sum() > 0 else 1.0
+    limited_sum = limited.sum()
+    if limited_sum > 0:
+        limited /= limited_sum
 
-    for _ in range(keep_count + 1):
-        over = limited > max_single_weight
+    # Step 2: Iteratively cap single-weight and redistribute
+    for _ in range(50):  # enough iterations for convergence
+        over = limited > max_single_weight + 1e-8
         if not over.any():
             break
         excess = float((limited[over] - max_single_weight).sum())
         limited[over] = max_single_weight
-        room_mask = (limited > 0) & (limited < max_single_weight)
+        # Redistribute to non-capped, non-zero positions
+        room_mask = (limited > 1e-8) & (limited < max_single_weight - 1e-8)
+        if not room_mask.any():
+            # All positions are at cap — keep as-is, will renormalize
+            break
         room = max_single_weight - limited[room_mask]
         room_sum = float(room.sum())
-        if room_sum <= 0 or excess <= 0:
+        if room_sum <= 1e-12:
             break
         limited[room_mask] += excess * room / room_sum
 
-    if limited.sum() > 0:
-        limited /= limited.sum()
+    # Final normalization
+    final_sum = limited.sum()
+    if final_sum > 0:
+        limited /= final_sum
     return limited
 
 
@@ -661,7 +741,8 @@ def run_simulation(
             )
         except Exception:
             # Fallback: equal weight if optimization fails
-            weights, obj_val = _equal_weights(len(pool_in_data))
+            weights = _equal_weight(len(pool_in_data), max_positions)
+            obj_val = 0.0
 
         # Compute tracking error
         port_ret = ret_matrix.T @ weights  # (n_days,)

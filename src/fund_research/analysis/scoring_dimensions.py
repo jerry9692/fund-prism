@@ -292,13 +292,17 @@ def compute_holder(db: Session, fund_code: str, as_of_date: date | None = None) 
     elif inst > 80:
         score -= 0.3
 
-    holders = row.total_holders or 0
-    if holders >= 10_000:
-        score += 0.2
-    elif holders >= 1_000:
-        score += 0.1
-    elif holders < 200:
-        score -= 0.2
+    # total_holders may be None when the data source (East Money cyrjg endpoint)
+    # does not provide holder count — in that case apply neutral treatment
+    # (no bonus, no penalty) rather than defaulting to 0 which triggers <200 penalty.
+    if row.total_holders is not None:
+        holders = int(row.total_holders)
+        if holders >= 10_000:
+            score += 0.2
+        elif holders >= 1_000:
+            score += 0.1
+        elif holders < 200:
+            score -= 0.2
 
     emp = row.employee_pct or 0.0
     if emp > 0.5:

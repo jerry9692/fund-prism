@@ -1,6 +1,7 @@
 """AKShare data adapter for Phase 1."""
 
 import hashlib
+import re
 from collections.abc import Callable
 from datetime import date
 from io import StringIO
@@ -794,6 +795,12 @@ class AkshareAdapter(BaseDataAdapter):
         东方财富 F10 基金经理变动表提供自基金成立以来的完整任期记录，
         包括起始期、截止期、经理姓名（多人空格分隔）、任职回报。
         返回的 DataFrame 每个经理-任期一行（多经理行会拆分为多行）。
+
+        在 ``pd.read_html`` 去除 HTML 标签之前，先用正则从
+        ``<a href=".../manager/XXXXXXX.html">姓名</a>`` 中提取东方财富
+        经理ID，以 ``em_mgr_XXXXXXX`` 作为稳定的 ``manager_id``（比基于
+        姓名+公司的哈希更稳定，也解决了与 ``fetch_fund_managers`` 的
+        ID 一致性问题）。
         """
         started_at = perf_counter()
         url = f"https://fundf10.eastmoney.com/jjjl_{fund_code}.html"
@@ -820,6 +827,21 @@ class AkshareAdapter(BaseDataAdapter):
                         fetch_duration_ms=(perf_counter() - started_at) * 1000,
                         warnings=[f"基金经理任期页内容异常（可能反爬）: {fund_code}"],
                     )
+
+                # --- Extract Eastmoney manager IDs from <a> tags BEFORE pd.read_html ---
+                # pd.read_html strips tags, so we parse the raw HTML first to build a
+                # name -> em_mgr_id mapping.  Links look like:
+                #   <a href="http://fund.eastmoney.com/manager/1234567.html">张三</a>
+                # We use a dict so that repeated occurrences of the same name collapse
+                # to the same (correct) manager ID.
+                em_manager_id_map: dict[str, str] = {}
+                for m_id, m_name in re.findall(
+                    r"manager/(\d+)\.html[^>]*>([^<]+)</a>", resp.text
+                ):
+                    clean_name = m_name.strip()
+                    if clean_name and clean_name not in em_manager_id_map:
+                        em_manager_id_map[clean_name] = f"em_mgr_{m_id}"
+
                 tables = pd.read_html(StringIO(resp.text))
                 if len(tables) < 2:
                     if attempt < max_retries - 1:
@@ -903,7 +925,10 @@ class AkshareAdapter(BaseDataAdapter):
                     start_date_val = start_parsed.date()
                 if start_date_val is None:
                     continue
-                manager_id = _manager_id_from_identity(name)
+                # Use Eastmoney manager ID if extracted from HTML; fall back to
+                # hash-based ID (without company, as company is not available on
+                # this page) for any names whose links were not captured.
+                manager_id = em_manager_id_map.get(name) or _manager_id_from_identity(name)
                 is_current = end_date_val is None
                 tenure_days: int | None = None
                 if is_current:
@@ -958,6 +983,15 @@ class AkshareAdapter(BaseDataAdapter):
                     )
                     for name, company in zip(result.data["name"], company_names, strict=False)
                 ]
+            # Normalize raw numeric Eastmoney manager IDs to em_mgr_ prefix so they
+            # match the IDs extracted from the F10 history page HTML.
+            if "manager_id" in result.data.columns:
+                result.data = result.data.copy()
+                mid = result.data["manager_id"].astype(str)
+                numeric_mask = mid.str.fullmatch(r"\d+")
+                result.data.loc[numeric_mask, "manager_id"] = (
+                    "em_mgr_" + mid[numeric_mask]
+                )
             if "experience_years" in result.data.columns:
                 raw_experience = result.data["experience_years"]
                 experience = pd.to_numeric(raw_experience, errors="coerce")
