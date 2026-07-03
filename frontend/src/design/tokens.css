@@ -1,0 +1,95 @@
+/* ============================================================
+   Design Tokens — Editorial Research Desk
+   暖纸色底 + 墨色文字 + 单一琥珀强调色
+   ============================================================ */
+
+:root {
+  /* ---- 表面层 ---- */
+  --surface-base:     #FAF7F2;
+  --surface-raised:   #FFFFFF;
+  --surface-sunken:   #F3EFE8;
+  --surface-overlay:  #FFFCF7;
+
+  /* ---- 墨色文字 ---- */
+  --ink-primary:      #1C1814;
+  --ink-secondary:    #5C544A;
+  --ink-tertiary:     #8F8678;
+  --ink-disabled:     #B8B0A2;
+
+  /* ---- 琥珀强调色 ---- */
+  --accent:           #B45309;
+  --accent-hover:     #92400E;
+  --accent-soft:      #FEF3C7;
+  --accent-subtle:    #FDF6E3;
+
+  /* ---- 语义色 ---- */
+  --positive:         #2D7A4F;
+  --positive-soft:    #D4E8DA;
+  --negative:         #B23A3A;
+  --negative-soft:    #F4D9D9;
+  --warning:          #92650A;
+  --warning-soft:     #FAEDC4;
+  --info:             #3B6EA5;
+  --info-soft:        #D8E5F0;
+
+  /* ---- 结论状态色 ---- */
+  --status-fact:         #2D7A4F;
+  --status-fact-soft:    #D4E8DA;
+  --status-computed:     #3B6EA5;
+  --status-computed-soft: #D8E5F0;
+  --status-estimated:    #92650A;
+  --status-estimated-soft: #FAEDC4;
+  --status-observation:  #6B5B8A;
+  --status-observation-soft: #E4DEEC;
+  --status-needs-review: #B23A3A;
+  --status-needs-review-soft: #F4D9D9;
+
+  /* ---- 边界 ---- */
+  --border-hairline:  #E8E0D4;
+  --border-default:   #D9CFBE;
+  --border-strong:    #B8AC97;
+
+  /* ---- 阴影 ---- */
+  --shadow-sm:  0 1px 2px rgba(28, 24, 20, 0.04);
+  --shadow-md:  0 2px 8px rgba(28, 24, 20, 0.06);
+  --shadow-lg:  0 8px 24px rgba(28, 24, 20, 0.08);
+
+  /* ---- 字体 ---- */
+  --font-display: 'Fraunces', 'Noto Serif SC', Georgia, serif;
+  --font-body: 'IBM Plex Sans', 'Noto Sans SC', -apple-system, BlinkMacSystemFont, sans-serif;
+  --font-mono: 'IBM Plex Mono', 'JetBrains Mono', 'SF Mono', monospace;
+
+  /* ---- 间距 (4px 基线) ---- */
+  --space-1:  4px;
+  --space-2:  8px;
+  --space-3:  12px;
+  --space-4:  16px;
+  --space-5:  20px;
+  --space-6:  24px;
+  --space-8:  32px;
+  --space-10: 40px;
+  --space-12: 48px;
+  --space-16: 64px;
+
+  /* ---- 圆角 ---- */
+  --radius-xs: 2px;
+  --radius-sm: 4px;
+  --radius-md: 6px;
+  --radius-lg: 10px;
+
+  /* ---- 内容宽度 ---- */
+  --content-max:    1200px;
+  --content-narrow: 760px;
+  --content-wide:   1440px;
+
+  /* ---- 布局尺寸 ---- */
+  --topbar-height: 52px;
+  --sidenav-width: 200px;
+  --sidenav-collapsed: 48px;
+  --footer-height: 32px;
+
+  /* ---- 过渡 ---- */
+  --transition-fast: 100ms ease-out;
+  --transition-base: 150ms ease-out;
+  --transition-slow: 250ms ease-out;
+}

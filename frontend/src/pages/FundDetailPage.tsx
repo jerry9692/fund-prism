@@ -1,202 +1,356 @@
-import { useEffect, useState, useCallback } from "react";
-import { useParams, Link } from "react-router-dom";
-import { api, type FundProfile, type NavMetricsData } from "../api/client";
-import PeriodSelector, { periodToStartDate, type PeriodKey } from "../components/PeriodSelector";
+// 基金详情页 — 分组 Tab 式分析中心
+// 概览 / 持仓分析 / 风格与归因 / 评分与实验 / 研究输出 / 校验
 
-function fmtPct(v: unknown): string {
-  if (v == null) return "—";
-  return (Number(v) * 100).toFixed(2) + "%";
-}
-function fmtNum(v: unknown): string {
-  if (v == null) return "—";
-  return Number(v).toFixed(2);
-}
+import { useEffect, useState } from "react";
+import { useParams, useNavigate, useLocation } from "react-router-dom";
+import { api, type FundProfile, type NavMetricsData } from "../api/client";
+import {
+  SectionHeader,
+  MetricCard,
+  StatusBadge,
+  TabNav,
+  PeriodTabs,
+  LoadingState,
+  ErrorState,
+  type TabItem,
+} from "../components/display";
+import { ChartWrapper } from "../components/data/ChartWrapper";
 
 export default function FundDetailPage() {
   const { code } = useParams<{ code: string }>();
+  const navigate = useNavigate();
+  const location = useLocation();
+
   const [profile, setProfile] = useState<FundProfile | null>(null);
-  const [nav, setNav] = useState<NavMetricsData | null>(null);
+  const [navMetrics, setNavMetrics] = useState<NavMetricsData | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [period, setPeriod] = useState<PeriodKey>("1Y");
-  const [navLoading, setNavLoading] = useState(false);
+  const [period, setPeriod] = useState("1y");
 
   useEffect(() => {
     if (!code) return;
     setLoading(true);
-    api
-      .getFundProfile(code)
-      .then((p) => {
-        if (p.data) setProfile(p.data);
+    setError(null);
+
+    Promise.all([api.getFundProfile(code), api.getNavMetrics(code)])
+      .then(([profileRes, navRes]) => {
+        setProfile(profileRes.data ?? null);
+        setNavMetrics(navRes.data ?? null);
       })
-      .catch((e: Error) => setError(e.message))
+      .catch((e) => {
+        setError(e instanceof Error ? e.message : "加载失败");
+      })
       .finally(() => setLoading(false));
-  }, [code]);
 
-  const loadNav = useCallback(
-    (p: PeriodKey) => {
-      if (!code) return;
-      setNavLoading(true);
-      const start = periodToStartDate(p);
-      api
-        .getNavMetrics(code, { start })
-        .then((n) => {
-          if (n.data) setNav(n.data);
-        })
-        .catch(() => {})
-        .finally(() => setNavLoading(false));
-    },
-    [code]
-  );
+    // 记录到最近浏览
+    try {
+      const raw = localStorage.getItem("recent_funds");
+      const recents = raw ? JSON.parse(raw) : [];
+      const filtered = recents.filter(
+        (r: { code: string }) => r.code !== code
+      );
+      filtered.unshift({
+        code,
+        name: profile?.short_name ?? code,
+        ts: Date.now(),
+      });
+      localStorage.setItem(
+        "recent_funds",
+        JSON.stringify(filtered.slice(0, 10))
+      );
+    } catch {
+      // ignore
+    }
+  }, [code]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  useEffect(() => {
-    loadNav(period);
-  }, [period, loadNav]);
-
-  if (loading) return <p className="text-muted">加载中...</p>;
-  if (error) return <p className="text-danger">加载失败: {error}</p>;
-  if (!profile) return <p>未找到基金 {code}</p>;
-
-  const subLinks = [
-    { to: `/funds/${code}/holdings`, label: "持仓" },
-    { to: `/funds/${code}/exposure`, label: "暴露与归因" },
-    { to: `/funds/${code}/scoring`, label: "评分" },
-    { to: `/funds/${code}/simulated`, label: "模拟持仓" },
-    { to: `/funds/${code}/attribution`, label: "动态归因" },
-    { to: `/funds/${code}/packet`, label: "研究包" },
-    { to: `/funds/${code}/diff`, label: "对比" },
-    { to: `/funds/${code}/review`, label: "校验" },
+  const tabs: TabItem[] = [
+    { key: "overview", label: "概览" },
+    { key: "holdings", label: "持仓分析" },
+    { key: "exposure", label: "风格与归因" },
+    { key: "scoring", label: "评分与实验", badge: "实验" },
+    { key: "packet", label: "研究输出" },
+    { key: "review", label: "校验" },
   ];
+
+  // 从 URL 推断当前 Tab
+  const path = location.pathname;
+  let activeTab = "overview";
+  if (path.includes("/holdings")) activeTab = "holdings";
+  else if (path.includes("/exposure")) activeTab = "exposure";
+  else if (path.includes("/scoring")) activeTab = "scoring";
+  else if (path.includes("/packet") || path.includes("/diff"))
+    activeTab = "packet";
+  else if (path.includes("/review")) activeTab = "review";
+  else if (path.includes("/simulated") || path.includes("/attribution"))
+    activeTab = "scoring";
+
+  const handleTabChange = (key: string) => {
+    const tabToPath: Record<string, string> = {
+      overview: `/funds/${code}`,
+      holdings: `/funds/${code}/holdings`,
+      exposure: `/funds/${code}/exposure`,
+      scoring: `/funds/${code}/scoring`,
+      packet: `/funds/${code}/packet`,
+      review: `/funds/${code}/review`,
+    };
+    navigate(tabToPath[key] ?? `/funds/${code}`);
+  };
+
+  if (loading) {
+    return (
+      <div>
+        <LoadingState rows={4} cols={4} />
+      </div>
+    );
+  }
+
+  if (error || !profile) {
+    return (
+      <ErrorState
+        title="基金信息加载失败"
+        desc={error ?? "未找到该基金"}
+        onRetry={() => navigate("/funds")}
+      />
+    );
+  }
+
+  // 提取净值指标
+  const periodLabels: Record<string, string> = {
+    "1m": "近1月",
+    "3m": "近3月",
+    "6m": "近半年",
+    "1y": "近1年",
+    "3y": "近3年",
+    "5y": "近5年",
+    since_inception: "成立以来",
+  };
+
+  const currentPeriodKey = period === "all" ? "since_inception" : period;
+  const currentPeriodData = navMetrics?.periods?.[currentPeriodKey];
+  const metrics = currentPeriodData?.metrics ?? {};
+
+  const fmtPct = (v: number | null | undefined) =>
+    v === null || v === undefined ? "—" : `${v >= 0 ? "+" : ""}${(v * 100).toFixed(2)}%`;
+
+  const fmtNum = (v: number | null | undefined, digits = 4) =>
+    v === null || v === undefined ? "—" : v.toFixed(digits);
 
   return (
     <div>
-      <div className="page-header">
-        <div>
-          <div className="page-title-row">
-            <h1>{profile.short_name}</h1>
-            <span className="fund-code">{profile.fund_code}</span>
-          </div>
-          <p className="subtitle">
-            {profile.company_name} · {profile.category} · 成立于 {profile.inception_date ?? "—"}
-          </p>
+      {/* 面包屑 */}
+      <div className="breadcrumb fade-up fade-up-1">
+        <a href="/funds">基金筛选</a>
+        <span className="breadcrumb-separator">/</span>
+        <span className="breadcrumb-current">
+          {code} {profile.short_name}
+        </span>
+      </div>
+
+      {/* 基金标题区 */}
+      <div className="fade-up fade-up-1 mb-4">
+        <div className="flex items-center gap-3">
+          <h1 className="mono">{code}</h1>
+          <span className="text-lg">{profile.short_name}</span>
+          <span className="text-sm text-tertiary">{profile.category}</span>
         </div>
-        <div className="sub-link-row">
-          {subLinks.map((l) => (
-            <Link key={l.to} to={l.to} className="sub-link">{l.label}</Link>
-          ))}
+        <div className="text-sm text-tertiary mt-2 flex gap-4">
+          <span>
+            管理{" "}
+            <span className="mono">
+              {profile.scale_history?.[0]?.total_nav
+                ? (profile.scale_history[0].total_nav / 1e8).toFixed(2) + "亿"
+                : "—"}
+            </span>
+          </span>
+          <span>
+            成立{" "}
+            <span className="mono">{profile.inception_date ?? "—"}</span>
+          </span>
+          {profile.managers?.[0] && (
+            <span>
+              经理{" "}
+              <span>
+                {profile.managers[0].name} · 任职{" "}
+                <span className="mono">
+                  {profile.managers[0].tenure_days}天
+                </span>
+              </span>
+            </span>
+          )}
         </div>
       </div>
 
-      <div className="metric-grid" style={{ marginBottom: "var(--space-md)" }}>
-        <div className="metric-card">
-          <div className="metric-card-label">管理费</div>
-          <div className="metric-card-value">{profile.fee_info ? `${profile.fee_info.mgmt_fee_pct}%` : "—"}</div>
-          <div className="metric-card-sub">{profile.fee_info?.custody_fee_pct != null ? `托管费 ${profile.fee_info.custody_fee_pct}%` : ""}</div>
-        </div>
-        <div className="metric-card">
-          <div className="metric-card-label">最新规模</div>
-          <div className="metric-card-value">
-            {profile.scale_history.length > 0 ? `${profile.scale_history[0].total_nav?.toFixed(2) ?? "—"}` : "—"}
-          </div>
-          <div className="metric-card-sub">
-            {profile.scale_history.length > 0 ? profile.scale_history[0].report_date : ""}
-          </div>
-        </div>
-        <div className="metric-card">
-          <div className="metric-card-label">基金经理</div>
-          <div className="metric-card-value" style={{ fontSize: 16 }}>
-            {profile.managers.filter((m) => m.is_current).map((m) => m.name).join(", ") || "—"}
-          </div>
-          <div className="metric-card-sub">
-            {(() => {
-              const cur = profile.managers.find((m) => m.is_current);
-              return cur ? `任职 ${cur.tenure_days} 天` : "";
-            })()}
-          </div>
-        </div>
-        <div className="metric-card">
-          <div className="metric-card-label">基金状态</div>
-          <div className="metric-card-value" style={{ fontSize: 16 }}>{profile.status}</div>
-          <div className="metric-card-sub">{profile.custodian_bank ?? ""}</div>
-        </div>
-      </div>
+      {/* 分组 Tab */}
+      <TabNav tabs={tabs} active={activeTab} onChange={handleTabChange} />
 
-      <div className="card">
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "var(--space-md)", flexWrap: "wrap", gap: 12 }}>
-          <h3 style={{ margin: 0 }}>净值指标</h3>
-          <PeriodSelector value={period} onChange={setPeriod} />
-        </div>
-        {navLoading ? (
-          <p className="text-muted">加载净值数据中...</p>
-        ) : nav ? (
-          <div style={{ overflowX: "auto" }}>
-            <table className="data-table">
-              <thead>
-                <tr>
-                  <th>区间</th>
-                  <th>状态</th>
-                  <th>年化收益</th>
-                  <th>最大回撤</th>
-                  <th>夏普比率</th>
-                  <th>卡玛比率</th>
-                  <th>波动率</th>
-                  <th>样本数</th>
-                </tr>
-              </thead>
-              <tbody>
-                {Object.entries(nav.periods).map(([key, p]) => (
-                  <tr key={key}>
-                    <td style={{ fontWeight: 500 }}>{p.label}</td>
-                    <td><span className={`badge badge-${p.status}`}>{p.status}</span></td>
-                    <td className="mono-cell" style={{ fontWeight: 600 }}>{fmtPct(p.metrics?.annualized_return)}</td>
-                    <td className="mono-cell">{fmtPct(p.metrics?.max_drawdown)}</td>
-                    <td className="mono-cell">{fmtNum(p.metrics?.sharpe_ratio)}</td>
-                    <td className="mono-cell">{fmtNum(p.metrics?.calmar_ratio)}</td>
-                    <td className="mono-cell">{fmtPct(p.metrics?.annualized_volatility)}</td>
-                    <td className="date-cell">{p.observations}</td>
-                  </tr>
+      {/* 概览 Tab 内容 (其他 Tab 由各自路由页面渲染) */}
+      {activeTab === "overview" && (
+        <div className="page-enter">
+          {/* 指标卡片 */}
+          <div className="grid grid-4 fade-up fade-up-2 mb-6">
+            <MetricCard
+              label={`${periodLabels[currentPeriodKey] ?? "近1年"} 收益`}
+              value={fmtPct(metrics.annualized_return ?? metrics.total_return)}
+              positive={(metrics.annualized_return ?? metrics.total_return ?? 0) >= 0}
+              negative={(metrics.annualized_return ?? metrics.total_return ?? 0) < 0}
+            />
+            <MetricCard
+              label="最大回撤"
+              value={fmtPct(metrics.max_drawdown)}
+              negative={true}
+            />
+            <MetricCard
+              label="夏普比率"
+              value={fmtNum(metrics.sharpe_ratio)}
+            />
+            <MetricCard
+              label="波动率"
+              value={fmtPct(metrics.volatility)}
+            />
+          </div>
+
+          {/* 净值曲线 */}
+          <div className="fade-up fade-up-3 mb-6">
+            <SectionHeader
+              title="净值曲线"
+              actions={
+                <PeriodTabs active={period} onChange={setPeriod} />
+              }
+            />
+            {currentPeriodData ? (
+              <ChartWrapper
+                height={300}
+                option={{
+                  grid: { left: 50, right: 20, top: 20, bottom: 30 },
+                  xAxis: {
+                    type: "category",
+                    data: [],
+                    axisLabel: { fontSize: 11 },
+                  },
+                  yAxis: {
+                    type: "value",
+                    axisLabel: {
+                      fontSize: 11,
+                      formatter: (v: number) => (v * 100).toFixed(1) + "%",
+                    },
+                  },
+                  series: [
+                    {
+                      name: "累计收益",
+                      type: "line",
+                      data: [],
+                      smooth: true,
+                      showSymbol: false,
+                      lineStyle: { width: 2 },
+                      areaStyle: { opacity: 0.08 },
+                    },
+                  ],
+                }}
+                loading={false}
+              />
+            ) : (
+              <div className="text-sm text-tertiary">
+                当前区间无净值数据。
+              </div>
+            )}
+            {currentPeriodData?.warnings?.map((w, i) => (
+              <div key={i} className="text-xs text-warning mt-2">
+                ⚠ {w}
+              </div>
+            ))}
+          </div>
+
+          {/* 基金经理任职 */}
+          <div className="fade-up fade-up-4 mb-6">
+            <SectionHeader title="基金经理任职记录" />
+            {profile.managers?.length > 0 ? (
+              <div className="flex flex-col gap-2">
+                {profile.managers.map((m, i) => (
+                  <div
+                    key={i}
+                    className="flex items-center justify-between"
+                    style={{
+                      padding: "var(--space-2) var(--space-3)",
+                      borderBottom: "1px solid var(--border-hairline)",
+                    }}
+                  >
+                    <div className="flex items-center gap-3">
+                      <span className="font-medium">{m.name}</span>
+                      {m.is_current && (
+                        <span className="status-badge status-badge-fact">
+                          现任
+                        </span>
+                      )}
+                    </div>
+                    <div className="text-sm text-tertiary">
+                      <span className="mono">{m.start_date ?? "—"}</span>
+                      {" → "}
+                      {m.is_current ? "至今" : "—"}
+                      <span className="mono ml-3">{m.tenure_days}天</span>
+                    </div>
+                  </div>
                 ))}
-              </tbody>
-            </table>
+              </div>
+            ) : (
+              <div className="text-sm text-tertiary">暂无经理信息</div>
+            )}
           </div>
-        ) : (
-          <p className="text-muted">净值数据未获取</p>
-        )}
-        {nav && nav.custom && (
-          <div style={{ marginTop: "var(--space-md)", paddingTop: "var(--space-md)", borderTop: "1px solid var(--color-border)" }}>
-            <h4 style={{ marginBottom: 8 }}>自定义区间</h4>
-            <p className="text-muted" style={{ fontSize: 13 }}>
-              {nav.custom.start_date} ~ {nav.custom.end_date}: 年化 {fmtPct(nav.custom.metrics?.annualized_return)} |
-              最大回撤 {fmtPct(nav.custom.metrics?.max_drawdown)} |
-              夏普 {fmtNum(nav.custom.metrics?.sharpe_ratio)}
-            </p>
-          </div>
-        )}
-      </div>
 
-      {profile.managers.length > 0 && (
-        <div className="card">
-          <h3 style={{ marginBottom: "var(--space-sm)" }}>基金经理任职记录</h3>
-          <table className="data-table">
-            <thead>
-              <tr><th>姓名</th><th>任职天数</th><th>状态</th></tr>
-            </thead>
-            <tbody>
-              {profile.managers.map((m, i) => (
-                <tr key={i}>
-                  <td style={{ fontWeight: 500 }}>{m.name}</td>
-                  <td className="mono-cell">{m.tenure_days}</td>
-                  <td>
-                    {m.is_current ? (
-                      <span className="badge badge-computed">现任</span>
-                    ) : (
-                      <span className="badge badge-observation">离任</span>
-                    )}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+          {/* 基金费率 */}
+          {profile.fee_info && (
+            <div className="fade-up fade-up-5 mb-6">
+              <SectionHeader title="费率信息" />
+              <div className="grid grid-3">
+                <MetricCard
+                  label="管理费"
+                  value={`${profile.fee_info.mgmt_fee_pct}%`}
+                />
+                <MetricCard
+                  label="托管费"
+                  value={
+                    profile.fee_info.custody_fee_pct !== null
+                      ? `${profile.fee_info.custody_fee_pct}%`
+                      : "—"
+                  }
+                />
+                <MetricCard
+                  label="销售服务费"
+                  value={
+                    profile.fee_info.sales_service_fee_pct !== null
+                      ? `${profile.fee_info.sales_service_fee_pct}%`
+                      : "—"
+                  }
+                />
+              </div>
+            </div>
+          )}
+
+          {/* 数据质量摘要 */}
+          {currentPeriodData && (
+            <div className="fade-up fade-up-6">
+              <SectionHeader title="数据质量" />
+              <div className="flex gap-4 text-sm">
+                <span className="text-tertiary">
+                  观测数: <span className="mono">{currentPeriodData.observations}</span>
+                </span>
+                <span className="text-tertiary">
+                  区间:{" "}
+                  <span className="mono">
+                    {currentPeriodData.start_date ?? "—"} →{" "}
+                    {currentPeriodData.end_date ?? "—"}
+                  </span>
+                </span>
+                <StatusBadge status={currentPeriodData.status} />
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* 非 overview Tab 时显示子页面占位（实际由路由渲染子页面） */}
+      {activeTab !== "overview" && (
+        <div className="text-sm text-tertiary page-enter">
+          正在加载 {tabs.find((t) => t.key === activeTab)?.label}…
         </div>
       )}
     </div>

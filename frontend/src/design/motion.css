@@ -1,0 +1,175 @@
+/* ============================================================
+   Motion — 动效系统
+   克制但有存在感，3 个层次
+   ============================================================ */
+
+/* ---- 页面入场 staggered fade-up ---- */
+
+@keyframes fadeUp {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.fade-up {
+  animation: fadeUp 300ms ease-out both;
+}
+
+.fade-up-1 { animation-delay: 0ms; }
+.fade-up-2 { animation-delay: 60ms; }
+.fade-up-3 { animation-delay: 120ms; }
+.fade-up-4 { animation-delay: 180ms; }
+.fade-up-5 { animation-delay: 240ms; }
+.fade-up-6 { animation-delay: 300ms; }
+
+/* ---- 路由切换 ---- */
+
+@keyframes pageEnter {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+.page-enter {
+  animation: pageEnter 200ms ease-out both;
+}
+
+/* ---- 骨架屏闪烁 ---- */
+
+@keyframes shimmer {
+  0% {
+    background-position: -200% 0;
+  }
+  100% {
+    background-position: 200% 0;
+  }
+}
+
+.skeleton {
+  background: linear-gradient(
+    90deg,
+    var(--surface-sunken) 25%,
+    var(--border-hairline) 50%,
+    var(--surface-sunken) 75%
+  );
+  background-size: 200% 100%;
+  animation: shimmer 1.5s infinite;
+  border-radius: var(--radius-xs);
+}
+
+/* ---- 通用过渡 ---- */
+
+.transition-color {
+  transition: background-color var(--transition-base), color var(--transition-base), border-color var(--transition-base);
+}
+
+.transition-opacity {
+  transition: opacity var(--transition-base);
+}
+
+.transition-all {
+  transition: all var(--transition-base);
+}
+
+/* ---- Tab 下划线滑动 ---- */
+
+.tab-indicator {
+  transition: transform var(--transition-slow), width var(--transition-slow);
+}
+
+/* ---- Drawer 滑入 ---- */
+
+@keyframes drawerIn {
+  from {
+    transform: translateX(100%);
+  }
+  to {
+    transform: translateX(0);
+  }
+}
+
+.drawer-enter {
+  animation: drawerIn 250ms ease-out both;
+}
+
+@keyframes overlayIn {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+.overlay-enter {
+  animation: overlayIn 200ms ease-out both;
+}
+
+/* ---- Modal scale ---- */
+
+@keyframes modalIn {
+  from {
+    opacity: 0;
+    transform: scale(0.96);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+.modal-enter {
+  animation: modalIn 200ms ease-out both;
+}
+
+/* ---- 数字变化 ---- */
+
+@keyframes numFlash {
+  0% {
+    background: var(--accent-soft);
+  }
+  100% {
+    background: transparent;
+  }
+}
+
+.num-flash {
+  animation: numFlash 600ms ease-out;
+}
+
+/* ---- hover 微动效 ---- */
+
+.hover-lift {
+  transition: transform var(--transition-base), box-shadow var(--transition-base);
+}
+
+.hover-lift:hover {
+  transform: translateY(-1px);
+  box-shadow: var(--shadow-md);
+}
+
+/* ---- 展开折叠 ---- */
+
+@keyframes expandDown {
+  from {
+    opacity: 0;
+    max-height: 0;
+  }
+  to {
+    opacity: 1;
+    max-height: 1000px;
+  }
+}
+
+.expand-enter {
+  animation: expandDown 250ms ease-out both;
+  overflow: hidden;
+}
