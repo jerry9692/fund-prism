@@ -7,6 +7,16 @@ import {
   type ReviewerAnnotation,
   type TargetModule,
 } from "../api/client";
+import {
+  SectionHeader,
+  StatusBadge as SharedStatusBadge,
+  Breadcrumb,
+  MetricCard,
+  LoadingState,
+  EmptyState,
+  ErrorState,
+  type BreadcrumbItem,
+} from "../components/display";
 
 const ANNOTATION_TYPE_LABELS: Record<AnnotationType, string> = {
   note: "备注",
@@ -16,10 +26,18 @@ const ANNOTATION_TYPE_LABELS: Record<AnnotationType, string> = {
 };
 
 const ANNOTATION_TYPE_COLORS: Record<AnnotationType, string> = {
-  note: "var(--color-text-secondary)",
-  lock: "var(--color-warning)",
-  exclude: "var(--color-danger)",
-  approve: "var(--color-success)",
+  note: "var(--ink-tertiary)",
+  lock: "var(--warning)",
+  exclude: "var(--negative)",
+  approve: "var(--positive)",
+};
+
+// 审核类型 → 结论状态映射（用于 SharedStatusBadge 着色）
+const ANNOTATION_TYPE_TO_CONCLUSION: Record<AnnotationType, string> = {
+  note: "observation",
+  lock: "estimated",
+  exclude: "needs_review",
+  approve: "fact",
 };
 
 const TARGET_MODULE_LABELS: Record<TargetModule, string> = {
@@ -29,10 +47,17 @@ const TARGET_MODULE_LABELS: Record<TargetModule, string> = {
 };
 
 const STATUS_COLORS: Record<EffectiveStatus, string> = {
-  open: "var(--color-text-secondary)",
-  approved: "var(--color-success)",
-  locked: "var(--color-warning)",
-  excluded: "var(--color-danger)",
+  open: "var(--ink-tertiary)",
+  approved: "var(--positive)",
+  locked: "var(--warning)",
+  excluded: "var(--negative)",
+};
+
+const STATUS_SOFT_BG: Record<EffectiveStatus, string> = {
+  open: "var(--surface-sunken)",
+  approved: "var(--positive-soft)",
+  locked: "var(--warning-soft)",
+  excluded: "var(--negative-soft)",
 };
 
 const STATUS_LABELS: Record<EffectiveStatus, string> = {
@@ -42,18 +67,22 @@ const STATUS_LABELS: Record<EffectiveStatus, string> = {
   excluded: "已排除",
 };
 
-function StatusBadge({ status }: { status: EffectiveStatus }) {
+function ReviewStatusBadge({ status }: { status: EffectiveStatus }) {
+  const color = STATUS_COLORS[status];
   return (
     <span
       style={{
-        display: "inline-block",
+        display: "inline-flex",
+        alignItems: "center",
         padding: "2px 10px",
-        borderRadius: 12,
-        fontSize: 12,
+        borderRadius: "var(--radius-xs)",
+        fontSize: "0.72rem",
         fontWeight: 600,
-        color: STATUS_COLORS[status],
-        background: `${STATUS_COLORS[status]}20`,
-        border: `1px solid ${STATUS_COLORS[status]}40`,
+        fontFamily: "var(--font-mono)",
+        letterSpacing: "0.02em",
+        color,
+        background: STATUS_SOFT_BG[status],
+        border: `1px solid ${color}40`,
       }}
     >
       {STATUS_LABELS[status]}
@@ -74,69 +103,79 @@ function AnnotationCard({
   return (
     <div
       style={{
-        border: "1px solid var(--color-border)",
-        borderRadius: 8,
-        padding: 12,
-        marginBottom: 8,
+        background: "var(--surface-raised)",
+        border: "1px solid var(--border-hairline)",
         borderLeft: `4px solid ${color}`,
+        borderRadius: "var(--radius-md)",
+        padding: "var(--space-3) var(--space-4)",
+        marginBottom: "var(--space-2)",
       }}
     >
       <div
-        style={{
-          display: "flex",
-          justifyContent: "space-between",
-          alignItems: "flex-start",
-          marginBottom: 6,
-        }}
+        className="flex items-center justify-between"
+        style={{ marginBottom: "var(--space-2)" }}
       >
-        <div>
-          <span
-            style={{
-              fontWeight: 600,
-              color,
-              fontSize: 13,
-            }}
-          >
+        <div className="flex items-center gap-2">
+          <SharedStatusBadge
+            status={ANNOTATION_TYPE_TO_CONCLUSION[annotation.annotation_type]}
+          />
+          <span className="text-sm" style={{ color: "var(--ink-secondary)" }}>
             {ANNOTATION_TYPE_LABELS[annotation.annotation_type]}
           </span>
           {annotation.target_module && (
-            <span
-              style={{
-                marginLeft: 8,
-                fontSize: 12,
-                color: "var(--color-text-secondary)",
-              }}
-            >
-              {TARGET_MODULE_LABELS[annotation.target_module]}
+            <span className="text-xs" style={{ color: "var(--ink-tertiary)" }}>
+              · {TARGET_MODULE_LABELS[annotation.target_module]}
             </span>
           )}
         </div>
-        <span style={{ fontSize: 11, color: "var(--color-text-secondary)" }}>
+        <span
+          className="mono text-xs"
+          style={{ color: "var(--ink-tertiary)" }}
+        >
           {annotation.created_at
             ? new Date(annotation.created_at).toLocaleString("zh-CN")
             : ""}
         </span>
       </div>
-      <p style={{ margin: "4px 0", fontSize: 13, lineHeight: 1.5 }}>
+      <p
+        className="text-sm"
+        style={{
+          color: "var(--ink-secondary)",
+          lineHeight: 1.5,
+          margin: "var(--space-1) 0",
+        }}
+      >
         {annotation.reason}
       </p>
       {annotation.evidence_id && (
-        <p style={{ margin: "4px 0", fontSize: 11, color: "var(--color-text-secondary)" }}>
-          证据 ID: {annotation.evidence_id}
+        <p
+          className="text-xs"
+          style={{
+            color: "var(--ink-tertiary)",
+            margin: "var(--space-1) 0 0",
+          }}
+        >
+          证据 ID: <span className="mono">{annotation.evidence_id}</span>
         </p>
       )}
-      <div style={{ marginTop: 8, textAlign: "right" }}>
+      <div
+        className="flex justify-end gap-2"
+        style={{ marginTop: "var(--space-2)" }}
+      >
         {confirmingDelete ? (
           <>
             <button
-              className="btn btn-danger btn-sm"
+              className="btn btn-secondary btn-sm"
+              style={{
+                color: "var(--negative)",
+                borderColor: "var(--negative)",
+              }}
               onClick={() => onDelete(annotation.id)}
             >
               确认删除
             </button>
             <button
-              className="btn btn-sm"
-              style={{ marginLeft: 4 }}
+              className="btn btn-ghost btn-sm"
               onClick={() => setConfirmingDelete(false)}
             >
               取消
@@ -144,7 +183,7 @@ function AnnotationCard({
           </>
         ) : (
           <button
-            className="btn btn-sm"
+            className="btn btn-ghost btn-sm"
             onClick={() => setConfirmingDelete(true)}
           >
             删除
@@ -204,26 +243,31 @@ function CreateAnnotationForm({
   return (
     <form
       onSubmit={handleSubmit}
+      className="fade-up fade-up-4"
       style={{
-        border: "1px solid var(--color-border)",
-        borderRadius: 8,
-        padding: 16,
-        marginBottom: 16,
+        background: "var(--surface-raised)",
+        border: "1px solid var(--border-hairline)",
+        borderRadius: "var(--radius-md)",
+        padding: "var(--space-4)",
+        marginBottom: "var(--space-5)",
       }}
     >
-      <h3 style={{ marginTop: 0, marginBottom: 12, fontSize: 15 }}>
-        新增审核记录
-      </h3>
+      <SectionHeader title="新增审核记录" subtitle="记录审核决策，影响基金的有效状态" />
 
-      <div style={{ display: "flex", gap: 12, marginBottom: 12, flexWrap: "wrap" }}>
-        <label style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-          <span style={{ fontSize: 12, color: "var(--color-text-secondary)" }}>
-            类型
-          </span>
+      <div
+        className="grid"
+        style={{
+          gridTemplateColumns: "repeat(auto-fill, minmax(200px, 1fr))",
+          gap: "var(--space-3)",
+          marginTop: "var(--space-3)",
+        }}
+      >
+        <label className="form-label">
+          <span>类型</span>
           <select
+            className="form-input"
             value={annotationType}
             onChange={(e) => setAnnotationType(e.target.value as AnnotationType)}
-            style={{ padding: "4px 8px", borderRadius: 4, border: "1px solid var(--color-border)" }}
           >
             {Object.entries(ANNOTATION_TYPE_LABELS).map(([k, v]) => (
               <option key={k} value={k}>
@@ -233,14 +277,14 @@ function CreateAnnotationForm({
           </select>
         </label>
 
-        <label style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-          <span style={{ fontSize: 12, color: "var(--color-text-secondary)" }}>
-            目标模块（可选）
-          </span>
+        <label className="form-label">
+          <span>目标模块（可选）</span>
           <select
+            className="form-input"
             value={targetModule}
-            onChange={(e) => setTargetModule(e.target.value as TargetModule | "")}
-            style={{ padding: "4px 8px", borderRadius: 4, border: "1px solid var(--color-border)" }}
+            onChange={(e) =>
+              setTargetModule(e.target.value as TargetModule | "")
+            }
           >
             <option value="">不指定</option>
             {Object.entries(TARGET_MODULE_LABELS).map(([k, v]) => (
@@ -252,67 +296,73 @@ function CreateAnnotationForm({
         </label>
       </div>
 
-      <label style={{ display: "block", marginBottom: 12 }}>
-        <span style={{ fontSize: 12, color: "var(--color-text-secondary)" }}>
-          原因说明 *
-        </span>
+      <label
+        className="form-label"
+        style={{ display: "block", marginTop: "var(--space-3)" }}
+      >
+        <span>原因说明 *</span>
         <textarea
+          className="form-input"
           value={reason}
           onChange={(e) => setReason(e.target.value)}
           rows={3}
           placeholder="说明审核决策的原因，例如：数据质量问题、样本期不足、估计结果不可信..."
           style={{
             width: "100%",
-            padding: "6px 8px",
-            borderRadius: 4,
-            border: "1px solid var(--color-border)",
+            height: "auto",
+            resize: "vertical",
+            fontFamily: "var(--font-body)",
+            lineHeight: 1.5,
+            padding: "var(--space-2) var(--space-3)",
+            background: "var(--surface-raised)",
+            border: "1px solid var(--border-default)",
+            borderRadius: "var(--radius-sm)",
+            fontSize: "0.82rem",
+            color: "var(--ink-primary)",
             boxSizing: "border-box",
-            fontFamily: "inherit",
-            fontSize: 13,
           }}
         />
       </label>
 
-      <label style={{ display: "block", marginBottom: 12 }}>
-        <span style={{ fontSize: 12, color: "var(--color-text-secondary)" }}>
-          证据 ID（可选）
-        </span>
+      <label
+        className="form-label"
+        style={{ display: "block", marginTop: "var(--space-3)" }}
+      >
+        <span>证据 ID（可选）</span>
         <input
           type="text"
+          className="form-input"
           value={evidenceId}
           onChange={(e) => setEvidenceId(e.target.value)}
           placeholder="关联的证据记录 ID"
-          style={{
-            width: "100%",
-            padding: "4px 8px",
-            borderRadius: 4,
-            border: "1px solid var(--color-border)",
-            boxSizing: "border-box",
-            fontFamily: "inherit",
-            fontSize: 13,
-          }}
         />
       </label>
 
       {error && (
         <div
           style={{
-            color: "var(--color-danger)",
-            fontSize: 12,
-            marginBottom: 8,
+            marginTop: "var(--space-3)",
+            padding: "var(--space-2) var(--space-3)",
+            background: "var(--negative-soft)",
+            borderLeft: "3px solid var(--negative)",
+            borderRadius: "0 var(--radius-sm) var(--radius-sm) 0",
+            color: "var(--negative)",
+            fontSize: "0.82rem",
           }}
         >
           {error}
         </div>
       )}
 
-      <button
-        type="submit"
-        className="btn btn-primary"
-        disabled={submitting || !reason.trim()}
-      >
-        {submitting ? "提交中..." : "提交"}
-      </button>
+      <div style={{ marginTop: "var(--space-4)" }}>
+        <button
+          type="submit"
+          className="btn btn-primary"
+          disabled={submitting || !reason.trim()}
+        >
+          {submitting ? "提交中..." : "提交"}
+        </button>
+      </div>
     </form>
   );
 }
@@ -362,84 +412,161 @@ export default function FundReviewPage() {
     }
   }
 
+  const crumbs: BreadcrumbItem[] = [
+    { label: "基金筛选", to: "/funds" },
+    { label: fundCode, to: `/funds/${fundCode}` },
+    { label: "手动校验" },
+  ];
+
   return (
     <div>
-      <h2 style={{ display: "flex", alignItems: "center", gap: 12 }}>
-        <span>手动校验 — {fundCode}</span>
-        {status && <StatusBadge status={status} />}
-      </h2>
+      <Breadcrumb items={crumbs} />
 
-      {error && (
-        <div
-          className="warning-banner"
-          style={{ marginBottom: 16 }}
-        >
-          {error}
+      {/* 标题区 */}
+      <div className="fade-up fade-up-1 mb-4">
+        <div className="flex items-center gap-3">
+          <h1>手动校验</h1>
+          <span
+            className="mono text-sm"
+            style={{ color: "var(--ink-tertiary)" }}
+          >
+            {fundCode}
+          </span>
+          {status && <ReviewStatusBadge status={status} />}
         </div>
-      )}
+      </div>
 
       {loading ? (
-        <p style={{ color: "var(--color-text-secondary)" }}>加载中...</p>
+        <div className="fade-up fade-up-2">
+          <LoadingState rows={4} cols={4} />
+        </div>
+      ) : status === null && error ? (
+        <div className="fade-up fade-up-2">
+          <ErrorState
+            title="加载失败"
+            desc={error}
+            onRetry={() => {
+              setError(null);
+              loadData();
+            }}
+          />
+        </div>
       ) : (
         <>
-          <div
-            style={{
-              display: "flex",
-              gap: 16,
-              marginBottom: 16,
-              flexWrap: "wrap",
-            }}
-          >
-            <div className="metric-card">
-              <div className="metric-card-label">审核记录数</div>
-              <div className="metric-card-value">{annotations.length}</div>
-            </div>
-            <div className="metric-card">
-              <div className="metric-card-label">有效状态</div>
-              <div className="metric-card-value">
-                {status ? STATUS_LABELS[status] : "—"}
+          {/* 非致命错误提示 */}
+          {error && (
+            <div
+              className="fade-up fade-up-2 mb-4"
+              style={{
+                padding: "var(--space-3) var(--space-4)",
+                background: "var(--negative-soft)",
+                borderLeft: "3px solid var(--negative)",
+                borderRadius: "0 var(--radius-sm) var(--radius-sm) 0",
+              }}
+            >
+              <div className="flex items-center justify-between">
+                <span className="text-sm" style={{ color: "var(--negative)" }}>
+                  {error}
+                </span>
+                <button
+                  className="btn btn-ghost btn-sm"
+                  onClick={() => setError(null)}
+                >
+                  关闭
+                </button>
               </div>
+            </div>
+          )}
+
+          {/* 汇总指标卡 */}
+          <div
+            className="grid grid-2 fade-up fade-up-2 mb-6"
+            style={{ gap: "var(--space-4)" }}
+          >
+            <div
+              style={{
+                background: "var(--surface-raised)",
+                border: "1px solid var(--border-hairline)",
+                borderRadius: "var(--radius-md)",
+                padding: "var(--space-4)",
+              }}
+            >
+              <MetricCard label="审核记录数" value={annotations.length} />
+            </div>
+            <div
+              style={{
+                background: "var(--surface-raised)",
+                border: "1px solid var(--border-hairline)",
+                borderRadius: "var(--radius-md)",
+                padding: "var(--space-4)",
+              }}
+            >
+              <MetricCard
+                label="有效状态"
+                value={status ? STATUS_LABELS[status] : "—"}
+              />
             </div>
           </div>
 
+          {/* 状态警告横幅 */}
           {status === "excluded" && (
             <div
-              className="warning-banner"
-              style={{ marginBottom: 16 }}
+              className="fade-up fade-up-3 mb-4"
+              style={{
+                padding: "var(--space-3) var(--space-4)",
+                background: "var(--negative-soft)",
+                borderLeft: "3px solid var(--negative)",
+                borderRadius: "0 var(--radius-sm) var(--radius-sm) 0",
+                color: "var(--negative)",
+                fontSize: "0.85rem",
+              }}
             >
               该基金已被标记为"排除"，不会出现在默认结论和排名中。
             </div>
           )}
           {status === "locked" && (
             <div
-              className="warning-banner"
-              style={{ marginBottom: 16 }}
+              className="fade-up fade-up-3 mb-4"
+              style={{
+                padding: "var(--space-3) var(--space-4)",
+                background: "var(--warning-soft)",
+                borderLeft: "3px solid var(--warning)",
+                borderRadius: "0 var(--radius-sm) var(--radius-sm) 0",
+                color: "var(--warning)",
+                fontSize: "0.85rem",
+              }}
             >
               该基金已被锁定，重新运行算法不会覆盖当前结果。
             </div>
           )}
 
-          <CreateAnnotationForm
-            fundCode={fundCode}
-            onCreated={loadData}
-          />
+          {/* 新增审核记录表单 */}
+          <CreateAnnotationForm fundCode={fundCode} onCreated={loadData} />
 
-          <h3 style={{ fontSize: 15, marginBottom: 8 }}>
-            审核记录历史
-          </h3>
-          {annotations.length === 0 ? (
-            <p style={{ color: "var(--color-text-secondary)" }}>
-              暂无审核记录
-            </p>
-          ) : (
-            annotations.map((a) => (
-              <AnnotationCard
-                key={a.id}
-                annotation={a}
-                onDelete={handleDelete}
+          {/* 审核记录历史 */}
+          <div className="fade-up fade-up-5">
+            <SectionHeader
+              title="审核记录历史"
+              subtitle={`共 ${annotations.length} 条记录`}
+            />
+            {annotations.length === 0 ? (
+              <EmptyState
+                icon="∅"
+                title="暂无审核记录"
+                desc="通过上方表单添加第一条审核记录"
               />
-            ))
-          )}
+            ) : (
+              <div>
+                {annotations.map((a) => (
+                  <AnnotationCard
+                    key={a.id}
+                    annotation={a}
+                    onDelete={handleDelete}
+                  />
+                ))}
+              </div>
+            )}
+          </div>
         </>
       )}
     </div>

@@ -1,35 +1,40 @@
+// 动态收益归因页 — 新组件库 + 面包屑 + 指标卡 + 归因柱状图 + 可切换归因记录
+
 import { useEffect, useState } from "react";
-import { useParams, Link } from "react-router-dom";
+import { useParams } from "react-router-dom";
 import { api, type DynamicAttributionResult } from "../api/client";
-import ConfidenceBadge from "../components/ConfidenceBadge";
-import ChartWrapper, { type BarSeries } from "../components/ChartWrapper";
+import {
+  SectionHeader,
+  StatusBadge,
+  Breadcrumb,
+  MetricCard,
+  LoadingState,
+  EmptyState,
+  type BreadcrumbItem,
+} from "../components/display";
+import { ChartWrapper } from "../components/data/ChartWrapper";
+import type { EChartsOption } from "echarts";
 
 function formatPct(v: number | null | undefined): string {
   if (v === null || v === undefined) return "—";
   return `${(v * 100).toFixed(2)}%`;
 }
 
-function valueSignClass(v: number | null | undefined): string {
-  if (v === null || v === undefined) return "";
-  if (v > 0) return "positive";
-  if (v < 0) return "negative";
-  return "";
-}
-
-function MetricCard({
+function PctMetric({
   label,
   value,
 }: {
   label: string;
   value: number | null | undefined;
 }) {
-  const display = formatPct(value);
-  const signClass = valueSignClass(value);
+  const hasValue = value !== null && value !== undefined;
   return (
-    <div className="metric-card">
-      <div className="metric-card-label">{label}</div>
-      <div className={`metric-card-value ${signClass}`}>{display}</div>
-    </div>
+    <MetricCard
+      label={label}
+      value={formatPct(value)}
+      positive={hasValue && value > 0}
+      negative={hasValue && value < 0}
+    />
   );
 }
 
@@ -48,18 +53,32 @@ function ResultListItem({
       : result.created_at || "未知期间";
   return (
     <div
-      className={`result-card${selected ? " selected" : ""}`}
       onClick={onClick}
-      style={{ cursor: "pointer", borderColor: selected ? "var(--color-primary)" : undefined }}
+      style={{
+        cursor: "pointer",
+        background: "var(--surface-raised)",
+        border: selected
+          ? "2px solid var(--accent)"
+          : "1px solid var(--border-hairline)",
+        borderRadius: "var(--radius-md)",
+        padding: "var(--space-4)",
+        marginBottom: "var(--space-3)",
+        boxShadow: "var(--shadow-sm)",
+      }}
     >
-      <div className="result-card-head">
-        <div>
-          <span className="result-card-title">{period}</span>
-          <span className="result-card-meta">
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-3">
+          <span
+            className="mono"
+            style={{ fontWeight: 600, color: "var(--ink-primary)" }}
+          >
+            {period}
+          </span>
+          <span className="text-sm text-tertiary">
             {result.algorithm_name} v{result.algorithm_version}
           </span>
         </div>
-        <ConfidenceBadge status={result.conclusion_status || "estimated"} />
+        <StatusBadge status={result.conclusion_status || "estimated"} />
       </div>
     </div>
   );
@@ -116,7 +135,6 @@ export default function DynamicAttributionPage() {
 
   const selectedResult = results.find((r) => r.id === selectedResultId) || null;
 
-  const attributionLabels = ["Beta收益", "配置收益", "轮动收益", "选股收益", "残差"];
   const attributionValues = selectedResult
     ? [
         selectedResult.beta_return ?? 0,
@@ -126,102 +144,198 @@ export default function DynamicAttributionPage() {
         selectedResult.residual ?? 0,
       ]
     : [];
-  const attributionSeries: BarSeries[] = selectedResult
-    ? [{ label: "收益贡献", values: attributionValues.map((v) => v * 100) }]
-    : [];
+
+  const attributionOption: EChartsOption = {
+    title: { text: "收益归因分解" },
+    tooltip: { trigger: "axis" },
+    xAxis: {
+      type: "category",
+      data: ["Beta收益", "配置收益", "轮动收益", "选股收益", "残差"],
+    },
+    yAxis: {
+      type: "value",
+      name: "收益(%)",
+      axisLabel: { formatter: (v) => `${(v as number).toFixed(2)}%` },
+    },
+    series: [
+      {
+        type: "bar",
+        data: attributionValues.map((v) => v * 100),
+        itemStyle: { color: "#B45309" },
+        barWidth: "50%",
+      },
+    ],
+  };
+
+  const crumbs: BreadcrumbItem[] = [
+    { label: "基金筛选", to: "/funds" },
+    { label: fundCode, to: `/funds/${fundCode}` },
+    { label: "动态归因" },
+  ];
 
   return (
     <div>
-      <Link
-        to={`/funds/${code}`}
-        className="text-muted"
-        style={{ fontSize: 13 }}
-      >
-        ← 返回基金详情
-      </Link>
+      <Breadcrumb items={crumbs} />
 
+      {/* Title area */}
       <div
+        className="fade-up fade-up-1"
         style={{
-          display: "flex",
-          justifyContent: "space-between",
-          alignItems: "center",
-          marginTop: 8,
-          marginBottom: 16,
+          marginTop: "var(--space-3)",
+          marginBottom: "var(--space-4)",
         }}
       >
-        <h2 style={{ display: "flex", alignItems: "center", gap: 12 }}>
-          <span>动态收益归因 — {fundCode}</span>
-          <ConfidenceBadge status="estimated" />
-        </h2>
-        <button
-          className="btn btn-primary"
-          onClick={handleRun}
-          disabled={running}
-        >
-          {running ? "运行中..." : "运行归因"}
-        </button>
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-3">
+            <h1>动态收益归因</h1>
+            <StatusBadge status="estimated" />
+          </div>
+          <button
+            className="btn btn-primary"
+            onClick={handleRun}
+            disabled={running}
+          >
+            {running ? "运行中..." : "运行归因"}
+          </button>
+        </div>
+        <div className="text-sm text-tertiary" style={{ marginTop: "var(--space-2)" }}>
+          基金代码 <span className="mono">{fundCode}</span>
+        </div>
       </div>
 
-      <div className="warning-banner" style={{ marginBottom: 16 }}>
-        动态归因基于模拟持仓和风格暴露估算，结果仅供研究参考，不构成投资建议。
+      {/* Warning banner */}
+      <div
+        className="fade-up fade-up-2"
+        style={{
+          marginBottom: "var(--space-4)",
+          padding: "var(--space-3) var(--space-4)",
+          background: "var(--warning-soft)",
+          borderLeft: "3px solid var(--warning)",
+          borderRadius: "0 var(--radius-sm) var(--radius-sm) 0",
+          fontSize: "0.82rem",
+          color: "var(--warning)",
+        }}
+      >
+        ⚠ 动态归因基于模拟持仓和风格暴露估算，结果仅供研究参考，不构成投资建议。
       </div>
 
+      {/* Error banner */}
       {error && (
         <div
-          className="warning-banner"
-          style={{ marginBottom: 16, background: "var(--color-danger-light)", color: "var(--color-danger)", borderColor: "#fecaca" }}
+          className="fade-up fade-up-2"
+          style={{
+            marginBottom: "var(--space-4)",
+            padding: "var(--space-3) var(--space-4)",
+            background: "var(--negative-soft)",
+            borderLeft: "3px solid var(--negative)",
+            borderRadius: "0 var(--radius-sm) var(--radius-sm) 0",
+            fontSize: "0.82rem",
+            color: "var(--negative)",
+          }}
         >
           {error}
         </div>
       )}
 
+      {/* Loading / empty / results */}
       {loading ? (
-        <p style={{ color: "var(--color-text-secondary)" }}>加载中...</p>
+        <div className="fade-up fade-up-3">
+          <LoadingState rows={6} cols={5} />
+        </div>
       ) : results.length === 0 ? (
-        <div className="card empty-state">
-          <p style={{ fontSize: 14, marginBottom: 8 }}>该基金暂无动态归因结果</p>
-          <p style={{ fontSize: 12 }}>点击"运行归因"按钮生成归因分析</p>
+        <div className="fade-up fade-up-3">
+          <EmptyState
+            icon="∅"
+            title="该基金暂无动态归因结果"
+            desc={'点击"运行归因"按钮生成归因分析'}
+          />
         </div>
       ) : (
         <>
           {selectedResult && (
-            <>
-              <div className="metric-grid" style={{ marginBottom: 16 }}>
-                <MetricCard label="总收益" value={selectedResult.total_return} />
-                <MetricCard label="Beta收益" value={selectedResult.beta_return} />
-                <MetricCard label="配置收益" value={selectedResult.allocation_return} />
-                <MetricCard label="轮动收益" value={selectedResult.sector_rotation_return} />
-                <MetricCard label="选股收益" value={selectedResult.stock_selection_return} />
-                <MetricCard label="残差占比" value={selectedResult.residual_pct} />
+            <div
+              className="fade-up fade-up-3"
+              style={{ marginBottom: "var(--space-4)" }}
+            >
+              {/* Metric cards */}
+              <div
+                className="grid"
+                style={{
+                  gridTemplateColumns: "repeat(auto-fill, minmax(160px, 1fr))",
+                  gap: "var(--space-3)",
+                  marginBottom: "var(--space-4)",
+                }}
+              >
+                <PctMetric label="总收益" value={selectedResult.total_return} />
+                <PctMetric label="Beta收益" value={selectedResult.beta_return} />
+                <PctMetric
+                  label="配置收益"
+                  value={selectedResult.allocation_return}
+                />
+                <PctMetric
+                  label="轮动收益"
+                  value={selectedResult.sector_rotation_return}
+                />
+                <PctMetric
+                  label="选股收益"
+                  value={selectedResult.stock_selection_return}
+                />
+                <PctMetric
+                  label="残差占比"
+                  value={selectedResult.residual_pct}
+                />
               </div>
 
-              <ChartWrapper
-                type="bar"
-                title="收益归因分解"
-                labels={attributionLabels}
-                series={attributionSeries}
-                yLabel="收益(%)"
-                height={280}
-                formatY={(v) => `${v.toFixed(2)}%`}
-              />
+              {/* Attribution bar chart */}
+              <div
+                style={{
+                  background: "var(--surface-raised)",
+                  border: "1px solid var(--border-hairline)",
+                  borderRadius: "var(--radius-md)",
+                  padding: "var(--space-4)",
+                  boxShadow: "var(--shadow-sm)",
+                }}
+              >
+                <ChartWrapper option={attributionOption} height={280} />
+              </div>
 
-              {selectedResult.warnings && selectedResult.warnings.length > 0 && (
-                <div className="warning-banner" style={{ marginTop: 16 }}>
-                  {selectedResult.warnings.join("; ")}
-                </div>
-              )}
-            </>
+              {/* Warnings */}
+              {selectedResult.warnings &&
+                selectedResult.warnings.length > 0 && (
+                  <div
+                    style={{
+                      marginTop: "var(--space-3)",
+                      padding: "var(--space-2) var(--space-3)",
+                      background: "var(--warning-soft)",
+                      borderLeft: "3px solid var(--warning)",
+                      borderRadius: "0 var(--radius-sm) var(--radius-sm) 0",
+                      fontSize: "0.78rem",
+                      color: "var(--warning)",
+                    }}
+                  >
+                    {selectedResult.warnings.join("; ")}
+                  </div>
+                )}
+            </div>
           )}
 
-          <h3 style={{ marginTop: 24, marginBottom: 12 }}>归因记录</h3>
-          {results.map((r) => (
-            <ResultListItem
-              key={r.id}
-              result={r}
-              selected={r.id === selectedResultId}
-              onClick={() => setSelectedResultId(r.id)}
+          {/* Records list */}
+          <div className="fade-up fade-up-4">
+            <SectionHeader
+              title="归因记录"
+              subtitle={`共 ${results.length} 条（点击切换查看）`}
             />
-          ))}
+            <div style={{ marginTop: "var(--space-3)" }}>
+              {results.map((r) => (
+                <ResultListItem
+                  key={r.id}
+                  result={r}
+                  selected={r.id === selectedResultId}
+                  onClick={() => setSelectedResultId(r.id)}
+                />
+              ))}
+            </div>
+          </div>
         </>
       )}
     </div>

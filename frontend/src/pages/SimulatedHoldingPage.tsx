@@ -1,11 +1,20 @@
+// 模拟持仓页 — 新组件库 + 面包屑 + 指标卡 + Top15 柱状图 + 可展开持仓表
+
 import { useEffect, useState } from "react";
 import { useParams } from "react-router-dom";
+import { api, type SimulatedHoldingResult } from "../api/client";
 import {
-  api,
-  type SimulatedHoldingResult,
-} from "../api/client";
-import ConfidenceBadge from "../components/ConfidenceBadge";
-import ChartWrapper, { type BarSeries } from "../components/ChartWrapper";
+  SectionHeader,
+  StatusBadge,
+  Breadcrumb,
+  MetricCard,
+  LoadingState,
+  EmptyState,
+  type BreadcrumbItem,
+} from "../components/display";
+import { ChartWrapper } from "../components/data/ChartWrapper";
+import { DataTable, type Column } from "../components/data/DataTable";
+import type { EChartsOption } from "echarts";
 
 function formatMetricValue(label: string, v: number | null | undefined): string {
   if (v === null || v === undefined) return "—";
@@ -18,62 +27,66 @@ function formatMetricValue(label: string, v: number | null | undefined): string 
   return v.toFixed(4);
 }
 
-function HoldingsTable({
-  holdings,
-}: {
-  holdings: SimulatedHoldingResult["holdings_detail"];
-}) {
-  if (!holdings || holdings.length === 0) {
-    return (
-      <p style={{ color: "var(--color-text-secondary)" }}>
-        无持仓明细数据
-      </p>
-    );
-  }
-
-  const sorted = [...holdings].sort(
-    (a, b) => (b.estimated_weight || 0) - (a.estimated_weight || 0)
-  );
-
-  return (
-    <table className="data-table">
-      <thead>
-        <tr>
-          <th>排名</th>
-          <th>股票代码</th>
-          <th>名称</th>
-          <th>估计权重</th>
-          <th>行业</th>
-        </tr>
-      </thead>
-      <tbody>
-        {sorted.map((h, i) => (
-          <tr key={`${h.stock_code}-${i}`}>
-            <td className="mono-cell">{i + 1}</td>
-            <td className="mono-cell">{h.stock_code}</td>
-            <td>{h.stock_name || "—"}</td>
-            <td className="mono-cell">
-              {((h.estimated_weight || 0) * 100).toFixed(2)}%
-            </td>
-            <td>{h.industry || "—"}</td>
-          </tr>
-        ))}
-      </tbody>
-    </table>
-  );
+interface HoldingRow {
+  rank: number;
+  stock_code: string;
+  stock_name: string | null;
+  estimated_weight_pct: number;
+  industry: string | null;
 }
 
-function ResultCard({ result }: { result: SimulatedHoldingResult }) {
+function ResultCard({
+  result,
+  index,
+}: {
+  result: SimulatedHoldingResult;
+  index: number;
+}) {
   const [expanded, setExpanded] = useState(false);
 
-  const top15 = [...result.holdings_detail]
-    .sort((a, b) => (b.estimated_weight || 0) - (a.estimated_weight || 0))
-    .slice(0, 15);
+  const sortedHoldings = [...result.holdings_detail].sort(
+    (a, b) => (b.estimated_weight || 0) - (a.estimated_weight || 0)
+  );
+  const top15 = sortedHoldings.slice(0, 15);
   const chartLabels = top15.map((s) => s.stock_name || s.stock_code);
   const chartValues = top15.map((s) => (s.estimated_weight || 0) * 100);
-  const chartSeries: BarSeries[] = [{ label: "估计权重", values: chartValues }];
 
-  const metricLabels = ["跟踪误差", "日度 RMSE", "行业相关性", "Top10 召回率", "输入覆盖率"];
+  const top15Option: EChartsOption = {
+    title: { text: "Top 15 重仓股权重" },
+    tooltip: {
+      trigger: "axis",
+      formatter: (params) => {
+        const p = (params as Array<{ name: string; value: number }>)[0];
+        return `${p.name}: ${p.value.toFixed(2)}%`;
+      },
+    },
+    xAxis: {
+      type: "category",
+      data: chartLabels,
+      axisLabel: { rotate: 45 },
+    },
+    yAxis: {
+      type: "value",
+      name: "权重(%)",
+      axisLabel: { formatter: (v) => `${v.toFixed(1)}%` },
+    },
+    series: [
+      {
+        type: "bar",
+        data: chartValues,
+        itemStyle: { color: "#B45309" },
+        barWidth: "60%",
+      },
+    ],
+  };
+
+  const metricLabels = [
+    "跟踪误差",
+    "日度 RMSE",
+    "行业相关性",
+    "Top10 召回率",
+    "输入覆盖率",
+  ];
   const metricValues: (number | null | undefined)[] = [
     result.tracking_error,
     result.daily_rmse,
@@ -82,70 +95,175 @@ function ResultCard({ result }: { result: SimulatedHoldingResult }) {
     result.input_coverage,
   ];
 
+  const columns: Column<HoldingRow>[] = [
+    {
+      key: "rank",
+      header: "排名",
+      width: "60px",
+      sortable: true,
+      render: (row) => <span className="mono text-tertiary">{row.rank}</span>,
+      sortValue: (row) => row.rank,
+    },
+    {
+      key: "stock_code",
+      header: "股票代码",
+      width: "100px",
+      render: (row) => <span className="mono">{row.stock_code}</span>,
+    },
+    {
+      key: "stock_name",
+      header: "名称",
+      render: (row) => <span>{row.stock_name || "—"}</span>,
+    },
+    {
+      key: "estimated_weight_pct",
+      header: "估计权重",
+      numeric: true,
+      sortable: true,
+      render: (row) => (
+        <span
+          className="mono"
+          style={
+            row.estimated_weight_pct > 5
+              ? { color: "var(--positive)", fontWeight: 600 }
+              : undefined
+          }
+        >
+          {row.estimated_weight_pct.toFixed(2)}%
+        </span>
+      ),
+      sortValue: (row) => row.estimated_weight_pct,
+    },
+    {
+      key: "industry",
+      header: "行业",
+      render: (row) => (
+        <span className="text-sm text-tertiary">{row.industry || "—"}</span>
+      ),
+    },
+  ];
+
+  const holdingRows: HoldingRow[] = sortedHoldings.map((h, i) => ({
+    rank: i + 1,
+    stock_code: h.stock_code,
+    stock_name: h.stock_name,
+    estimated_weight_pct: (h.estimated_weight || 0) * 100,
+    industry: h.industry,
+  }));
+
+  // stagger entrance animations across fade-up-1..6
+  const animClass = `fade-up fade-up-${Math.min(index + 2, 6)}`;
+
   return (
-    <div className="result-card">
-      <div className="result-card-head">
-        <div>
-          <span className="result-card-title">
+    <div
+      className={animClass}
+      style={{
+        background: "var(--surface-raised)",
+        border: "1px solid var(--border-hairline)",
+        borderRadius: "var(--radius-md)",
+        padding: "var(--space-4)",
+        marginBottom: "var(--space-4)",
+        boxShadow: "var(--shadow-sm)",
+      }}
+    >
+      {/* Card header */}
+      <div
+        className="flex items-center justify-between"
+        style={{ marginBottom: "var(--space-3)"}}
+      >
+        <div className="flex items-center gap-3">
+          <span
+            className="mono"
+            style={{ fontWeight: 600, color: "var(--ink-primary)" }}
+          >
             {result.calc_date || "未知日期"}
           </span>
-          <span className="result-card-meta">
+          <span className="text-sm text-tertiary">
             {result.algorithm_name} v{result.algorithm_version}
           </span>
           {result.is_backtest && (
             <span
               style={{
-                marginLeft: 8,
-                fontSize: 11,
+                fontSize: "0.72rem",
+                fontWeight: 600,
                 padding: "1px 6px",
-                borderRadius: 8,
-                background: "var(--color-warning)",
-                color: "white",
+                borderRadius: "var(--radius-xs)",
+                background: "var(--warning-soft)",
+                color: "var(--warning)",
+                fontFamily: "var(--font-mono)",
+                letterSpacing: "0.02em",
               }}
             >
               回测
             </span>
           )}
         </div>
-        <ConfidenceBadge status={result.conclusion_status || "estimated"} />
+        <StatusBadge status={result.conclusion_status || "estimated"} />
       </div>
 
-      <div className="metric-grid" style={{ marginBottom: 12 }}>
+      {/* Metric cards */}
+      <div
+        className="grid"
+        style={{
+          gridTemplateColumns: "repeat(auto-fill, minmax(160px, 1fr))",
+          gap: "var(--space-3)",
+          marginBottom: "var(--space-4)",
+        }}
+      >
         {metricLabels.map((label, i) => (
-          <div className="metric-card" key={label}>
-            <div className="metric-card-label">{label}</div>
-            <div className="metric-card-value">{formatMetricValue(label, metricValues[i])}</div>
-          </div>
+          <MetricCard
+            key={label}
+            label={label}
+            value={formatMetricValue(label, metricValues[i])}
+          />
         ))}
       </div>
 
-      <ChartWrapper
-        type="bar"
-        title="Top 15 重仓股权重"
-        labels={chartLabels}
-        series={chartSeries}
-        yLabel="权重(%)"
-        height={200}
-        formatY={(v) => `${v.toFixed(1)}%`}
-      />
+      {/* Top 15 bar chart */}
+      <ChartWrapper option={top15Option} height={280} />
 
+      {/* Warnings */}
       {result.warnings && result.warnings.length > 0 && (
-        <div className="warning-banner" style={{ marginBottom: 8, fontSize: 12, marginTop: 12 }}>
+        <div
+          style={{
+            marginTop: "var(--space-3)",
+            padding: "var(--space-2) var(--space-3)",
+            background: "var(--warning-soft)",
+            borderLeft: "3px solid var(--warning)",
+            borderRadius: "0 var(--radius-sm) var(--radius-sm) 0",
+            fontSize: "0.78rem",
+            color: "var(--warning)",
+          }}
+        >
           {result.warnings.join("; ")}
         </div>
       )}
 
-      <button
-        className="btn btn-sm"
-        onClick={() => setExpanded(!expanded)}
-        style={{ marginTop: 8 }}
-      >
-        {expanded ? "收起持仓明细" : `查看持仓明细 (${result.holdings_detail?.length || 0} 只)`}
-      </button>
+      {/* Expand toggle */}
+      <div style={{ marginTop: "var(--space-3)" }}>
+        <button
+          className="btn btn-secondary btn-sm"
+          onClick={() => setExpanded(!expanded)}
+        >
+          {expanded
+            ? "收起持仓明细"
+            : `查看持仓明细 (${result.holdings_detail?.length || 0} 只)`}
+        </button>
+      </div>
 
+      {/* Holdings table */}
       {expanded && (
-        <div style={{ marginTop: 12 }}>
-          <HoldingsTable holdings={result.holdings_detail} />
+        <div className="expand-enter" style={{ marginTop: "var(--space-3)" }}>
+          {holdingRows.length === 0 ? (
+            <p className="text-sm text-tertiary">无持仓明细数据</p>
+          ) : (
+            <DataTable
+              columns={columns}
+              data={holdingRows}
+              rowKey={(row) => `${row.stock_code}-${row.rank}`}
+              initialSort={{ key: "estimated_weight_pct", order: "desc" }}
+            />
+          )}
         </div>
       )}
     </div>
@@ -179,53 +297,80 @@ export default function SimulatedHoldingPage() {
       .finally(() => setLoading(false));
   }, [fundCode]);
 
+  const crumbs: BreadcrumbItem[] = [
+    { label: "基金筛选", to: "/funds" },
+    { label: fundCode, to: `/funds/${fundCode}` },
+    { label: "模拟持仓" },
+  ];
+
   return (
     <div>
-      <h2 style={{ display: "flex", alignItems: "center", gap: 12 }}>
-        <span>模拟持仓 — {fundCode}</span>
-        <ConfidenceBadge status="estimated" />
-      </h2>
+      <Breadcrumb items={crumbs} />
 
-      <div
-        className="warning-banner"
-        style={{ marginBottom: 16 }}
-      >
-        模拟持仓为模型估计结果，不代表基金真实持仓。仅供研究参考。
+      {/* Title area */}
+      <div className="fade-up fade-up-1 mb-4">
+        <div className="flex items-center justify-between">
+          <h1>模拟持仓</h1>
+          <StatusBadge status="estimated" />
+        </div>
+        <div className="text-sm text-tertiary mt-2">
+          基金代码 <span className="mono">{fundCode}</span>
+        </div>
       </div>
 
+      {/* Warning banner */}
+      <div
+        className="fade-up fade-up-2 mb-4"
+        style={{
+          padding: "var(--space-3) var(--space-4)",
+          background: "var(--warning-soft)",
+          borderLeft: "3px solid var(--warning)",
+          borderRadius: "0 var(--radius-sm) var(--radius-sm) 0",
+          fontSize: "0.82rem",
+          color: "var(--warning)",
+        }}
+      >
+        ⚠ 模拟持仓为模型估计结果，不代表基金真实持仓。仅供研究参考。
+      </div>
+
+      {/* Error banner */}
       {error && (
         <div
-          className="warning-banner"
-          style={{ marginBottom: 16, background: "var(--color-danger-light)", color: "var(--color-danger)", borderColor: "#fecaca" }}
+          className="fade-up fade-up-2 mb-4"
+          style={{
+            padding: "var(--space-3) var(--space-4)",
+            background: "var(--negative-soft)",
+            borderLeft: "3px solid var(--negative)",
+            borderRadius: "0 var(--radius-sm) var(--radius-sm) 0",
+            fontSize: "0.82rem",
+            color: "var(--negative)",
+          }}
         >
           {error}
         </div>
       )}
 
+      {/* Loading / empty / results */}
       {loading ? (
-        <p style={{ color: "var(--color-text-secondary)" }}>加载中...</p>
-      ) : results.length === 0 ? (
-        <div className="card empty-state">
-          <p style={{ fontSize: 14, marginBottom: 8 }}>
-            该基金暂无模拟持仓结果
-          </p>
-          <p style={{ fontSize: 12 }}>
-            请先通过实验管理页面运行 simulated_holding 实验
-          </p>
+        <div className="fade-up fade-up-3">
+          <LoadingState rows={6} cols={5} />
         </div>
-      ) : (
+      ) : results.length === 0 && !error ? (
+        <div className="fade-up fade-up-3">
+          <EmptyState
+            icon="∅"
+            title="该基金暂无模拟持仓结果"
+            desc="请先通过实验管理页面运行 simulated_holding 实验"
+          />
+        </div>
+      ) : error ? null : (
         <>
-          <p
-            style={{
-              color: "var(--color-text-secondary)",
-              fontSize: 13,
-              marginBottom: 12,
-            }}
-          >
-            共 {results.length} 条模拟持仓记录（按计算日期倒序）
-          </p>
-          {results.map((r) => (
-            <ResultCard key={r.id} result={r} />
+          <SectionHeader
+            title="模拟持仓记录"
+            subtitle={`共 ${results.length} 条（按计算日期倒序）`}
+          />
+          {results.map((r, i) => (
+            <ResultCard key={r.id} result={r} index={i} />
           ))}
         </>
       )}

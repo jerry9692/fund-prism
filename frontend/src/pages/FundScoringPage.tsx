@@ -1,8 +1,21 @@
+// 基金综合评分 — 指标卡 + 维度子评分柱状图 + 评分排名表
+// 支持从基金详情跳转自动评分，或手动输入基金代码运行评分
+
 import { useEffect, useState } from "react";
 import { useParams } from "react-router-dom";
 import { api, type FundScoreItem } from "../api/client";
-import ChartWrapper from "../components/ChartWrapper";
-import MetricCard from "../components/MetricCard";
+import {
+  SectionHeader,
+  StatusBadge,
+  Breadcrumb,
+  MetricCard,
+  LoadingState,
+  EmptyState,
+  type BreadcrumbItem,
+} from "../components/display";
+import { DataTable, type Column } from "../components/data/DataTable";
+import { ChartWrapper } from "../components/data/ChartWrapper";
+import type { EChartsOption } from "echarts";
 
 const DIM_LABELS: Record<string, string> = {
   return: "收益能力",
@@ -16,6 +29,8 @@ const DIM_LABELS: Record<string, string> = {
 };
 
 const PRESET_OPTIONS = ["均衡型", "稳健型", "进取型"];
+
+type RankedScore = FundScoreItem & { rank: number };
 
 export default function FundScoringPage() {
   const { code } = useParams<{ code: string }>();
@@ -73,136 +88,277 @@ export default function FundScoringPage() {
 
   const fundScore = scores.find((s) => s.fund_code === code) || scores[0];
 
+  const crumbs: BreadcrumbItem[] = code
+    ? [{ label: "基金筛选" }, { label: code }, { label: "综合评分" }]
+    : [{ label: "基金筛选" }, { label: "综合评分" }];
+
+  // 按总分降序预排序，赋予排名（排名为基金固有属性，不随表格排序变化）
+  const rankedScores: RankedScore[] = [...scores]
+    .sort((a, b) => b.total_score - a.total_score)
+    .map((s, i) => ({ ...s, rank: i + 1 }));
+
+  // 维度子评分柱状图（按分数降序排列维度）
+  const sortedEntries = fundScore
+    ? Object.entries(fundScore.sub_scores).sort(([, a], [, b]) => b - a)
+    : [];
+  const subScoreOption: EChartsOption = {
+    title: { text: "维度子评分" },
+    tooltip: { trigger: "axis" },
+    xAxis: {
+      type: "category",
+      data: sortedEntries.map(([dim]) => DIM_LABELS[dim] || dim),
+    },
+    yAxis: { type: "value", name: "评分" },
+    series: [
+      {
+        type: "bar",
+        data: sortedEntries.map(([, score]) => score),
+        itemStyle: { color: "#B45309" },
+        barWidth: "50%",
+      },
+    ],
+  };
+
+  const rankingColumns: Column<RankedScore>[] = [
+    {
+      key: "rank",
+      header: "排名",
+      numeric: true,
+      sortable: true,
+      sortValue: (r) => r.rank,
+      render: (r) => <span className="mono">{r.rank}</span>,
+      width: "70px",
+    },
+    {
+      key: "fund_code",
+      header: "基金代码",
+      sortable: true,
+      sortValue: (r) => r.fund_code,
+      render: (r) => (
+        <span className={`mono ${r.fund_code === code ? "font-medium" : ""}`}>
+          {r.fund_code}
+          {r.fund_code === code && (
+            <span className="text-tertiary text-xs ml-1">· 当前</span>
+          )}
+        </span>
+      ),
+    },
+    {
+      key: "total_score",
+      header: "总分",
+      numeric: true,
+      sortable: true,
+      sortValue: (r) => r.total_score,
+      render: (r) => (
+        <span className="mono font-medium">{r.total_score.toFixed(1)}</span>
+      ),
+    },
+    {
+      key: "percentile_rank",
+      header: "分位数",
+      numeric: true,
+      sortable: true,
+      sortValue: (r) => r.percentile_rank,
+      render: (r) => (
+        <span className="mono">前 {(r.percentile_rank * 100).toFixed(0)}%</span>
+      ),
+    },
+    {
+      key: "contains_estimated",
+      header: "含估计",
+      sortable: true,
+      sortValue: (r) => (r.contains_estimated ? 1 : 0),
+      render: (r) => (
+        <StatusBadge status={r.contains_estimated ? "estimated" : "computed"} />
+      ),
+    },
+    {
+      key: "deduction_reasons",
+      header: "扣分项",
+      render: (r) =>
+        r.deduction_reasons.length > 0 ? (
+          <span className="text-sm text-secondary">
+            {r.deduction_reasons.join("; ")}
+          </span>
+        ) : (
+          <span className="text-tertiary">—</span>
+        ),
+    },
+  ];
+
   return (
-    <div className="experiments-page">
-      <div className="page-header">
-        <div>
+    <div>
+      <Breadcrumb items={crumbs} />
+
+      {/* 标题区 */}
+      <div className="fade-up fade-up-1 mb-4">
+        <div className="flex items-center justify-between">
           <h1>综合评分</h1>
           {scoreVersion && (
-            <div className="summary-row">
-              <span className="mono-cell">版本: {scoreVersion}</span>
-              <span>{scores.length} 只基金</span>
-            </div>
+            <span className="text-sm text-tertiary mono">
+              版本 {scoreVersion} · {scores.length} 只基金
+            </span>
           )}
+        </div>
+        <div className="text-sm text-tertiary mt-2">
+          基于多维度的基金综合评分与同类排名
         </div>
       </div>
 
+      {/* 错误提示 */}
       {errorMessage && (
-        <div className="card error-banner">
-          <span>{errorMessage}</span>
-          <button className="button-ghost" onClick={() => setErrorMessage(null)}>关闭</button>
+        <div
+          className="fade-up fade-up-2 mb-4"
+          style={{
+            padding: "var(--space-3) var(--space-4)",
+            background: "var(--negative-soft)",
+            borderLeft: "3px solid var(--negative)",
+            borderRadius: "0 var(--radius-sm) var(--radius-sm) 0",
+          }}
+        >
+          <div className="flex items-center justify-between">
+            <span className="text-sm" style={{ color: "var(--negative)" }}>
+              {errorMessage}
+            </span>
+            <button
+              className="btn btn-ghost btn-sm"
+              onClick={() => setErrorMessage(null)}
+            >
+              关闭
+            </button>
+          </div>
         </div>
       )}
 
-      {/* Run form — always show when not on a specific fund, or no results yet */}
+      {/* 运行评分表单 — 未指定 code 或暂无结果时显示 */}
       {(!code || (!loading && !fundScore)) && (
-        <div className="card experiment-form" style={{ marginBottom: 16 }}>
-          <div className="form-row" style={{ flexWrap: "wrap", gap: 12 }}>
-            <label><span>基金代码</span>
-              <input value={fundCodes}
-                     onChange={(e) => setFundCodes(e.target.value)}
-                     placeholder="000001,163406"
-                     style={{ width: 180 }} />
+        <div
+          className="fade-up fade-up-2 mb-4"
+          style={{
+            background: "var(--surface-raised)",
+            borderRadius: "var(--radius-md)",
+            padding: "var(--space-4)",
+            border: "1px solid var(--border-hairline)",
+          }}
+        >
+          <SectionHeader title="运行评分" subtitle="输入基金代码并选择评分预设" />
+          <div
+            className="grid mt-3"
+            style={{
+              gridTemplateColumns: "repeat(auto-fill, minmax(180px, 1fr))",
+              gap: "var(--space-3)",
+            }}
+          >
+            <label className="form-label">
+              <span>基金代码</span>
+              <input
+                className="form-input"
+                value={fundCodes}
+                onChange={(e) => setFundCodes(e.target.value)}
+                placeholder="000001,163406"
+              />
             </label>
-            <label><span>评分预设</span>
-              <select value={preset} onChange={(e) => setPreset(e.target.value)}>
+            <label className="form-label">
+              <span>评分预设</span>
+              <select
+                className="form-input"
+                value={preset}
+                onChange={(e) => setPreset(e.target.value)}
+              >
                 {PRESET_OPTIONS.map((p) => (
-                  <option key={p} value={p}>{p}</option>
+                  <option key={p} value={p}>
+                    {p}
+                  </option>
                 ))}
               </select>
             </label>
-            <button className="button-primary" onClick={() => runScoring()} disabled={running}>
+          </div>
+          <div className="mt-3">
+            <button
+              className="btn btn-primary"
+              onClick={() => runScoring()}
+              disabled={running}
+            >
               {running ? "评分中..." : "运行评分"}
             </button>
           </div>
         </div>
       )}
 
-      {loading ? <p>加载中...</p> : !fundScore ? (
-        <div className="card empty-state">
-          {code ? `基金 ${code} 暂无评分数据` : "输入基金代码并点击运行评分"}
+      {/* 主体内容 */}
+      {loading ? (
+        <div className="fade-up fade-up-3">
+          <LoadingState rows={5} cols={4} />
+        </div>
+      ) : !fundScore ? (
+        <div className="fade-up fade-up-3">
+          <EmptyState
+            title={code ? `基金 ${code} 暂无评分数据` : "暂无评分结果"}
+            desc="输入基金代码并点击「运行评分」生成评分"
+          />
         </div>
       ) : (
         <div>
-          {/* Fund score summary cards */}
-          <div className="metric-grid" style={{ marginBottom: 16 }}>
+          {/* 汇总指标卡 */}
+          <div className="grid grid-4 fade-up fade-up-3 mb-4">
             <MetricCard
               label="综合评分"
-              value={fundScore.total_score.toFixed(1)}
-              unit="/ 100"
-              conclusionStatus={fundScore.contains_estimated ? "observation" : "computed"}
-              hint={fundScore.contains_estimated ? "含估计成分" : "全量计算"}
+              value={`${fundScore.total_score.toFixed(1)} / 100`}
+              sub={fundScore.contains_estimated ? "含估计成分" : "全量计算"}
             />
             <MetricCard
               label="同类排名"
               value={`前 ${(fundScore.percentile_rank * 100).toFixed(0)}%`}
-              conclusionStatus="computed"
             />
             <MetricCard
               label="评分版本"
               value={scoreVersion || "—"}
-              conclusionStatus="fact"
             />
             <MetricCard
               label="扣分项"
-              value={fundScore.deduction_reasons.length}
-              unit="项"
-              conclusionStatus={fundScore.deduction_reasons.length > 0 ? "needs_review" : "computed"}
-              hint={fundScore.deduction_reasons.length > 0 ? fundScore.deduction_reasons.join("; ") : "无扣分"}
+              value={`${fundScore.deduction_reasons.length} 项`}
+              sub={
+                fundScore.deduction_reasons.length > 0
+                  ? fundScore.deduction_reasons.join("; ")
+                  : "无扣分"
+              }
+              negative={fundScore.deduction_reasons.length > 0}
             />
           </div>
 
-          {/* Sub-scores bar chart via ChartWrapper */}
-          <ChartWrapper
-            type="bar"
-            title="维度子评分"
-            labels={Object.entries(fundScore.sub_scores)
-              .sort(([, a], [, b]) => b - a)
-              .map(([dim]) => DIM_LABELS[dim] || dim)}
-            series={[{
-              label: "子评分",
-              values: Object.entries(fundScore.sub_scores)
-                .sort(([, a], [, b]) => b - a)
-                .map(([, score]) => score),
-            }]}
-            yLabel="评分"
-            formatY={(v) => v.toFixed(0)}
-            height={280}
-          />
+          {/* 维度子评分柱状图 */}
+          <div
+            className="fade-up fade-up-4 mb-4"
+            style={{
+              background: "var(--surface-raised)",
+              borderRadius: "var(--radius-md)",
+              padding: "var(--space-4)",
+              border: "1px solid var(--border-hairline)",
+            }}
+          >
+            <ChartWrapper option={subScoreOption} height={280} />
+          </div>
 
-          {/* All scored funds ranking table */}
+          {/* 评分排名表 */}
           {scores.length > 1 && (
-            <div className="card table-card">
-              <h3 style={{ marginTop: 0 }}>评分排名</h3>
-              <table className="data-table">
-                <thead>
-                  <tr>
-                    <th>排名</th><th>基金代码</th><th>总分</th>
-                    <th>分位数</th><th>含估计</th><th>扣分项</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {scores.map((s, i) => (
-                    <tr key={s.fund_code}
-                        className={s.fund_code === code ? "selected-row" : ""}>
-                      <td>{i + 1}</td>
-                      <td className="mono-cell">{s.fund_code}</td>
-                      <td className="mono-cell">{s.total_score.toFixed(1)}</td>
-                      <td>前 {(s.percentile_rank * 100).toFixed(0)}%</td>
-                      <td>
-                        {s.contains_estimated
-                          ? <span className="badge badge-observation">是</span>
-                          : <span className="badge badge-computed">否</span>}
-                      </td>
-                      <td style={{ fontSize: 12, maxWidth: 250 }}>
-                        {s.deduction_reasons.length > 0
-                          ? s.deduction_reasons.join("; ")
-                          : "—"}
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
+            <div className="fade-up fade-up-5">
+              <SectionHeader title="评分排名" subtitle="按总分降序排列" />
+              <div
+                className="mt-3"
+                style={{
+                  background: "var(--surface-raised)",
+                  borderRadius: "var(--radius-md)",
+                  border: "1px solid var(--border-hairline)",
+                  overflow: "hidden",
+                }}
+              >
+                <DataTable
+                  columns={rankingColumns}
+                  data={rankedScores}
+                  rowKey={(r) => r.fund_code}
+                  initialSort={{ key: "rank", order: "asc" }}
+                />
+              </div>
             </div>
           )}
         </div>
