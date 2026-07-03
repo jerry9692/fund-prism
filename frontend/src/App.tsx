@@ -15,6 +15,9 @@ import FundScoringPage from "./pages/FundScoringPage";
 import FundReviewPage from "./pages/FundReviewPage";
 import SimulatedHoldingPage from "./pages/SimulatedHoldingPage";
 import DynamicAttributionPage from "./pages/DynamicAttributionPage";
+import EvidencePage from "./pages/EvidencePage";
+import ApiDebugPage from "./pages/ApiDebugPage";
+import FundPoolPage from "./pages/FundPoolPage";
 
 export default function App() {
   return (
@@ -31,7 +34,10 @@ export default function App() {
         <Route path="/funds/:code/simulated" element={<SimulatedHoldingPage />} />
         <Route path="/funds/:code/attribution" element={<DynamicAttributionPage />} />
         <Route path="/funds/:code/review" element={<FundReviewPage />} />
+        <Route path="/fund-pool" element={<FundPoolPage />} />
         <Route path="/data-quality" element={<DataQualityPage />} />
+        <Route path="/evidence" element={<EvidencePage />} />
+        <Route path="/api-debug" element={<ApiDebugPage />} />
         <Route path="/experiments" element={<ExperimentsPage />} />
         <Route path="/experiments/p2b-report" element={<P2BValidationPage />} />
         <Route path="/scoring/backtest" element={<ScoringBacktestPage />} />

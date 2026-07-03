@@ -26,6 +26,7 @@ const NAV_GROUPS: NavGroup[] = [
     label: "基金研究",
     items: [
       { to: "/funds", label: "基金筛选", icon: "◇" },
+      { to: "/fund-pool", label: "基金池", icon: "◫" },
     ],
   },
   {
@@ -40,6 +41,8 @@ const NAV_GROUPS: NavGroup[] = [
     label: "系统",
     items: [
       { to: "/data-quality", label: "数据质量", icon: "◯" },
+      { to: "/evidence", label: "证据链浏览", icon: "⊕" },
+      { to: "/api-debug", label: "API 调试", icon: "⚙" },
     ],
   },
 ];
