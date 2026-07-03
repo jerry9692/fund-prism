@@ -1,9 +1,35 @@
+// 算法实验管理 — DataTable + Drawer 详情 + 状态映射
+// 实验列表 / 创建实验 / 运行 / 重跑 / 删除 / 结果详情
+
 import { useEffect, useState } from "react";
 import { api, type Experiment, type ExperimentDetail } from "../api/client";
+import {
+  SectionHeader,
+  StatusBadge,
+  Breadcrumb,
+  MetricCard,
+  LoadingState,
+  EmptyState,
+  Drawer,
+  type BreadcrumbItem,
+} from "../components/display";
+import { DataTable, type Column } from "../components/data/DataTable";
 
 const STATUS_LABELS: Record<string, string> = {
-  pending: "就绪", running: "运行中", completed: "已完成",
-  completed_with_failures: "部分完成", failed: "失败",
+  pending: "就绪",
+  running: "运行中",
+  completed: "已完成",
+  completed_with_failures: "部分完成",
+  failed: "失败",
+};
+
+// 实验状态 → 结论状态映射（用于 StatusBadge 着色）
+const STATUS_TO_CONCLUSION: Record<string, string> = {
+  pending: "observation",
+  running: "observation",
+  completed: "computed",
+  completed_with_failures: "estimated",
+  failed: "needs_review",
 };
 
 const ALGO_LABELS: Record<string, string> = {
@@ -12,67 +38,11 @@ const ALGO_LABELS: Record<string, string> = {
   scoring: "综合评分",
 };
 
-function renderMetricValue(value: unknown) {
+function renderMetricValue(value: unknown): string {
   if (typeof value === "number") return Number(value).toFixed(4);
   if (typeof value === "boolean") return value ? "是" : "否";
   if (value && typeof value === "object") return JSON.stringify(value);
   return String(value).slice(0, 80);
-}
-
-function renderMetricMap(metrics: Record<string, unknown>, key: string, suffix = "") {
-  const value = metrics[key];
-  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
-  return Object.entries(value as Record<string, unknown>).map(([dateKey, item]) => (
-    <div className="quality-map-row" key={`${key}-${dateKey}`}>
-      <span>{dateKey}</span>
-      <strong>{renderMetricValue(item)}{suffix}</strong>
-    </div>
-  ));
-}
-
-function renderDynamicQuality(metrics: Record<string, unknown>) {
-  const boolItems: Array<[string, boolean]> = [
-    ["真实基准收益", metrics.uses_real_benchmark_returns === true],
-    ["真实行业收益", metrics.uses_real_sector_returns === true],
-    ["真实基准权重", metrics.uses_real_benchmark_weights === true],
-    ["无代理权重", metrics.uses_proxy_benchmark_weights === false],
-  ];
-  return (
-    <div className="quality-panel">
-      <div className="quality-badges">
-        {boolItems.map(([label, value]) => (
-          <span
-            className={`badge badge-${value ? "computed" : "needs_review"}`}
-            key={String(label)}
-          >
-            {label}
-          </span>
-        ))}
-      </div>
-      <div className="quality-grid">
-        <div>
-          <span className="quality-title">快照日期</span>
-          {renderMetricMap(metrics, "benchmark_weight_snapshot_by_report") ?? "—"}
-        </div>
-        <div>
-          <span className="quality-title">快照年龄</span>
-          {renderMetricMap(metrics, "benchmark_weight_snapshot_age_days_by_report", "d") ?? "—"}
-        </div>
-        <div>
-          <span className="quality-title">覆盖率</span>
-          {renderMetricMap(metrics, "benchmark_weight_coverage_by_report", "%") ?? "—"}
-        </div>
-        <div>
-          <span className="quality-title">未映射</span>
-          {renderMetricMap(metrics, "benchmark_weight_unmapped_pct_by_report", "%") ?? "—"}
-        </div>
-        <div>
-          <span className="quality-title">基准独有行业</span>
-          {renderMetricMap(metrics, "benchmark_only_sector_count_by_report") ?? "—"}
-        </div>
-      </div>
-    </div>
-  );
 }
 
 export default function ExperimentsPage() {
@@ -112,7 +82,9 @@ export default function ExperimentsPage() {
     }
   }
 
-  useEffect(() => { load(); }, []);
+  useEffect(() => {
+    load();
+  }, []);
 
   async function loadDetail(id: string) {
     setSelectedId(id);
@@ -140,9 +112,13 @@ export default function ExperimentsPage() {
         experiment_name: experimentName,
         algorithm_name: algo,
         algorithm_version: "0.1.0",
-        parameters: algo === "dynamic_attribution"
-          ? { benchmark_symbol: benchmarkSymbol, min_return_observations: Number(minReturnObs) }
-          : {},
+        parameters:
+          algo === "dynamic_attribution"
+            ? {
+                benchmark_symbol: benchmarkSymbol,
+                min_return_observations: Number(minReturnObs),
+              }
+            : {},
         sample_fund_codes: fundCodes.split(",").map((s) => s.trim()).filter(Boolean),
       });
       if (body.data === null) {
@@ -159,7 +135,9 @@ export default function ExperimentsPage() {
   }
 
   async function run(id: string) {
-    setExperiments((prev) => prev.map((e) => (e.id === id ? { ...e, status: "running" } : e)));
+    setExperiments((prev) =>
+      prev.map((e) => (e.id === id ? { ...e, status: "running" } : e)),
+    );
     try {
       const body = await api.runExperiment(id);
       if (body.data === null) {
@@ -208,163 +186,468 @@ export default function ExperimentsPage() {
       setErrorMessage(`删除异常: ${e instanceof Error ? e.message : String(e)}`);
       return;
     }
-    if (selectedId === id) { setSelectedId(null); setDetail(null); }
+    if (selectedId === id) {
+      setSelectedId(null);
+      setDetail(null);
+    }
     load();
   }
 
-  return (
-    <div className="experiments-page">
-      <div className="page-header">
-        <div>
-          <h1>算法实验管理</h1>
-          <div className="summary-row">
-            <span>{experiments.length} 个实验</span>
-            <span>{completedCount} 已完成</span>
-            <span className={failedCount > 0 ? "text-danger" : undefined}>{failedCount} 失败</span>
-          </div>
+  const crumbs: BreadcrumbItem[] = [{ label: "算法实验" }, { label: "实验管理" }];
+
+  const columns: Column<Experiment>[] = [
+    {
+      key: "id",
+      header: "ID",
+      sortable: true,
+      sortValue: (r) => r.id,
+      render: (r) => <span className="mono">{r.id}</span>,
+      width: "80px",
+    },
+    {
+      key: "name",
+      header: "名称",
+      sortable: true,
+      sortValue: (r) => r.name,
+      render: (r) => <span className="font-medium">{r.name}</span>,
+    },
+    {
+      key: "algorithm",
+      header: "算法",
+      sortable: true,
+      sortValue: (r) => r.algorithm,
+      render: (r) => (
+        <span>
+          {ALGO_LABELS[r.algorithm] ?? r.algorithm}
+          <span className="text-tertiary text-xs ml-1">v{r.version}</span>
+        </span>
+      ),
+    },
+    {
+      key: "status",
+      header: "状态",
+      sortable: true,
+      sortValue: (r) => r.status,
+      render: (r) => (
+        <StatusBadge status={STATUS_TO_CONCLUSION[r.status] ?? "observation"} />
+      ),
+    },
+    {
+      key: "fund_count",
+      header: "基金数",
+      numeric: true,
+      sortable: true,
+      sortValue: (r) => r.fund_count,
+    },
+    {
+      key: "success_count",
+      header: "成功",
+      numeric: true,
+      sortable: true,
+      sortValue: (r) => r.success_count,
+    },
+    {
+      key: "failure_count",
+      header: "失败",
+      numeric: true,
+      sortable: true,
+      sortValue: (r) => r.failure_count,
+      render: (r) => (
+        <span className={r.failure_count > 0 ? "text-negative font-medium" : ""}>
+          {r.failure_count}
+        </span>
+      ),
+    },
+    {
+      key: "created_at",
+      header: "创建时间",
+      sortable: true,
+      sortValue: (r) => r.created_at ?? "",
+      render: (r) => (
+        <span className="mono text-sm">{r.created_at?.slice(0, 10) ?? "—"}</span>
+      ),
+    },
+    {
+      key: "actions",
+      header: "操作",
+      width: "200px",
+      render: (r) => (
+        <div className="flex items-center gap-2" onClick={(e) => e.stopPropagation()}>
+          {r.status === "pending" && (
+            <button className="btn btn-primary btn-sm" onClick={() => run(r.id)}>
+              运行
+            </button>
+          )}
+          <button
+            className="btn btn-ghost btn-sm"
+            onClick={() => rerun(r.id)}
+            disabled={r.status === "running"}
+          >
+            重跑
+          </button>
+          <button
+            className="btn btn-ghost btn-sm"
+            onClick={() => remove(r.id)}
+            style={
+              confirmDeleteId === r.id
+                ? { color: "var(--negative)", fontWeight: 600 }
+                : undefined
+            }
+          >
+            {confirmDeleteId === r.id ? "确认删除" : "删除"}
+          </button>
+          {confirmDeleteId === r.id && (
+            <button
+              className="btn btn-ghost btn-sm"
+              onClick={() => setConfirmDeleteId(null)}
+            >
+              取消
+            </button>
+          )}
         </div>
-        <button className="button-primary" onClick={() => setShowCreate(!showCreate)}>
-          {showCreate ? "收起" : "+ 新建实验"}
-        </button>
+      ),
+    },
+  ];
+
+  return (
+    <div>
+      <Breadcrumb items={crumbs} />
+
+      {/* 标题区 */}
+      <div className="fade-up fade-up-1 mb-4">
+        <div className="flex items-center justify-between">
+          <h1>算法实验管理</h1>
+          <button
+            className="btn btn-primary btn-sm"
+            onClick={() => setShowCreate(!showCreate)}
+          >
+            {showCreate ? "收起" : "+ 新建实验"}
+          </button>
+        </div>
       </div>
 
+      {/* 汇总指标卡 */}
+      <div className="grid grid-4 fade-up fade-up-2 mb-6">
+        <MetricCard label="实验总数" value={experiments.length} />
+        <MetricCard
+          label="已完成"
+          value={completedCount}
+          positive={completedCount > 0}
+        />
+        <MetricCard
+          label="失败"
+          value={failedCount}
+          negative={failedCount > 0}
+        />
+        <MetricCard
+          label="运行中 / 就绪"
+          value={experiments.length - completedCount - failedCount}
+        />
+      </div>
+
+      {/* 错误提示 */}
       {errorMessage && (
-        <div className="card error-banner">
-          <span>{errorMessage}</span>
-          <button className="button-ghost" onClick={() => setErrorMessage(null)}>关闭</button>
+        <div
+          className="fade-up fade-up-2 mb-4"
+          style={{
+            padding: "var(--space-3) var(--space-4)",
+            background: "var(--negative-soft)",
+            borderLeft: "3px solid var(--negative)",
+            borderRadius: "0 var(--radius-sm) var(--radius-sm) 0",
+          }}
+        >
+          <div className="flex items-center justify-between">
+            <span className="text-sm" style={{ color: "var(--negative)" }}>
+              {errorMessage}
+            </span>
+            <button
+              className="btn btn-ghost btn-sm"
+              onClick={() => setErrorMessage(null)}
+            >
+              关闭
+            </button>
+          </div>
         </div>
       )}
 
+      {/* 创建实验表单 */}
       {showCreate && (
-        <div className="card experiment-form">
-          <div className="form-row">
-            <label><span>名称</span><input value={name} onChange={(e) => setName(e.target.value)} placeholder="如 sh-backtest-v1" /></label>
-            <label><span>算法</span>
-              <select value={algo} onChange={(e) => setAlgo(e.target.value)}>
+        <div
+          className="fade-up fade-up-2 mb-4"
+          style={{
+            background: "var(--surface-raised)",
+            borderRadius: "var(--radius-md)",
+            padding: "var(--space-4)",
+            border: "1px solid var(--border-hairline)",
+          }}
+        >
+          <SectionHeader title="新建实验" subtitle="配置算法和样本基金" />
+          <div
+            className="grid mt-3"
+            style={{
+              gridTemplateColumns: "repeat(auto-fill, minmax(200px, 1fr))",
+              gap: "var(--space-3)",
+            }}
+          >
+            <label className="form-label">
+              <span>名称</span>
+              <input
+                className="form-input"
+                value={name}
+                onChange={(e) => setName(e.target.value)}
+                placeholder="如 sh-backtest-v1"
+              />
+            </label>
+            <label className="form-label">
+              <span>算法</span>
+              <select
+                className="form-input"
+                value={algo}
+                onChange={(e) => setAlgo(e.target.value)}
+              >
                 <option value="simulated_holding">模拟持仓</option>
                 <option value="dynamic_attribution">动态归因</option>
                 <option value="scoring">综合评分</option>
               </select>
             </label>
-            <label><span>基金代码</span><input value={fundCodes} onChange={(e) => setFundCodes(e.target.value)} placeholder="000001,163406" style={{ width: 140 }} /></label>
+            <label className="form-label">
+              <span>基金代码</span>
+              <input
+                className="form-input"
+                value={fundCodes}
+                onChange={(e) => setFundCodes(e.target.value)}
+                placeholder="000001,163406"
+              />
+            </label>
             {algo === "dynamic_attribution" && (
               <>
-                <label><span>基准指数</span><input value={benchmarkSymbol} onChange={(e) => setBenchmarkSymbol(e.target.value)} placeholder="sh000300" style={{ width: 110 }} /></label>
-                <label><span>最小样本</span><input type="number" value={minReturnObs} onChange={(e) => setMinReturnObs(Number(e.target.value))} placeholder="3" style={{ width: 60 }} min={1} /></label>
+                <label className="form-label">
+                  <span>基准指数</span>
+                  <input
+                    className="form-input"
+                    value={benchmarkSymbol}
+                    onChange={(e) => setBenchmarkSymbol(e.target.value)}
+                    placeholder="sh000300"
+                  />
+                </label>
+                <label className="form-label">
+                  <span>最小样本</span>
+                  <input
+                    className="form-input"
+                    type="number"
+                    value={minReturnObs}
+                    onChange={(e) => setMinReturnObs(Number(e.target.value))}
+                    placeholder="3"
+                    min={1}
+                  />
+                </label>
               </>
             )}
-            <button className="button-primary" onClick={create}>创建</button>
+          </div>
+          <div className="mt-3">
+            <button className="btn btn-primary" onClick={create}>
+              创建
+            </button>
           </div>
         </div>
       )}
 
-      {loading ? <p>加载中...</p> : experiments.length === 0 ? (
-        <div className="card empty-state">暂无实验</div>
+      {/* 实验列表 */}
+      <div className="fade-up fade-up-3">
+        {loading ? (
+          <LoadingState rows={6} cols={6} />
+        ) : experiments.length === 0 ? (
+          <EmptyState
+            title="暂无实验"
+            desc="点击「新建实验」创建第一个算法实验"
+          />
+        ) : (
+          <div
+            style={{
+              background: "var(--surface-raised)",
+              borderRadius: "var(--radius-md)",
+              border: "1px solid var(--border-hairline)",
+              overflow: "hidden",
+            }}
+          >
+            <DataTable
+              columns={columns}
+              data={experiments}
+              rowKey={(r) => r.id}
+              onRowClick={(r) => loadDetail(r.id)}
+              initialSort={{ key: "created_at", order: "desc" }}
+            />
+          </div>
+        )}
+      </div>
+
+      {/* 详情 Drawer */}
+      <Drawer
+        open={selectedId !== null}
+        onClose={() => {
+          setSelectedId(null);
+          setDetail(null);
+        }}
+        title="实验结果"
+      >
+        {detailLoading ? (
+          <LoadingState rows={5} cols={3} />
+        ) : detail ? (
+          <ExperimentDetailContent detail={detail} />
+        ) : (
+          <EmptyState title="加载失败" />
+        )}
+      </Drawer>
+    </div>
+  );
+}
+
+// ---- 实验详情内容 ----
+
+function ExperimentDetailContent({ detail }: { detail: ExperimentDetail }) {
+  const isDynamicAttribution = detail.algorithm_name === "dynamic_attribution";
+  const results = detail.results ?? [];
+
+  return (
+    <div>
+      {/* 概要 */}
+      <div className="grid grid-3 mb-4">
+        <MetricCard
+          label="算法"
+          value={ALGO_LABELS[detail.algorithm_name] ?? detail.algorithm_name}
+        />
+        <MetricCard
+          label="状态"
+          value={STATUS_LABELS[detail.status] ?? detail.status}
+        />
+        <MetricCard label="结果数" value={results.length} />
+      </div>
+
+      {results.length > 0 ? (
+        <div className="flex flex-col gap-3">
+          {results.map((r, i) => (
+            <ExperimentResultItem
+              key={i}
+              fundCode={r.fund_code}
+              isSuccess={r.is_success}
+              metrics={r.metrics ?? {}}
+              errorMessage={r.error_message}
+              warnings={r.warnings}
+              isDynamicAttribution={isDynamicAttribution}
+            />
+          ))}
+        </div>
       ) : (
-        <div className="card table-card">
-          <table className="data-table experiments-table">
-            <thead>
-              <tr>
-                <th>ID</th><th>名称</th><th>算法</th><th>状态</th>
-                <th>基金数</th><th>成功</th><th>失败</th>
-                <th>创建时间</th><th>操作</th>
-              </tr>
-            </thead>
-            <tbody>
-              {experiments.map((e) => (
-                <tr key={e.id} className={selectedId === e.id ? "selected-row" : ""}
-                    onClick={() => loadDetail(e.id)} style={{ cursor: "pointer" }}>
-                  <td className="mono-cell">{e.id}</td>
-                  <td className="name-cell">{e.name}</td>
-                  <td>{ALGO_LABELS[e.algorithm] ?? e.algorithm} v{e.version}</td>
-                  <td>
-                    <span className={`badge badge-${e.status === "completed" ? "computed" : e.status === "failed" ? "needs_review" : "observation"}`}>
-                      {STATUS_LABELS[e.status] ?? e.status}
-                    </span>
-                  </td>
-                  <td>{e.fund_count}</td>
-                  <td>{e.success_count}</td>
-                  <td className={e.failure_count > 0 ? "text-danger" : undefined}>{e.failure_count}</td>
-                  <td className="date-cell">{e.created_at?.slice(0, 10)}</td>
-                  <td onClick={(ev) => ev.stopPropagation()}>
-                    <div className="action-row">
-                      {e.status === "pending" && (
-                        <button className="button-primary" onClick={() => run(e.id)}>运行</button>
-                      )}
-                      <button className="button-ghost" onClick={() => rerun(e.id)} disabled={e.status === "running"}>重跑</button>
-                      <button className="button-danger" onClick={() => remove(e.id)}>
-                        {confirmDeleteId === e.id ? "确认删除" : "删除"}
-                      </button>
-                      {confirmDeleteId === e.id && (
-                        <button className="button-ghost" onClick={() => setConfirmDeleteId(null)}>取消</button>
-                      )}
-                    </div>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+        <EmptyState
+          title="暂无结果"
+          desc="点击「运行」执行实验"
+        />
+      )}
+    </div>
+  );
+}
+
+function ExperimentResultItem({
+  fundCode,
+  isSuccess,
+  metrics,
+  errorMessage,
+  warnings,
+  isDynamicAttribution,
+}: {
+  fundCode: string;
+  isSuccess: boolean;
+  metrics: Record<string, unknown>;
+  errorMessage?: string | null;
+  warnings?: string[] | null;
+  isDynamicAttribution: boolean;
+}) {
+  const keys = Object.keys(metrics).filter((k) => metrics[k] != null);
+  const boolItems: Array<[string, boolean]> = isDynamicAttribution
+    ? [
+        ["真实基准收益", metrics.uses_real_benchmark_returns === true],
+        ["真实行业收益", metrics.uses_real_sector_returns === true],
+        ["真实基准权重", metrics.uses_real_benchmark_weights === true],
+        ["无代理权重", metrics.uses_proxy_benchmark_weights === false],
+      ]
+    : [];
+
+  return (
+    <div
+      style={{
+        padding: "var(--space-3) var(--space-4)",
+        background: "var(--surface-base)",
+        borderRadius: "var(--radius-sm)",
+        border: "1px solid var(--border-hairline)",
+      }}
+    >
+      <div className="flex items-center justify-between mb-2">
+        <span className="mono font-semibold">{fundCode}</span>
+        <StatusBadge status={isSuccess ? "computed" : "needs_review"} />
+      </div>
+
+      {/* 动态归因质量标记 */}
+      {boolItems.length > 0 && (
+        <div className="flex flex-wrap gap-2 mb-3">
+          {boolItems.map(([label, value]) => (
+            <span
+              key={label}
+              className="text-xs"
+              style={{
+                padding: "2px 8px",
+                borderRadius: "var(--radius-xs)",
+                background: value
+                  ? "var(--positive-soft)"
+                  : "var(--warning-soft)",
+                color: value ? "var(--positive)" : "var(--warning)",
+                fontWeight: 500,
+              }}
+            >
+              {label}
+            </span>
+          ))}
         </div>
       )}
 
-      {/* Detail panel */}
-      {selectedId && (
-        <div className="card detail-panel" style={{ marginTop: 16 }}>
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
-            <h3 style={{ margin: 0 }}>实验结果</h3>
-            <button onClick={() => { setSelectedId(null); setDetail(null); }} style={{ cursor: "pointer", background: "none", border: "none", fontSize: 18 }}>×</button>
-          </div>
-          {detailLoading ? <p>加载中...</p> : detail ? (
-            <div>
-              <div className="summary-row" style={{ marginBottom: 12 }}>
-                <span>算法: {ALGO_LABELS[detail.algorithm_name] ?? detail.algorithm_name}</span>
-                <span>状态: {STATUS_LABELS[detail.status] ?? detail.status}</span>
-                <span>结果数: {detail.results?.length ?? 0}</span>
-              </div>
-              {detail.results && detail.results.length > 0 ? (
-                <table className="data-table">
-                  <thead>
-                    <tr><th>基金</th><th>结果</th><th>指标</th><th>错误</th></tr>
-                  </thead>
-                  <tbody>
-                    {detail.results.map((r, i) => {
-                      const m = r.metrics || {};
-                      const keys = Object.keys(m).filter((k) => m[k] != null);
-                      const isDynamicAttribution = detail.algorithm_name === "dynamic_attribution";
-                      return (
-                        <tr key={i}>
-                          <td className="mono-cell">{r.fund_code}</td>
-                          <td><span className={`badge badge-${r.is_success ? "computed" : "needs_review"}`}>{r.is_success ? "是" : "否"}</span></td>
-                          <td style={{ fontSize: 12 }}>
-                            {isDynamicAttribution && renderDynamicQuality(m)}
-                            {keys.length > 0
-                              ? keys.slice(0, 6).map((k) => (
-                                  <div key={k} style={{ marginBottom: 2 }}>
-                                    <span style={{ color: "var(--color-text-secondary)" }}>{k}: </span>
-                                    {renderMetricValue(m[k])}
-                                  </div>
-                                ))
-                              : "—"}
-                            {keys.length > 6 && <div style={{ color: "var(--color-text-secondary)" }}>... 共 {keys.length} 项</div>}
-                          </td>
-                          <td style={{ color: r.error_message ? "var(--color-danger)" : undefined, fontSize: 12, maxWidth: 250 }}>
-                            {r.error_message ?? "—"}
-                            {r.warnings && r.warnings.length > 0 && (
-                              <div className="warning-list">
-                                {r.warnings.map((warning) => (
-                                  <div key={warning}>{warning}</div>
-                                ))}
-                              </div>
-                            )}
-                          </td>
-                        </tr>
-                      );
-                    })}
-                  </tbody>
-                </table>
-              ) : <p style={{ color: "var(--color-text-secondary)" }}>暂无结果（点击"运行"执行实验）</p>}
+      {/* 指标 */}
+      {keys.length > 0 && (
+        <div className="grid grid-2">
+          {keys.slice(0, 8).map((k) => (
+            <div
+              key={k}
+              className="flex items-center justify-between"
+              style={{ padding: "var(--space-1) 0" }}
+            >
+              <span className="text-xs text-tertiary">{k}</span>
+              <span className="mono text-sm font-medium">
+                {renderMetricValue(metrics[k])}
+              </span>
             </div>
-          ) : <p style={{ color: "var(--color-text-secondary)" }}>加载失败</p>}
+          ))}
+          {keys.length > 8 && (
+            <div className="text-xs text-tertiary">... 共 {keys.length} 项</div>
+          )}
+        </div>
+      )}
+
+      {/* 错误 */}
+      {errorMessage && (
+        <div
+          className="mt-2 text-xs"
+          style={{ color: "var(--negative)" }}
+        >
+          {errorMessage}
+        </div>
+      )}
+
+      {/* 警告 */}
+      {warnings && warnings.length > 0 && (
+        <div className="mt-2 flex flex-col gap-1">
+          {warnings.map((w, i) => (
+            <div key={i} className="text-xs text-warning">
+              {"⚠ " + w}
+            </div>
+          ))}
         </div>
       )}
     </div>
