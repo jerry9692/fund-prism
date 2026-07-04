@@ -1,4 +1,4 @@
-// 动态收益归因页 — 新组件库 + 面包屑 + 指标卡 + 归因柱状图 + 可切换归因记录
+// 动态收益归因页 — 适配 estimated_* 字段 + 就绪检查 + 归因柱状图 + 可切换归因记录
 
 import { useEffect, useState } from "react";
 import { useParams } from "react-router-dom";
@@ -18,6 +18,17 @@ import type { EChartsOption } from "echarts";
 function formatPct(v: number | null | undefined): string {
   if (v === null || v === undefined) return "—";
   return `${(v * 100).toFixed(2)}%`;
+}
+
+/** Get a field value from DynamicAttributionResult, handling estimated_ prefix.
+ *  When uses_simulated_holdings=true, fields have estimated_ prefix; otherwise not. */
+function getAttr(
+  r: DynamicAttributionResult,
+  field: string
+): number | null | undefined {
+  const est = r.uses_simulated_holdings;
+  const key = est ? `estimated_${field}` : field;
+  return (r as unknown as Record<string, number | null | undefined>)[key];
 }
 
 function PctMetric({
@@ -50,7 +61,7 @@ function ResultListItem({
   const period =
     result.period_start && result.period_end
       ? `${result.period_start} ~ ${result.period_end}`
-      : result.created_at || "未知期间";
+      : result.calc_date || result.created_at || "未知期间";
   return (
     <div
       onClick={onClick}
@@ -74,9 +85,12 @@ function ResultListItem({
           >
             {period}
           </span>
-          <span className="text-sm text-tertiary">
-            {result.algorithm_name} v{result.algorithm_version}
-          </span>
+          {result.algorithm_name && (
+            <span className="text-sm text-tertiary">
+              {result.algorithm_name}
+              {result.algorithm_version ? ` v${result.algorithm_version}` : ""}
+            </span>
+          )}
         </div>
         <StatusBadge status={result.conclusion_status || "estimated"} />
       </div>
@@ -93,6 +107,12 @@ export default function DynamicAttributionPage() {
   const [error, setError] = useState<string | null>(null);
   const [selectedResultId, setSelectedResultId] = useState<number | null>(null);
   const [running, setRunning] = useState(false);
+
+  // Readiness state
+  const [readinessLoading, setReadinessLoading] = useState(false);
+  const [readinessReady, setReadinessReady] = useState<number | null>(null);
+  const [readinessTotal, setReadinessTotal] = useState<number | null>(null);
+  const [readinessChecked, setReadinessChecked] = useState(false);
 
   const loadResults = () => {
     if (!fundCode) return;
@@ -115,16 +135,50 @@ export default function DynamicAttributionPage() {
       .finally(() => setLoading(false));
   };
 
+  const checkReadiness = () => {
+    if (!fundCode) return;
+    setReadinessLoading(true);
+    api
+      .checkDynamicAttributionReadiness({
+        fund_code: [fundCode],
+        ready_only: false,
+      })
+      .then((resp) => {
+        setReadinessReady(resp.data?.ready ?? 0);
+        setReadinessTotal(resp.data?.total ?? 0);
+        setReadinessChecked(true);
+      })
+      .catch(() => {
+        setReadinessChecked(true);
+      })
+      .finally(() => setReadinessLoading(false));
+  };
+
   useEffect(() => {
     loadResults();
+    checkReadiness();
   }, [fundCode]);
+
+  const isReady = readinessReady !== null && readinessReady > 0;
 
   const handleRun = () => {
     if (!fundCode || running) return;
+    // Gate on readiness check
+    if (readinessChecked && !isReady) {
+      setError(
+        `数据就绪检查未通过（${readinessReady ?? 0}/${readinessTotal ?? 0} 个样本就绪）。` +
+          "请先确保 NAV 连续性、持仓完整性、基准权重覆盖满足条件后再运行。"
+      );
+      return;
+    }
     setRunning(true);
+    setError(null);
     api
       .runReturnAttribution({ fund_code: fundCode })
-      .then(() => {
+      .then((resp) => {
+        if (!resp.data?.success && resp.warnings.length > 0) {
+          setError(`运行归因有警告: ${resp.warnings.join("; ")}`);
+        }
         loadResults();
       })
       .catch((e) => {
@@ -137,11 +191,11 @@ export default function DynamicAttributionPage() {
 
   const attributionValues = selectedResult
     ? [
-        selectedResult.beta_return ?? 0,
-        selectedResult.allocation_return ?? 0,
-        selectedResult.sector_rotation_return ?? 0,
-        selectedResult.stock_selection_return ?? 0,
-        selectedResult.residual ?? 0,
+        getAttr(selectedResult, "total_benchmark_return") ?? 0,
+        getAttr(selectedResult, "total_allocation_effect") ?? 0,
+        getAttr(selectedResult, "total_selection_effect") ?? 0,
+        getAttr(selectedResult, "total_interaction_effect") ?? 0,
+        selectedResult.estimated_total_residual ?? 0,
       ]
     : [];
 
@@ -150,12 +204,12 @@ export default function DynamicAttributionPage() {
     tooltip: { trigger: "axis" },
     xAxis: {
       type: "category",
-      data: ["Beta收益", "配置收益", "轮动收益", "选股收益", "残差"],
+      data: ["基准收益", "配置效应", "选股效应", "交互效应", "残差"],
     },
     yAxis: {
       type: "value",
       name: "收益(%)",
-      axisLabel: { formatter: (v) => `${(v as number).toFixed(2)}%` },
+      axisLabel: { formatter: (v: number) => `${(v as number).toFixed(2)}%` },
     },
     series: [
       {
@@ -203,6 +257,30 @@ export default function DynamicAttributionPage() {
         </div>
       </div>
 
+      {/* Readiness banner */}
+      {readinessChecked && (
+        <div
+          className="fade-up fade-up-2"
+          style={{
+            marginBottom: "var(--space-4)",
+            padding: "var(--space-3) var(--space-4)",
+            background: isReady
+              ? "var(--positive-soft)"
+              : "var(--warning-soft)",
+            borderLeft: `3px solid ${isReady ? "var(--positive)" : "var(--warning)"}`,
+            borderRadius: "0 var(--radius-sm) var(--radius-sm) 0",
+            fontSize: "0.82rem",
+            color: isReady ? "var(--positive)" : "var(--warning)",
+          }}
+        >
+          {readinessLoading
+            ? "正在检查数据就绪状态..."
+            : isReady
+              ? `数据就绪检查通过（${readinessReady}/${readinessTotal} 个样本就绪），可以运行归因。`
+              : `数据就绪检查未通过（${readinessReady ?? 0}/${readinessTotal ?? 0} 个样本就绪）。运行归因可能产生无效结果。`}
+        </div>
+      )}
+
       {/* Warning banner */}
       <div
         className="fade-up fade-up-2"
@@ -217,6 +295,7 @@ export default function DynamicAttributionPage() {
         }}
       >
         ⚠ 动态归因基于模拟持仓和风格暴露估算，结果仅供研究参考，不构成投资建议。
+        {selectedResult?.uses_simulated_holdings && " 当前结果使用了模拟持仓数据。"}
       </div>
 
       {/* Error banner */}
@@ -266,23 +345,29 @@ export default function DynamicAttributionPage() {
                   marginBottom: "var(--space-4)",
                 }}
               >
-                <PctMetric label="总收益" value={selectedResult.total_return} />
-                <PctMetric label="Beta收益" value={selectedResult.beta_return} />
                 <PctMetric
-                  label="配置收益"
-                  value={selectedResult.allocation_return}
+                  label="组合总收益"
+                  value={getAttr(selectedResult, "total_portfolio_return")}
                 />
                 <PctMetric
-                  label="轮动收益"
-                  value={selectedResult.sector_rotation_return}
+                  label="基准总收益"
+                  value={getAttr(selectedResult, "total_benchmark_return")}
                 />
                 <PctMetric
-                  label="选股收益"
-                  value={selectedResult.stock_selection_return}
+                  label="配置效应"
+                  value={getAttr(selectedResult, "total_allocation_effect")}
+                />
+                <PctMetric
+                  label="选股效应"
+                  value={getAttr(selectedResult, "total_selection_effect")}
+                />
+                <PctMetric
+                  label="交互效应"
+                  value={getAttr(selectedResult, "total_interaction_effect")}
                 />
                 <PctMetric
                   label="残差占比"
-                  value={selectedResult.residual_pct}
+                  value={selectedResult.estimated_residual_ratio}
                 />
               </div>
 

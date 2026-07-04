@@ -12,21 +12,100 @@ from time import perf_counter
 from typing import Annotated, Any
 from uuid import uuid4
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
-from sqlalchemy import select
+from sqlalchemy import func, select, text
 from sqlalchemy.orm import Session
 
 from fund_research import __version__
+from fund_research.analysis.anomaly import (
+    ALGORITHM_NAME as ANOMALY_NAME,
+)
+from fund_research.analysis.anomaly import (
+    ALGORITHM_VERSION as ANOMALY_VERSION,
+)
+from fund_research.analysis.anomaly import (
+    ANOMALY_RULES,
+    persist_anomaly,
+    scan_anomalies,
+)
+from fund_research.analysis.dashboard import (
+    ALGORITHM_NAME as DASHBOARD_NAME,
+)
+from fund_research.analysis.dashboard import (
+    ALGORITHM_VERSION as DASHBOARD_VERSION,
+)
+from fund_research.analysis.dashboard import generate_dashboard
+from fund_research.analysis.fingerprint import (
+    ALGORITHM_VERSION as FINGERPRINT_VERSION,
+)
+from fund_research.analysis.fingerprint import (
+    fingerprint_to_dict,
+    generate_fingerprint,
+    get_latest_fingerprint,
+    persist_fingerprint,
+)
+from fund_research.analysis.pool_alert import (
+    ALERT_TYPES,
+    create_alert_rule,
+    get_alert_records,
+    get_alert_rules,
+    mark_alert_read,
+    persist_alerts,
+    scan_pool_alerts,
+)
+from fund_research.analysis.pool_alert import (
+    ALGORITHM_NAME as POOL_ALERT_NAME,
+)
+from fund_research.analysis.pool_alert import (
+    ALGORITHM_VERSION as POOL_ALERT_VERSION,
+)
+from fund_research.analysis.research_template import (
+    ALGORITHM_NAME as TEMPLATE_NAME,
+)
+from fund_research.analysis.research_template import (
+    ALGORITHM_VERSION as TEMPLATE_VERSION,
+)
+from fund_research.analysis.research_template import (
+    get_run_record,
+    get_run_records,
+    get_template,
+    list_templates,
+    run_template,
+    seed_builtin_templates,
+)
+from fund_research.analysis.reverse_lookup import (
+    ALGORITHM_NAME as REVERSE_LOOKUP_NAME,
+)
+from fund_research.analysis.reverse_lookup import (
+    ALGORITHM_VERSION as REVERSE_LOOKUP_VERSION,
+)
+from fund_research.analysis.reverse_lookup import (
+    persist_result as persist_reverse_lookup,
+)
+from fund_research.analysis.reverse_lookup import (
+    reverse_lookup,
+)
 from fund_research.analysis.scoring import ALGORITHM_VERSION as SCORING_VERSION
+from fund_research.analysis.similarity import (
+    compare_fund_fingerprints,
+    find_similar_funds,
+    persist_similarity_cache,
+)
 from fund_research.api.deps import get_session
 from fund_research.config.settings import get_settings
 from fund_research.core.enums import ConclusionStatus, ConfidenceLevel, DataSourceLevel, EvidenceType
 from fund_research.core.schemas import APIResponse, EvidenceRecord
 from fund_research.db.models import (
     AlgorithmExperiment,
+    DataSourceSnapshot,
+    FundMain,
     ResearchPacketRecord,
+    TaskLog,
     ToolAPICallLog,
+)
+from fund_research.db.models import (
+    EvidenceRecord as DbEvidenceRecord,
 )
 from fund_research.db.models import (
     ReviewerAnnotation as DbReviewerAnnotation,
@@ -39,6 +118,16 @@ from fund_research.db.models import (
 )
 from fund_research.db.models import (
     SimulatedHoldingResult as DbSimulatedHoldingResult,
+)
+from fund_research.db.models_phase3 import (  # noqa: F401
+    AnomalyRecord,
+    FundComparisonCache,
+    FundFingerprint,
+    PoolAlertRecord,
+    PoolAlertRule,
+    ResearchTemplate,
+    ReverseLookupResult,
+    TemplateRunRecord,
 )
 from fund_research.db.session import get_session_factory
 from fund_research.experiments.manager import (
@@ -204,6 +293,26 @@ class DiffResearchPacketRequest(BaseModel):
     right_packet_id: str | None = None
     left_snapshot: date | None = None
     right_snapshot: date | None = None
+
+
+class FingerprintRequest(BaseModel):
+    calc_date: date | None = None
+
+
+class SimilarFundsRequest(BaseModel):
+    metric_space: str = Field(default="composite", pattern="^(style|holding|risk_return|factor|composite)$")
+    top_n: int = Field(default=10, ge=1, le=50)
+    same_type_only: bool = True
+
+
+class FundCompareRequest(BaseModel):
+    fund_codes: list[str] = Field(..., min_length=2, max_length=6)
+    dimensions: list[str] = Field(default_factory=lambda: ["all"])
+
+
+class BatchFingerprintRequest(BaseModel):
+    fund_codes: list[str] = Field(..., min_length=1, max_length=100)
+    calc_date: date | None = None
 
 
 _P2B_TASKS: dict[str, dict[str, Any]] = {}
@@ -527,6 +636,214 @@ def list_experiments_endpoint(
             APIResponse(
                 data=None,
                 metadata={"tool": "list_experiments"},
+                warnings=[str(exc)],
+                conclusion_status=ConclusionStatus.NEEDS_REVIEW,
+            ),
+            started,
+        )
+
+
+# ============================================================
+# P3.3: 异常发现
+# ============================================================
+
+
+class AnomalyScanRequest(BaseModel):
+    scope: str = Field(default="all", pattern="^(all|pool|fund_type)$")
+    scope_id: str | None = None
+    rules: list[str] | None = None
+    params: dict[str, Any] = Field(default_factory=dict)
+
+
+@v2_router.post("/anomalies/scan", response_model=APIResponse[dict])
+def anomaly_scan(
+    db: SessionDep,
+    request: AnomalyScanRequest,
+) -> APIResponse[dict]:
+    """扫描基金异常。支持按范围（全部/基金池/基金类型）和规则筛选。"""
+    started = perf_counter()
+    params = {"scope": request.scope, "scope_id": request.scope_id, "rules": request.rules, "params": request.params}
+    try:
+        # Determine fund codes based on scope
+        fund_codes: list[str] = []
+        if request.scope == "pool" and request.scope_id:
+            pool_funds = db.scalars(
+                select(DbFundPoolMember.fund_code).where(
+                    DbFundPoolMember.pool_id == int(request.scope_id)
+                )
+            ).all()
+            fund_codes = list(pool_funds)
+        elif request.scope == "fund_type" and request.scope_id:
+            fund_codes = list(
+                db.scalars(
+                    select(FundMain.fund_code).where(
+                        FundMain.category == request.scope_id
+                    )
+                ).all()
+            )
+        else:
+            fund_codes = list(
+                db.scalars(select(FundMain.fund_code).limit(100)).all()
+            )
+
+        if not fund_codes:
+            response = APIResponse(
+                data={"anomalies": [], "total": 0, "fund_count": 0},
+                metadata={
+                    "tool": ANOMALY_NAME,
+                    "algorithm_version": ANOMALY_VERSION,
+                    "platform_version": __version__,
+                },
+                warnings=["未找到符合条件的基金"],
+                conclusion_status=ConclusionStatus.NEEDS_REVIEW,
+            )
+            return _log(db, "anomaly_scan", params, response, started)
+
+        # Run anomaly scan
+        items = scan_anomalies(db, fund_codes, rules=request.rules, params=request.params)
+
+        # Persist anomalies
+        for item in items:
+            persist_anomaly(db, item, scope=request.scope, scope_id=request.scope_id)
+        db.commit()
+
+        anomaly_data = [item.to_data() for item in items]
+        response = APIResponse(
+            data={
+                "anomalies": anomaly_data,
+                "total": len(anomaly_data),
+                "fund_count": len(fund_codes),
+                "rules_run": request.rules or list(ANOMALY_RULES.keys()),
+            },
+            metadata={
+                "tool": ANOMALY_NAME,
+                "algorithm_version": ANOMALY_VERSION,
+                "platform_version": __version__,
+            },
+            conclusion_status=ConclusionStatus.OBSERVATION,
+        )
+        return _log(db, "anomaly_scan", params, response, started)
+    except Exception as exc:
+        db.rollback()
+        return _log(
+            db,
+            "anomaly_scan",
+            params,
+            APIResponse(
+                data=None,
+                metadata={
+                    "tool": ANOMALY_NAME,
+                    "algorithm_version": ANOMALY_VERSION,
+                    "platform_version": __version__,
+                },
+                warnings=[str(exc)],
+                conclusion_status=ConclusionStatus.NEEDS_REVIEW,
+            ),
+            started,
+        )
+
+
+@v2_router.get("/anomalies", response_model=APIResponse[dict])
+def list_anomalies(
+    db: SessionDep,
+    rule_name: str | None = Query(None),
+    severity: str | None = Query(None),
+    fund_code: str | None = Query(None),
+    limit: int = Query(50, ge=1, le=200),
+    offset: int = Query(0, ge=0),
+) -> APIResponse[dict]:
+    """获取异常列表，支持按规则、严重度、基金代码筛选。"""
+    started = perf_counter()
+    params = {"rule_name": rule_name, "severity": severity, "fund_code": fund_code, "limit": limit, "offset": offset}
+    try:
+        query = select(AnomalyRecord)
+        if rule_name:
+            query = query.where(AnomalyRecord.rule_name == rule_name)
+        if severity:
+            query = query.where(AnomalyRecord.severity == severity)
+        if fund_code:
+            query = query.where(AnomalyRecord.fund_code == fund_code)
+        query = query.order_by(AnomalyRecord.detected_at.desc()).offset(offset).limit(limit)
+
+        records = db.scalars(query).all()
+        data = [
+            {
+                "id": r.id,
+                "fund_code": r.fund_code,
+                "rule_name": r.rule_name,
+                "severity": r.severity,
+                "description": r.description,
+                "detail": r.detail,
+                "conclusion_status": r.conclusion_status,
+                "detected_at": str(r.detected_at) if r.detected_at else None,
+            }
+            for r in records
+        ]
+        response = APIResponse(
+            data={"anomalies": data, "total": len(data)},
+            metadata={"tool": ANOMALY_NAME, "platform_version": __version__},
+            conclusion_status=ConclusionStatus.OBSERVATION,
+        )
+        return _log(db, "list_anomalies", params, response, started)
+    except Exception as exc:
+        db.rollback()
+        return _log(
+            db,
+            "list_anomalies",
+            params,
+            APIResponse(
+                data=None,
+                metadata={"tool": ANOMALY_NAME, "platform_version": __version__},
+                warnings=[str(exc)],
+                conclusion_status=ConclusionStatus.NEEDS_REVIEW,
+            ),
+            started,
+        )
+
+
+@v2_router.get("/anomalies/{anomaly_id}", response_model=APIResponse[dict])
+def get_anomaly(
+    db: SessionDep,
+    anomaly_id: int,
+) -> APIResponse[dict]:
+    """获取异常详情。"""
+    started = perf_counter()
+    params = {"anomaly_id": anomaly_id}
+    try:
+        record = db.scalars(
+            select(AnomalyRecord).where(AnomalyRecord.id == anomaly_id).limit(1)
+        ).first()
+        if record is None:
+            raise HTTPException(status_code=404, detail="异常记录不存在")
+
+        data = {
+            "id": record.id,
+            "fund_code": record.fund_code,
+            "rule_name": record.rule_name,
+            "severity": record.severity,
+            "description": record.description,
+            "detail": record.detail,
+            "evidence_ids": record.evidence_ids or [],
+            "scope": record.scope,
+            "scope_id": record.scope_id,
+            "conclusion_status": record.conclusion_status,
+            "detected_at": str(record.detected_at) if record.detected_at else None,
+        }
+        response = APIResponse(
+            data=data,
+            metadata={"tool": ANOMALY_NAME, "platform_version": __version__},
+            conclusion_status=ConclusionStatus(record.conclusion_status),
+        )
+        return _log(db, "get_anomaly", params, response, started)
+    except Exception as exc:
+        db.rollback()
+        return _log(
+            db,
+            "get_anomaly",
+            params,
+            APIResponse(
+                data=None,
+                metadata={"tool": ANOMALY_NAME, "platform_version": __version__},
                 warnings=[str(exc)],
                 conclusion_status=ConclusionStatus.NEEDS_REVIEW,
             ),
@@ -2056,6 +2373,9 @@ def list_return_attribution(
 
         items = []
         for row in rows:
+            est = bool(row.uses_simulated_holdings)
+            prefix = "estimated_" if est else ""
+            # Residual / IPO / CB / invisible returns always carry estimated_ prefix.
             items.append({
                 "id": row.id,
                 "fund_code": row.fund_code,
@@ -2063,14 +2383,20 @@ def list_return_attribution(
                 "period_start": str(row.period_start) if row.period_start else None,
                 "period_end": str(row.period_end) if row.period_end else None,
                 "benchmark_symbol": row.benchmark_symbol,
-                "uses_simulated_holdings": row.uses_simulated_holdings,
-                "estimated_total_portfolio_return": row.total_return,
-                "estimated_total_benchmark_return": row.benchmark_return,
-                "estimated_total_allocation_effect": row.allocation_return,
-                "estimated_total_selection_effect": row.selection_return,
-                "estimated_total_interaction_effect": row.interaction_return,
+                "uses_simulated_holdings": est,
+                "algorithm_name": row.detail.get("algorithm_name") if row.detail else None,
+                "algorithm_version": row.detail.get("algorithm_version") if row.detail else None,
+                f"{prefix}total_portfolio_return": row.total_return,
+                f"{prefix}total_benchmark_return": row.benchmark_return,
+                f"{prefix}total_allocation_effect": row.allocation_return,
+                f"{prefix}total_selection_effect": row.selection_return,
+                f"{prefix}total_interaction_effect": row.interaction_return,
                 "estimated_total_residual": row.residual,
                 "estimated_residual_ratio": row.residual_pct,
+                "estimated_ipo_return": (row.detail or {}).get("ipo_return"),
+                "estimated_convertible_bond_return": (row.detail or {}).get("convertible_bond_return"),
+                "estimated_invisible_return": (row.detail or {}).get("invisible_return"),
+                "waterfall_data": (row.detail or {}).get("waterfall_data", []),
                 "confidence": row.confidence,
                 "conclusion_status": row.conclusion_status,
                 "warnings": row.warnings,
@@ -2855,6 +3181,2033 @@ def get_research_packet(
                 data=None,
                 metadata={"tool": "get_research_packet"},
                 warnings=[f"查询研究包详情失败: {exc}"],
+                conclusion_status=ConclusionStatus.NEEDS_REVIEW,
+            ),
+            started,
+        )
+
+
+# ============================================================
+# Evidence 证据查询 API
+# ============================================================
+
+
+@v2_router.get("/evidence")
+def list_evidence(
+    db: SessionDep,
+    fund_code: str | None = Query(None, description="按基金代码过滤 (entity_type=fund)", max_length=20),
+    source_level: Annotated[DataSourceLevel | None, Query(description="按数据源等级过滤")] = None,
+    evidence_type: str | None = Query(None, description="按证据类型过滤", max_length=30),
+    limit: int = Query(50, ge=1, le=200, description="分页数量"),
+    offset: int = Query(0, ge=0, description="分页偏移"),
+) -> APIResponse[dict]:
+    """查询证据列表，支持 fund_code / source_level / evidence_type 过滤与分页。"""
+    started = perf_counter()
+    params = {
+        "fund_code": fund_code,
+        "source_level": source_level.value if source_level else None,
+        "evidence_type": evidence_type,
+        "limit": limit,
+        "offset": offset,
+    }
+    try:
+        stmt = select(DbEvidenceRecord)
+        count_stmt = select(func.count()).select_from(DbEvidenceRecord)
+
+        if fund_code:
+            stmt = stmt.where(
+                DbEvidenceRecord.entity_type == "fund",
+                DbEvidenceRecord.entity_id == fund_code,
+            )
+            count_stmt = count_stmt.where(
+                DbEvidenceRecord.entity_type == "fund",
+                DbEvidenceRecord.entity_id == fund_code,
+            )
+        if source_level is not None:
+            stmt = stmt.where(DbEvidenceRecord.source_level == source_level)
+            count_stmt = count_stmt.where(DbEvidenceRecord.source_level == source_level)
+        if evidence_type:
+            stmt = stmt.where(DbEvidenceRecord.evidence_type == evidence_type)
+            count_stmt = count_stmt.where(DbEvidenceRecord.evidence_type == evidence_type)
+
+        total = db.scalar(count_stmt) or 0
+
+        stmt = stmt.order_by(DbEvidenceRecord.created_at.desc()).offset(offset).limit(limit)
+        rows = db.scalars(stmt).all()
+
+        items = []
+        for row in rows:
+            items.append({
+                "evidence_id": row.evidence_id,
+                "entity_id": row.entity_id,
+                "entity_type": row.entity_type,
+                "evidence_type": row.evidence_type,
+                "source": row.source,
+                "source_level": row.source_level.value if hasattr(row.source_level, "value") else row.source_level,
+                "date_start": str(row.date_start) if row.date_start else None,
+                "date_end": str(row.date_end) if row.date_end else None,
+                "data_summary": row.data_summary,
+                "confidence": row.confidence.value if hasattr(row.confidence, "value") else row.confidence,
+                "conclusion_status": (
+                    row.conclusion_status.value
+                    if hasattr(row.conclusion_status, "value")
+                    else row.conclusion_status
+                ),
+                "created_at": row.created_at.isoformat() if row.created_at else None,
+            })
+
+        return _log(
+            db,
+            "list_evidence",
+            params,
+            APIResponse(
+                data={"items": items, "total": total, "limit": limit, "offset": offset},
+                metadata={"tool": "list_evidence", "platform_version": __version__},
+                conclusion_status=ConclusionStatus.COMPUTED,
+            ),
+            started,
+        )
+    except Exception as exc:
+        db.rollback()
+        return _log(
+            db,
+            "list_evidence",
+            params,
+            APIResponse(
+                data=None,
+                metadata={"tool": "list_evidence"},
+                warnings=[f"查询证据列表失败: {exc}"],
+                conclusion_status=ConclusionStatus.NEEDS_REVIEW,
+            ),
+            started,
+        )
+
+
+@v2_router.get("/evidence/{evidence_id}")
+def get_evidence(
+    evidence_id: str,
+    db: SessionDep,
+) -> APIResponse[dict]:
+    """获取单条证据详情。"""
+    started = perf_counter()
+    params = {"evidence_id": evidence_id}
+    try:
+        record = db.scalar(
+            select(DbEvidenceRecord).where(DbEvidenceRecord.evidence_id == evidence_id)
+        )
+        if record is None:
+            return _log(
+                db,
+                "get_evidence",
+                params,
+                APIResponse(
+                    data=None,
+                    metadata={"tool": "get_evidence"},
+                    warnings=[f"证据不存在: {evidence_id}"],
+                    conclusion_status=ConclusionStatus.NEEDS_REVIEW,
+                ),
+                started,
+            )
+
+        return _log(
+            db,
+            "get_evidence",
+            params,
+            APIResponse(
+                data={
+                    "evidence_id": record.evidence_id,
+                    "entity_id": record.entity_id,
+                    "entity_type": record.entity_type,
+                    "evidence_type": record.evidence_type,
+                    "source": record.source,
+                    "source_level": (
+                        record.source_level.value
+                        if hasattr(record.source_level, "value")
+                        else record.source_level
+                    ),
+                    "date_start": str(record.date_start) if record.date_start else None,
+                    "date_end": str(record.date_end) if record.date_end else None,
+                    "algorithm_metadata": record.algorithm_metadata,
+                    "report_snippet": record.report_snippet,
+                    "report_location": record.report_location,
+                    "data_summary": record.data_summary,
+                    "confidence": (
+                        record.confidence.value
+                        if hasattr(record.confidence, "value")
+                        else record.confidence
+                    ),
+                    "conclusion_status": (
+                        record.conclusion_status.value
+                        if hasattr(record.conclusion_status, "value")
+                        else record.conclusion_status
+                    ),
+                    "created_at": record.created_at.isoformat() if record.created_at else None,
+                },
+                metadata={
+                    "tool": "get_evidence",
+                    "platform_version": __version__,
+                    "evidence_id": evidence_id,
+                },
+                conclusion_status=ConclusionStatus.COMPUTED,
+            ),
+            started,
+        )
+    except Exception as exc:
+        db.rollback()
+        return _log(
+            db,
+            "get_evidence",
+            params,
+            APIResponse(
+                data=None,
+                metadata={"tool": "get_evidence"},
+                warnings=[f"查询证据详情失败: {exc}"],
+                conclusion_status=ConclusionStatus.NEEDS_REVIEW,
+            ),
+            started,
+        )
+
+
+# ============================================================
+# P2.5-1: 基金池持久化 API
+# ============================================================
+
+# fmt: off
+from fund_research.analysis.trading_ability import (  # noqa: E402,I001
+    ALGORITHM_NAME as TA_ALGORITHM_NAME,
+    ALGORITHM_VERSION as TA_ALGORITHM_VERSION,
+    analyze_trading_ability,
+    to_api_data as ta_to_api_data,
+)
+from fund_research.db.models_phase2 import (  # noqa: E402,I001
+    FundPool as DbFundPool,
+    FundPoolMember as DbFundPoolMember,
+    SavedScreen as DbSavedScreen,
+    TradingAbilityResult as DbTradingAbilityResult,
+)
+# fmt: on
+
+
+class CreatePoolRequest(BaseModel):
+    name: str = Field(..., max_length=100)
+    description: str | None = None
+
+
+class AddPoolMemberRequest(BaseModel):
+    fund_code: str = Field(..., max_length=20)
+    note: str | None = Field(default=None, max_length=200)
+
+
+class SaveScreenRequest(BaseModel):
+    name: str = Field(..., max_length=100)
+    filters: dict[str, Any] = Field(default_factory=dict)
+    sort_by: str | None = None
+    sort_order: str | None = "asc"
+
+
+@v2_router.get("/pools")
+def list_pools(db: SessionDep):
+    started = perf_counter()
+    pools = db.execute(select(DbFundPool).order_by(DbFundPool.updated_at.desc())).scalars().all()
+    result = []
+    for p in pools:
+        count = db.execute(
+            select(DbFundPoolMember.fund_code).where(DbFundPoolMember.pool_id == p.id)
+        ).scalars().all()
+        result.append({
+            "id": p.id,
+            "name": p.name,
+            "description": p.description,
+            "fund_count": len(count),
+            "created_at": p.created_at.isoformat() if p.created_at else None,
+            "updated_at": p.updated_at.isoformat() if p.updated_at else None,
+        })
+    return _log(db, "list_pools", {}, APIResponse(data=result, metadata={"count": len(result)}), started)
+
+
+@v2_router.post("/pools")
+def create_pool(body: CreatePoolRequest, db: SessionDep):
+    started = perf_counter()
+    try:
+        pool = DbFundPool(name=body.name, description=body.description)
+        db.add(pool)
+        db.commit()
+        db.refresh(pool)
+        return _log(db, "create_pool", body.model_dump(), APIResponse(
+            data={"id": pool.id, "name": pool.name, "description": pool.description},
+            metadata={"created": True},
+        ), started)
+    except Exception as exc:
+        db.rollback()
+        return _log(db, "create_pool", body.model_dump(), APIResponse(
+            data=None, warnings=[f"创建基金池失败: {exc}"],
+            conclusion_status=ConclusionStatus.NEEDS_REVIEW,
+        ), started)
+
+
+@v2_router.get("/pools/{pool_id}")
+def get_pool(pool_id: int, db: SessionDep):
+    started = perf_counter()
+    pool = db.get(DbFundPool, pool_id)
+    if not pool:
+        return _log(db, "get_pool", {"pool_id": pool_id}, APIResponse(
+            data=None, warnings=["基金池不存在"],
+            conclusion_status=ConclusionStatus.NEEDS_REVIEW,
+        ), started)
+    members = db.execute(
+        select(DbFundPoolMember).where(DbFundPoolMember.pool_id == pool_id).order_by(DbFundPoolMember.added_at)
+    ).scalars().all()
+    data = {
+        "id": pool.id,
+        "name": pool.name,
+        "description": pool.description,
+        "created_at": pool.created_at.isoformat() if pool.created_at else None,
+        "funds": [
+            {
+                "fund_code": m.fund_code,
+                "note": m.note,
+                "added_at": m.added_at.isoformat() if m.added_at else None,
+            }
+            for m in members
+        ],
+    }
+    return _log(db, "get_pool", {"pool_id": pool_id}, APIResponse(data=data), started)
+
+
+@v2_router.delete("/pools/{pool_id}")
+def delete_pool(pool_id: int, db: SessionDep):
+    started = perf_counter()
+    try:
+        pool = db.get(DbFundPool, pool_id)
+        if not pool:
+            return _log(db, "delete_pool", {"pool_id": pool_id}, APIResponse(
+                data=None, warnings=["基金池不存在"],
+                conclusion_status=ConclusionStatus.NEEDS_REVIEW,
+            ), started)
+        db.execute(select(DbFundPoolMember).where(DbFundPoolMember.pool_id == pool_id))
+        members = db.execute(
+            select(DbFundPoolMember).where(DbFundPoolMember.pool_id == pool_id)
+        ).scalars().all()
+        for m in members:
+            db.delete(m)
+        db.delete(pool)
+        db.commit()
+        return _log(db, "delete_pool", {"pool_id": pool_id}, APIResponse(
+            data={"deleted": True, "pool_id": pool_id},
+        ), started)
+    except Exception as exc:
+        db.rollback()
+        return _log(db, "delete_pool", {"pool_id": pool_id}, APIResponse(
+            data=None, warnings=[f"删除基金池失败: {exc}"],
+            conclusion_status=ConclusionStatus.NEEDS_REVIEW,
+        ), started)
+
+
+@v2_router.post("/pools/{pool_id}/funds")
+def add_pool_member(pool_id: int, body: AddPoolMemberRequest, db: SessionDep):
+    started = perf_counter()
+    params = {"pool_id": pool_id, **body.model_dump()}
+    try:
+        pool = db.get(DbFundPool, pool_id)
+        if not pool:
+            return _log(db, "add_pool_member", params, APIResponse(
+                data=None, warnings=["基金池不存在"],
+                conclusion_status=ConclusionStatus.NEEDS_REVIEW,
+            ), started)
+        existing = db.execute(
+            select(DbFundPoolMember).where(
+                DbFundPoolMember.pool_id == pool_id,
+                DbFundPoolMember.fund_code == body.fund_code,
+            )
+        ).scalar_one_or_none()
+        if existing:
+            return _log(db, "add_pool_member", params, APIResponse(
+                data=None, warnings=["该基金已在池中"],
+                conclusion_status=ConclusionStatus.NEEDS_REVIEW,
+            ), started)
+        member = DbFundPoolMember(pool_id=pool_id, fund_code=body.fund_code, note=body.note)
+        db.add(member)
+        db.commit()
+        db.refresh(member)
+        return _log(db, "add_pool_member", params, APIResponse(
+            data={"id": member.id, "pool_id": pool_id, "fund_code": body.fund_code},
+        ), started)
+    except Exception as exc:
+        db.rollback()
+        return _log(db, "add_pool_member", params, APIResponse(
+            data=None, warnings=[f"添加基金到池失败: {exc}"],
+            conclusion_status=ConclusionStatus.NEEDS_REVIEW,
+        ), started)
+
+
+@v2_router.delete("/pools/{pool_id}/funds/{fund_code}")
+def remove_pool_member(pool_id: int, fund_code: str, db: SessionDep):
+    started = perf_counter()
+    params = {"pool_id": pool_id, "fund_code": fund_code}
+    try:
+        member = db.execute(
+            select(DbFundPoolMember).where(
+                DbFundPoolMember.pool_id == pool_id,
+                DbFundPoolMember.fund_code == fund_code,
+            )
+        ).scalar_one_or_none()
+        if not member:
+            return _log(db, "remove_pool_member", params, APIResponse(
+                data=None, warnings=["该基金不在池中"],
+                conclusion_status=ConclusionStatus.NEEDS_REVIEW,
+            ), started)
+        db.delete(member)
+        db.commit()
+        return _log(db, "remove_pool_member", params, APIResponse(
+            data={"removed": True, "fund_code": fund_code},
+        ), started)
+    except Exception as exc:
+        db.rollback()
+        return _log(db, "remove_pool_member", params, APIResponse(
+            data=None, warnings=[f"从池中移除基金失败: {exc}"],
+            conclusion_status=ConclusionStatus.NEEDS_REVIEW,
+        ), started)
+
+
+@v2_router.get("/screens")
+def list_screens(db: SessionDep):
+    started = perf_counter()
+    screens = db.execute(select(DbSavedScreen).order_by(DbSavedScreen.created_at.desc())).scalars().all()
+    result = [{
+        "id": s.id, "name": s.name, "filters": s.filters,
+        "sort_by": s.sort_by, "sort_order": s.sort_order,
+        "created_at": s.created_at.isoformat() if s.created_at else None,
+    } for s in screens]
+    return _log(db, "list_screens", {}, APIResponse(data=result, metadata={"count": len(result)}), started)
+
+
+@v2_router.post("/screens")
+def save_screen(body: SaveScreenRequest, db: SessionDep):
+    started = perf_counter()
+    try:
+        screen = DbSavedScreen(
+            name=body.name, filters=body.filters,
+            sort_by=body.sort_by, sort_order=body.sort_order,
+        )
+        db.add(screen)
+        db.commit()
+        db.refresh(screen)
+        return _log(db, "save_screen", body.model_dump(), APIResponse(
+            data={"id": screen.id, "name": screen.name},
+        ), started)
+    except Exception as exc:
+        db.rollback()
+        return _log(db, "save_screen", body.model_dump(), APIResponse(
+            data=None, warnings=[f"保存筛选条件失败: {exc}"],
+            conclusion_status=ConclusionStatus.NEEDS_REVIEW,
+        ), started)
+
+
+@v2_router.delete("/screens/{screen_id}")
+def delete_screen(screen_id: int, db: SessionDep):
+    started = perf_counter()
+    try:
+        screen = db.get(DbSavedScreen, screen_id)
+        if not screen:
+            return _log(db, "delete_screen", {"screen_id": screen_id}, APIResponse(
+                data=None, warnings=["筛选条件不存在"],
+                conclusion_status=ConclusionStatus.NEEDS_REVIEW,
+            ), started)
+        db.delete(screen)
+        db.commit()
+        return _log(db, "delete_screen", {"screen_id": screen_id}, APIResponse(
+            data={"deleted": True, "screen_id": screen_id},
+        ), started)
+    except Exception as exc:
+        db.rollback()
+        return _log(db, "delete_screen", {"screen_id": screen_id}, APIResponse(
+            data=None, warnings=[f"删除筛选条件失败: {exc}"],
+            conclusion_status=ConclusionStatus.NEEDS_REVIEW,
+        ), started)
+
+
+# ============================================================
+# P2.6-1: 交易能力分析 API
+# ============================================================
+
+
+class TradingAbilityRequest(BaseModel):
+    fund_code: str = Field(..., max_length=20)
+    start_date: date | None = None
+    end_date: date | None = None
+    evaluation_window_days: int = Field(default=60, ge=20, le=120)
+
+
+@v2_router.post("/analysis/trading-ability")
+def run_trading_ability(body: TradingAbilityRequest, db: SessionDep):
+    started = perf_counter()
+    params = body.model_dump()
+    try:
+        output = analyze_trading_ability(
+            db=db,
+            fund_code=body.fund_code,
+            start_date=body.start_date,
+            end_date=body.end_date,
+            evaluation_window_days=body.evaluation_window_days,
+        )
+        result_dict = ta_to_api_data(output)
+
+        # 持久化结果
+        record = DbTradingAbilityResult(
+            fund_code=body.fund_code,
+            calc_date=output.calc_date,
+            algorithm_name=TA_ALGORITHM_NAME,
+            algorithm_version=TA_ALGORITHM_VERSION,
+            period_start=output.period_start,
+            period_end=output.period_end,
+            estimated_turnover_rate=output.estimated_turnover_rate,
+            estimated_buy_timing_score=output.estimated_buy_timing_score,
+            estimated_sell_timing_score=output.estimated_sell_timing_score,
+            estimated_holding_period=output.estimated_holding_period,
+            estimated_excess_return_from_trading=output.estimated_excess_return_from_trading,
+            trading_detail=output.trading_detail,
+            parameters={
+                "start_date": str(body.start_date) if body.start_date else None,
+                "end_date": str(body.end_date) if body.end_date else None,
+                "evaluation_window_days": body.evaluation_window_days,
+            },
+            confidence=output.confidence,
+            conclusion_status=output.conclusion_status,
+            warnings=output.warnings,
+        )
+        db.add(record)
+        db.commit()
+        db.refresh(record)
+        result_dict["id"] = record.id
+
+        return _log(db, "run_trading_ability", params, APIResponse(
+            data=result_dict,
+            metadata={"algorithm": TA_ALGORITHM_NAME, "version": TA_ALGORITHM_VERSION},
+            warnings=output.warnings,
+            conclusion_status=ConclusionStatus(output.conclusion_status),
+        ), started)
+    except Exception as exc:
+        db.rollback()
+        return _log(db, "run_trading_ability", params, APIResponse(
+            data=None,
+            warnings=[f"交易能力分析失败: {exc}"],
+            conclusion_status=ConclusionStatus.NEEDS_REVIEW,
+        ), started)
+
+
+@v2_router.get("/analysis/trading-ability/{fund_code}")
+def list_trading_ability(fund_code: str, db: SessionDep, limit: int = Query(default=10, ge=1, le=100)):
+    started = perf_counter()
+    params = {"fund_code": fund_code, "limit": limit}
+    try:
+        rows = db.execute(
+            select(DbTradingAbilityResult)
+            .where(DbTradingAbilityResult.fund_code == fund_code)
+            .order_by(DbTradingAbilityResult.created_at.desc())
+            .limit(limit)
+        ).scalars().all()
+
+        items = []
+        for row in rows:
+            items.append({
+                "id": row.id,
+                "fund_code": row.fund_code,
+                "calc_date": str(row.calc_date) if row.calc_date else None,
+                "period_start": str(row.period_start) if row.period_start else None,
+                "period_end": str(row.period_end) if row.period_end else None,
+                "estimated_turnover_rate": row.estimated_turnover_rate,
+                "estimated_buy_timing_score": row.estimated_buy_timing_score,
+                "estimated_sell_timing_score": row.estimated_sell_timing_score,
+                "estimated_holding_period": row.estimated_holding_period,
+                "estimated_excess_return_from_trading": row.estimated_excess_return_from_trading,
+                "confidence": row.confidence,
+                "conclusion_status": row.conclusion_status,
+                "warnings": row.warnings,
+                "created_at": row.created_at.isoformat() if row.created_at else None,
+            })
+
+        return _log(db, "list_trading_ability", params, APIResponse(
+            data={"results": items, "count": len(items)},
+        ), started)
+    except Exception as exc:
+        return _log(db, "list_trading_ability", params, APIResponse(
+            data=None,
+            warnings=[f"查询交易能力分析结果失败: {exc}"],
+            conclusion_status=ConclusionStatus.NEEDS_REVIEW,
+        ), started)
+
+
+# ============================================================
+# P2.5-2: 结构化导出 API
+# ============================================================
+
+
+class ExportPacketRequest(BaseModel):
+    fund_code: str = Field(..., max_length=20)
+    packet_id: str | None = None
+    format: str = Field(default="markdown", pattern="^(markdown|json|csv)$")
+
+
+@v2_router.get("/research/packet/{fund_code}/export")
+def export_research_packet(
+    fund_code: str,
+    db: SessionDep,
+    format: str = Query(default="markdown", pattern="^(markdown|json|csv)$"),
+):
+    """导出研究包为 Markdown/JSON/CSV。"""
+    started = perf_counter()
+    params = {"fund_code": fund_code, "format": format}
+    from fund_research.config.settings import get_settings as _get_settings
+
+    try:
+        stmt = (
+            select(ResearchPacketRecord)
+            .where(ResearchPacketRecord.fund_code == fund_code)
+            .order_by(ResearchPacketRecord.generated_at.desc())
+            .limit(1)
+        )
+        record = db.scalar(stmt)
+        if not record:
+            return _log(db, "export_research_packet", params, APIResponse(
+                data=None, warnings=["未找到研究包"],
+                conclusion_status=ConclusionStatus.NEEDS_REVIEW,
+            ), started)
+
+        packet_json = record.packet_json if isinstance(record.packet_json, dict) else {}
+
+        if format == "json":
+            content = json.dumps(packet_json, ensure_ascii=False, indent=2)
+            media_type = "application/json"
+            filename = f"{fund_code}_packet.json"
+        elif format == "csv":
+            import csv as _csv
+            import io as _io
+            buf = _io.StringIO()
+            writer = _csv.writer(buf)
+            writer.writerow(["field", "value"])
+            for section, val in packet_json.items():
+                if isinstance(val, dict):
+                    for k, v in val.items():
+                        writer.writerow([f"{section}.{k}", str(v)[:200]])
+                else:
+                    writer.writerow([section, str(val)[:200]])
+            content = buf.getvalue()
+            media_type = "text/csv"
+            filename = f"{fund_code}_packet.csv"
+        else:
+            disclaimer = _get_settings().disclaimer
+            md = record.markdown_text or ""
+            header = (
+                f"# 基金研究包: {fund_code}\n\n"
+                f"> 生成日期: {record.generated_at.date().isoformat() if record.generated_at else 'N/A'}\n"
+                f"> 数据日期: {record.data_date}\n"
+                f"> 平台版本: {record.platform_version}\n"
+                f"> 整体置信度: {record.overall_confidence}\n"
+                f"> 免责声明: {disclaimer}\n\n---\n\n"
+            )
+            content = header + md
+            media_type = "text/markdown"
+            filename = f"{fund_code}_packet.md"
+
+        import base64 as _b64
+        encoded = _b64.b64encode(content.encode("utf-8")).decode("ascii")
+        return _log(db, "export_research_packet", params, APIResponse(
+            data={
+                "filename": filename,
+                "format": format,
+                "media_type": media_type,
+                "content_base64": encoded,
+                "size_bytes": len(content.encode("utf-8")),
+            },
+            metadata={"fund_code": fund_code, "packet_id": record.packet_id},
+        ), started)
+    except Exception as exc:
+        return _log(db, "export_research_packet", params, APIResponse(
+            data=None, warnings=[f"导出研究包失败: {exc}"],
+            conclusion_status=ConclusionStatus.NEEDS_REVIEW,
+        ), started)
+
+
+class ExportScreenRequest(BaseModel):
+    filters: dict[str, Any] = Field(default_factory=dict)
+    sort_by: str | None = None
+    sort_order: str | None = "asc"
+    limit: int = Field(default=50, ge=1, le=500)
+    format: str = Field(default="csv", pattern="^(csv|json)$")
+
+
+@v2_router.post("/funds/screen/export")
+def export_screen_results(body: ExportScreenRequest, db: SessionDep):
+    """导出基金筛选结果为 CSV/JSON。"""
+    started = perf_counter()
+    params = body.model_dump()
+    try:
+        from fund_research.api.router import screen_funds as _screen
+
+        screen_result = _screen(db, body.filters)
+        funds = (screen_result.data or {}).get("funds", [])
+        if not funds:
+            return _log(db, "export_screen_results", params, APIResponse(
+                data=None, warnings=["无筛选结果"],
+            ), started)
+
+        if body.sort_by:
+            reverse = body.sort_order == "desc"
+            funds = sorted(funds, key=lambda x: x.get(body.sort_by, 0) or 0, reverse=reverse)
+        funds = funds[:body.limit]
+
+        import base64 as _b64
+        import csv as _csv
+        import io as _io
+
+        if body.format == "json":
+            content = json.dumps(funds, ensure_ascii=False, indent=2)
+            media_type = "application/json"
+            filename = "screen_results.json"
+        else:
+            buf = _io.StringIO()
+            writer = _csv.DictWriter(buf, fieldnames=funds[0].keys(), extrasaction="ignore")
+            writer.writeheader()
+            for row in funds:
+                writer.writerow(row)
+            content = buf.getvalue()
+            media_type = "text/csv"
+            filename = "screen_results.csv"
+
+        encoded = _b64.b64encode(content.encode("utf-8")).decode("ascii")
+        return _log(db, "export_screen_results", params, APIResponse(
+            data={
+                "filename": filename,
+                "format": body.format,
+                "media_type": media_type,
+                "content_base64": encoded,
+                "row_count": len(funds),
+            },
+        ), started)
+    except Exception as exc:
+        return _log(db, "export_screen_results", params, APIResponse(
+            data=None, warnings=[f"导出筛选结果失败: {exc}"],
+            conclusion_status=ConclusionStatus.NEEDS_REVIEW,
+        ), started)
+
+
+# ============================================================
+# 数据质量面板
+# ============================================================
+
+
+@v2_router.get("/quality/dashboard")
+def get_quality_dashboard(db: SessionDep) -> APIResponse[dict]:
+    """数据质量监控面板 — 返回数据库覆盖统计、数据新鲜度、数据源快照、任务日志。"""
+    started = perf_counter()
+    params: dict[str, Any] = {}
+
+    # 表行数统计
+    table_counts: dict[str, int] = {}
+    count_tables = [
+        "fund_main", "fund_nav", "fund_disclosed_holdings", "fund_scale",
+        "fund_fee", "holder_structure", "stock_daily", "stock_main",
+        "fund_manager", "fund_company", "style_exposure_result",
+        "static_attribution_result", "research_packet", "evidence",
+        "data_source_snapshot", "task_log",
+    ]
+    for tbl in count_tables:
+        try:
+            result = db.execute(text(f"SELECT COUNT(*) FROM {tbl}"))
+            table_counts[tbl] = int(result.scalar() or 0)
+        except Exception:
+            table_counts[tbl] = -1  # 表不存在
+
+    # 数据新鲜度
+    freshness: dict[str, str | None] = {}
+    for tbl, col in [("fund_nav", "trade_date"), ("stock_daily", "trade_date"),
+                     ("fund_disclosed_holdings", "report_date"), ("fund_scale", "report_date")]:
+        try:
+            result = db.execute(text(f"SELECT MAX({col}) FROM {tbl}"))
+            val = result.scalar()
+            freshness[tbl] = str(val) if val else None
+        except Exception:
+            freshness[tbl] = None
+
+    # 最近数据源快照 (10条)
+    snapshots_raw: list[dict] = []
+    try:
+        snapshots = db.execute(
+            select(DataSourceSnapshot)
+            .order_by(DataSourceSnapshot.fetch_timestamp.desc())
+            .limit(10)
+        ).scalars().all()
+        for s in snapshots:
+            snapshots_raw.append({
+                "source_name": s.source_name,
+                "source_level": s.source_level.value if s.source_level else None,
+                "entity_type": s.entity_type,
+                "fetch_timestamp": s.fetch_timestamp.isoformat() if s.fetch_timestamp else None,
+                "record_count": s.record_count,
+                "coverage_rate": s.coverage_rate,
+                "anomaly_count": s.anomaly_count,
+                "is_success": s.is_success,
+                "error_message": s.error_message,
+            })
+    except Exception:
+        pass
+
+    # 最近任务日志 (10条)
+    tasks_raw: list[dict] = []
+    try:
+        tasks = db.execute(
+            select(TaskLog)
+            .order_by(TaskLog.created_at.desc())
+            .limit(10)
+        ).scalars().all()
+        for t in tasks:
+            tasks_raw.append({
+                "task_id": t.task_id,
+                "task_type": t.task_type.value if t.task_type else None,
+                "status": t.status.value if t.status else None,
+                "target_entity": t.target_entity,
+                "started_at": t.started_at.isoformat() if t.started_at else None,
+                "duration_ms": t.duration_ms,
+                "result_summary": t.result_summary,
+                "error_message": t.error_message,
+            })
+    except Exception:
+        pass
+
+    data = {
+        "table_counts": table_counts,
+        "freshness": freshness,
+        "recent_snapshots": snapshots_raw,
+        "recent_tasks": tasks_raw,
+    }
+
+    return _log(db, "get_quality_dashboard", params, APIResponse(
+        data=data,
+        metadata={"tool": "get_quality_dashboard"},
+    ), started)
+
+
+# ============================================================
+# Phase 3 — 指纹与相似度 API
+# ============================================================
+#
+# 注意：静态路径（/fingerprint/batch、/fingerprint/compare）必须在动态路径
+# /fingerprint/{fund_code} 之前注册，否则 batch/compare 会被 {fund_code}
+# 捕获。
+
+
+@v2_router.post("/fingerprint/batch")
+def batch_fingerprint_endpoint(
+    db: SessionDep,
+    body: BatchFingerprintRequest,
+) -> APIResponse[dict]:
+    """批量生成基金指纹向量并持久化。
+
+    遍历 fund_codes，逐只调用 generate_fingerprint + persist_fingerprint，
+    返回成功/失败计数与错误明细。
+    """
+    started = perf_counter()
+    params = body.model_dump(mode="json")
+    success_count = 0
+    failure_count = 0
+    errors: list[dict[str, Any]] = []
+    try:
+        for code in body.fund_codes:
+            try:
+                result = generate_fingerprint(db, code, calc_date=body.calc_date)
+                persist_fingerprint(db, result)
+                db.commit()
+                success_count += 1
+            except Exception as inner_exc:
+                db.rollback()
+                failure_count += 1
+                errors.append({"fund_code": code, "error": str(inner_exc)})
+
+        warnings: list[str] = []
+        conclusion_status = ConclusionStatus.COMPUTED
+        if failure_count > 0:
+            warnings.append(f"批量生成指纹：{failure_count} 只失败")
+            conclusion_status = (
+                ConclusionStatus.NEEDS_REVIEW
+                if success_count == 0
+                else ConclusionStatus.OBSERVATION
+            )
+        if success_count == 0:
+            warnings.append("没有生成任何有效指纹")
+
+        return _log(
+            db,
+            "batch_fingerprint",
+            params,
+            APIResponse(
+                data={
+                    "total": len(body.fund_codes),
+                    "success_count": success_count,
+                    "failure_count": failure_count,
+                    "errors": errors,
+                    "calc_date": str(body.calc_date) if body.calc_date else None,
+                },
+                metadata={
+                    "tool": "fingerprint",
+                    "algorithm_version": FINGERPRINT_VERSION,
+                    "platform_version": __version__,
+                },
+                warnings=warnings,
+                conclusion_status=conclusion_status,
+            ),
+            started,
+        )
+    except Exception as exc:
+        db.rollback()
+        return _log(
+            db,
+            "batch_fingerprint",
+            params,
+            APIResponse(
+                data=None,
+                metadata={"tool": "fingerprint", "platform_version": __version__},
+                warnings=[str(exc)],
+                conclusion_status=ConclusionStatus.NEEDS_REVIEW,
+            ),
+            started,
+        )
+
+
+@v2_router.post("/fingerprint/compare")
+def compare_fingerprints_endpoint(
+    db: SessionDep,
+    body: FundCompareRequest,
+) -> APIResponse[dict]:
+    """对比多只基金的指纹向量。
+
+    调用 compare_fund_fingerprints，返回逐只指纹数据、相似度矩阵与持仓重叠分析。
+    """
+    started = perf_counter()
+    params = body.model_dump(mode="json")
+    try:
+        comparison = compare_fund_fingerprints(db, body.fund_codes)
+        warnings = list(comparison.get("warnings") or [])
+        found_codes = comparison.get("fund_codes") or []
+        missing_codes = [c for c in body.fund_codes if c not in found_codes]
+        if missing_codes:
+            warnings.append(f"以下基金无可用指纹: {', '.join(missing_codes)}")
+
+        conclusion_status = (
+            ConclusionStatus.NEEDS_REVIEW
+            if len(found_codes) < 2
+            else ConclusionStatus.COMPUTED
+        )
+
+        return _log(
+            db,
+            "compare_fingerprints",
+            params,
+            APIResponse(
+                data={
+                    "fund_codes": found_codes,
+                    "comparison_data": comparison.get("comparison_data") or {},
+                    "similarity_matrix": comparison.get("similarity_matrix") or {},
+                    "overlap_analysis": comparison.get("overlap_analysis") or {},
+                    "missing_codes": missing_codes,
+                },
+                metadata={
+                    "tool": "fingerprint",
+                    "algorithm_version": FINGERPRINT_VERSION,
+                    "platform_version": __version__,
+                },
+                warnings=warnings,
+                conclusion_status=conclusion_status,
+            ),
+            started,
+        )
+    except Exception as exc:
+        db.rollback()
+        return _log(
+            db,
+            "compare_fingerprints",
+            params,
+            APIResponse(
+                data=None,
+                metadata={"tool": "fingerprint", "platform_version": __version__},
+                warnings=[str(exc)],
+                conclusion_status=ConclusionStatus.NEEDS_REVIEW,
+            ),
+            started,
+        )
+
+
+@v2_router.post("/fingerprint/{fund_code}")
+def generate_fingerprint_endpoint(
+    fund_code: str,
+    db: SessionDep,
+    body: FingerprintRequest | None = None,
+) -> APIResponse[dict]:
+    """生成单只基金的指纹向量并持久化。
+
+    调用 generate_fingerprint + persist_fingerprint，返回指纹字典数据。
+    """
+    started = perf_counter()
+    calc_date = body.calc_date if body else None
+    params = {"fund_code": fund_code, "calc_date": str(calc_date) if calc_date else None}
+    try:
+        result = generate_fingerprint(db, fund_code, calc_date=calc_date)
+        row = persist_fingerprint(db, result)
+        db.commit()
+        data = fingerprint_to_dict(row)
+        warnings = list(result.warnings or [])
+        if result.contains_estimated:
+            warnings.append("指纹包含 estimated 维度，仅作为观察结果")
+        conclusion_status = ConclusionStatus(result.conclusion_status)
+        return _log(
+            db,
+            "generate_fingerprint",
+            params,
+            APIResponse(
+                data=data,
+                metadata={
+                    "tool": "fingerprint",
+                    "algorithm_version": FINGERPRINT_VERSION,
+                    "platform_version": __version__,
+                },
+                warnings=warnings,
+                conclusion_status=conclusion_status,
+            ),
+            started,
+        )
+    except Exception as exc:
+        db.rollback()
+        return _log(
+            db,
+            "generate_fingerprint",
+            params,
+            APIResponse(
+                data=None,
+                metadata={"tool": "fingerprint", "platform_version": __version__},
+                warnings=[str(exc)],
+                conclusion_status=ConclusionStatus.NEEDS_REVIEW,
+            ),
+            started,
+        )
+
+
+@v2_router.get("/fingerprint/{fund_code}")
+def get_fingerprint_endpoint(
+    fund_code: str,
+    db: SessionDep,
+) -> APIResponse[dict]:
+    """获取基金最近一次指纹记录。
+
+    若不存在则返回 data=None 与告警，conclusion_status=NEEDS_REVIEW。
+    """
+    started = perf_counter()
+    params = {"fund_code": fund_code}
+    try:
+        row = get_latest_fingerprint(db, fund_code)
+        if row is None:
+            return _log(
+                db,
+                "get_fingerprint",
+                params,
+                APIResponse(
+                    data=None,
+                    metadata={"tool": "fingerprint", "platform_version": __version__},
+                    warnings=[f"基金 {fund_code} 暂无指纹记录"],
+                    conclusion_status=ConclusionStatus.NEEDS_REVIEW,
+                ),
+                started,
+            )
+        data = fingerprint_to_dict(row)
+        return _log(
+            db,
+            "get_fingerprint",
+            params,
+            APIResponse(
+                data=data,
+                metadata={
+                    "tool": "fingerprint",
+                    "algorithm_version": row.algorithm_version,
+                    "platform_version": __version__,
+                },
+                warnings=list(row.warnings or []),
+                conclusion_status=ConclusionStatus(row.conclusion_status),
+            ),
+            started,
+        )
+    except Exception as exc:
+        db.rollback()
+        return _log(
+            db,
+            "get_fingerprint",
+            params,
+            APIResponse(
+                data=None,
+                metadata={"tool": "fingerprint", "platform_version": __version__},
+                warnings=[str(exc)],
+                conclusion_status=ConclusionStatus.NEEDS_REVIEW,
+            ),
+            started,
+        )
+
+
+@v2_router.post("/fingerprint/{fund_code}/similar")
+def find_similar_funds_endpoint(
+    fund_code: str,
+    db: SessionDep,
+    body: SimilarFundsRequest | None = None,
+) -> APIResponse[dict]:
+    """基于指纹向量查找相似基金。
+
+    调用 find_similar_funds + persist_similarity_cache，返回相似基金列表。
+    """
+    started = perf_counter()
+    metric_space = body.metric_space if body else "composite"
+    top_n = body.top_n if body else 10
+    same_type_only = body.same_type_only if body else True
+    params = {
+        "fund_code": fund_code,
+        "metric_space": metric_space,
+        "top_n": top_n,
+        "same_type_only": same_type_only,
+    }
+    try:
+        results = find_similar_funds(
+            db,
+            fund_code,
+            metric_space=metric_space,
+            top_n=top_n,
+            same_type_only=same_type_only,
+        )
+        persist_similarity_cache(db, results)
+        db.commit()
+
+        similar_data = [r.to_data() for r in results]
+        warnings: list[str] = []
+        if not results:
+            warnings.append(f"基金 {fund_code} 无可用指纹或未找到相似基金")
+        conclusion_status = (
+            ConclusionStatus.NEEDS_REVIEW if not results else ConclusionStatus.COMPUTED
+        )
+
+        return _log(
+            db,
+            "find_similar_funds",
+            params,
+            APIResponse(
+                data={
+                    "fund_code": fund_code,
+                    "metric_space": metric_space,
+                    "top_n": top_n,
+                    "same_type_only": same_type_only,
+                    "similar_funds": similar_data,
+                    "count": len(similar_data),
+                },
+                metadata={
+                    "tool": "fingerprint",
+                    "algorithm_version": FINGERPRINT_VERSION,
+                    "platform_version": __version__,
+                },
+                warnings=warnings,
+                conclusion_status=conclusion_status,
+            ),
+            started,
+        )
+    except Exception as exc:
+        db.rollback()
+        return _log(
+            db,
+            "find_similar_funds",
+            params,
+            APIResponse(
+                data=None,
+                metadata={"tool": "fingerprint", "platform_version": __version__},
+                warnings=[str(exc)],
+                conclusion_status=ConclusionStatus.NEEDS_REVIEW,
+            ),
+            started,
+        )
+
+
+@v2_router.post("/funds/compare")
+def compare_funds_endpoint(
+    db: SessionDep,
+    body: FundCompareRequest,
+) -> APIResponse[dict]:
+    """多基金综合对比（高层接口）。
+
+    合并 FundMain 基础信息与指纹对比结果（相似度矩阵、持仓重叠分析）。
+    """
+    started = perf_counter()
+    params = body.model_dump(mode="json")
+    try:
+        # 基础信息
+        funds = db.scalars(
+            select(FundMain).where(FundMain.fund_code.in_(body.fund_codes))
+        ).all()
+        basic_info: dict[str, Any] = {}
+        for f in funds:
+            basic_info[f.fund_code] = {
+                "fund_code": f.fund_code,
+                "short_name": f.short_name,
+                "full_name": f.full_name,
+                "category": f.category,
+                "sub_category": f.sub_category,
+                "investment_type": f.investment_type,
+                "operation_mode": f.operation_mode,
+                "inception_date": str(f.inception_date) if f.inception_date else None,
+                "benchmark": f.benchmark,
+                "is_etf": f.is_etf,
+                "is_qdii": f.is_qdii,
+                "is_fof": f.is_fof,
+                "status": f.status,
+            }
+
+        # 指纹对比
+        comparison = compare_fund_fingerprints(db, body.fund_codes)
+        found_codes = comparison.get("fund_codes") or []
+        missing_codes = [c for c in body.fund_codes if c not in found_codes]
+        missing_basic = [c for c in body.fund_codes if c not in basic_info]
+
+        warnings: list[str] = list(comparison.get("warnings") or [])
+        if missing_codes:
+            warnings.append(f"以下基金无可用指纹: {', '.join(missing_codes)}")
+        if missing_basic:
+            warnings.append(f"以下基金无基础信息: {', '.join(missing_basic)}")
+
+        conclusion_status = (
+            ConclusionStatus.NEEDS_REVIEW
+            if len(found_codes) < 2
+            else ConclusionStatus.COMPUTED
+        )
+
+        return _log(
+            db,
+            "compare_funds",
+            params,
+            APIResponse(
+                data={
+                    "fund_codes": body.fund_codes,
+                    "basic_info": basic_info,
+                    "comparison_data": comparison.get("comparison_data") or {},
+                    "similarity_matrix": comparison.get("similarity_matrix") or {},
+                    "overlap_analysis": comparison.get("overlap_analysis") or {},
+                    "missing_fingerprint_codes": missing_codes,
+                    "missing_basic_codes": missing_basic,
+                },
+                metadata={
+                    "tool": "fingerprint",
+                    "algorithm_version": FINGERPRINT_VERSION,
+                    "platform_version": __version__,
+                },
+                warnings=warnings,
+                conclusion_status=conclusion_status,
+            ),
+            started,
+        )
+    except Exception as exc:
+        db.rollback()
+        return _log(
+            db,
+            "compare_funds",
+            params,
+            APIResponse(
+                data=None,
+                metadata={"tool": "fingerprint", "platform_version": __version__},
+                warnings=[str(exc)],
+                conclusion_status=ConclusionStatus.NEEDS_REVIEW,
+            ),
+            started,
+        )
+
+
+# ============================================================
+# P3.4: 基金池提醒 API
+# ============================================================
+
+
+class CreateAlertRuleRequest(BaseModel):
+    fund_code: str = Field(..., max_length=20)
+    alert_type: str
+    params: dict[str, Any] = Field(default_factory=dict)
+
+
+class AlertScanRequest(BaseModel):
+    alert_types: list[str] | None = None
+    params: dict[str, Any] = Field(default_factory=dict)
+
+
+def _alert_record_to_dict(r: PoolAlertRecord) -> dict[str, Any]:
+    """Serialize a PoolAlertRecord to an API-friendly dict."""
+    return {
+        "id": r.id,
+        "rule_id": r.rule_id,
+        "pool_id": r.pool_id,
+        "fund_code": r.fund_code,
+        "alert_type": r.alert_type,
+        "severity": r.severity,
+        "message": r.message,
+        "detail": r.detail,
+        "triggered_at": r.triggered_at.isoformat() if r.triggered_at else None,
+        "is_read": r.is_read,
+    }
+
+
+@v2_router.post("/pools/{pool_id}/alert-rules", response_model=APIResponse[dict])
+def create_alert_rule_endpoint(
+    pool_id: int,
+    body: CreateAlertRuleRequest,
+    db: SessionDep,
+) -> APIResponse[dict]:
+    """创建基金池提醒规则。"""
+    started = perf_counter()
+    params = {"pool_id": pool_id, **body.model_dump()}
+    try:
+        if body.alert_type not in ALERT_TYPES:
+            return _log(db, "create_alert_rule", params, APIResponse(
+                data=None,
+                metadata={"tool": POOL_ALERT_NAME, "platform_version": __version__},
+                warnings=[f"未知提醒类型: {body.alert_type}"],
+                conclusion_status=ConclusionStatus.NEEDS_REVIEW,
+            ), started)
+        rule = create_alert_rule(db, pool_id, body.fund_code, body.alert_type, body.params)
+        db.commit()
+        db.refresh(rule)
+        return _log(db, "create_alert_rule", params, APIResponse(
+            data={
+                "id": rule.id,
+                "pool_id": rule.pool_id,
+                "fund_code": rule.fund_code,
+                "alert_type": rule.alert_type,
+                "params": rule.params,
+                "is_active": rule.is_active,
+            },
+            metadata={"tool": POOL_ALERT_NAME, "platform_version": __version__},
+            conclusion_status=ConclusionStatus.COMPUTED,
+        ), started)
+    except Exception as exc:
+        db.rollback()
+        return _log(db, "create_alert_rule", params, APIResponse(
+            data=None,
+            metadata={"tool": POOL_ALERT_NAME, "platform_version": __version__},
+            warnings=[f"创建提醒规则失败: {exc}"],
+            conclusion_status=ConclusionStatus.NEEDS_REVIEW,
+        ), started)
+
+
+@v2_router.get("/pools/{pool_id}/alert-rules", response_model=APIResponse[dict])
+def list_alert_rules_endpoint(
+    pool_id: int,
+    db: SessionDep,
+    fund_code: str | None = Query(None),
+) -> APIResponse[dict]:
+    """列出基金池提醒规则，可按基金代码筛选。"""
+    started = perf_counter()
+    params = {"pool_id": pool_id, "fund_code": fund_code}
+    try:
+        rules = get_alert_rules(db, pool_id, fund_code=fund_code)
+        data = [
+            {
+                "id": r.id,
+                "pool_id": r.pool_id,
+                "fund_code": r.fund_code,
+                "alert_type": r.alert_type,
+                "params": r.params,
+                "is_active": r.is_active,
+                "created_at": r.created_at.isoformat() if r.created_at else None,
+            }
+            for r in rules
+        ]
+        return _log(db, "list_alert_rules", params, APIResponse(
+            data={"rules": data, "total": len(data)},
+            metadata={"tool": POOL_ALERT_NAME, "platform_version": __version__},
+            conclusion_status=ConclusionStatus.COMPUTED,
+        ), started)
+    except Exception as exc:
+        db.rollback()
+        return _log(db, "list_alert_rules", params, APIResponse(
+            data=None,
+            metadata={"tool": POOL_ALERT_NAME, "platform_version": __version__},
+            warnings=[f"获取提醒规则失败: {exc}"],
+            conclusion_status=ConclusionStatus.NEEDS_REVIEW,
+        ), started)
+
+
+@v2_router.delete("/pools/{pool_id}/alert-rules/{rule_id}", response_model=APIResponse[dict])
+def delete_alert_rule_endpoint(
+    pool_id: int,
+    rule_id: int,
+    db: SessionDep,
+) -> APIResponse[dict]:
+    """删除基金池提醒规则。"""
+    started = perf_counter()
+    params = {"pool_id": pool_id, "rule_id": rule_id}
+    try:
+        rule = db.scalars(
+            select(PoolAlertRule).where(
+                PoolAlertRule.id == rule_id,
+                PoolAlertRule.pool_id == pool_id,
+            ).limit(1)
+        ).first()
+        if rule is None:
+            raise HTTPException(status_code=404, detail="提醒规则不存在")
+        db.delete(rule)
+        db.commit()
+        return _log(db, "delete_alert_rule", params, APIResponse(
+            data={"deleted": True, "rule_id": rule_id},
+            metadata={"tool": POOL_ALERT_NAME, "platform_version": __version__},
+            conclusion_status=ConclusionStatus.COMPUTED,
+        ), started)
+    except Exception as exc:
+        db.rollback()
+        return _log(db, "delete_alert_rule", params, APIResponse(
+            data=None,
+            metadata={"tool": POOL_ALERT_NAME, "platform_version": __version__},
+            warnings=[f"删除提醒规则失败: {exc}"],
+            conclusion_status=ConclusionStatus.NEEDS_REVIEW,
+        ), started)
+
+
+@v2_router.get("/pools/{pool_id}/alerts", response_model=APIResponse[dict])
+def list_pool_alerts_endpoint(
+    pool_id: int,
+    db: SessionDep,
+    is_read: bool | None = Query(None),
+    fund_code: str | None = Query(None),
+    limit: int = Query(50, ge=1, le=200),
+) -> APIResponse[dict]:
+    """列出基金池提醒记录。"""
+    started = perf_counter()
+    params = {"pool_id": pool_id, "is_read": is_read, "fund_code": fund_code, "limit": limit}
+    try:
+        records = get_alert_records(
+            db, pool_id=pool_id, fund_code=fund_code, is_read=is_read, limit=limit
+        )
+        data = [_alert_record_to_dict(r) for r in records]
+        return _log(db, "list_pool_alerts", params, APIResponse(
+            data={"alerts": data, "total": len(data)},
+            metadata={"tool": POOL_ALERT_NAME, "platform_version": __version__},
+            conclusion_status=ConclusionStatus.COMPUTED,
+        ), started)
+    except Exception as exc:
+        db.rollback()
+        return _log(db, "list_pool_alerts", params, APIResponse(
+            data=None,
+            metadata={"tool": POOL_ALERT_NAME, "platform_version": __version__},
+            warnings=[f"获取提醒记录失败: {exc}"],
+            conclusion_status=ConclusionStatus.NEEDS_REVIEW,
+        ), started)
+
+
+@v2_router.get("/alerts", response_model=APIResponse[dict])
+def list_alerts_endpoint(
+    db: SessionDep,
+    fund_code: str | None = Query(None),
+    is_read: bool | None = Query(None),
+    limit: int = Query(50, ge=1, le=200),
+) -> APIResponse[dict]:
+    """全局提醒记录查询。"""
+    started = perf_counter()
+    params = {"fund_code": fund_code, "is_read": is_read, "limit": limit}
+    try:
+        records = get_alert_records(
+            db, pool_id=None, fund_code=fund_code, is_read=is_read, limit=limit
+        )
+        data = [_alert_record_to_dict(r) for r in records]
+        return _log(db, "list_alerts", params, APIResponse(
+            data={"alerts": data, "total": len(data)},
+            metadata={"tool": POOL_ALERT_NAME, "platform_version": __version__},
+            conclusion_status=ConclusionStatus.COMPUTED,
+        ), started)
+    except Exception as exc:
+        db.rollback()
+        return _log(db, "list_alerts", params, APIResponse(
+            data=None,
+            metadata={"tool": POOL_ALERT_NAME, "platform_version": __version__},
+            warnings=[f"获取提醒记录失败: {exc}"],
+            conclusion_status=ConclusionStatus.NEEDS_REVIEW,
+        ), started)
+
+
+@v2_router.post("/alerts/{alert_id}/read", response_model=APIResponse[dict])
+def mark_alert_read_endpoint(
+    alert_id: int,
+    db: SessionDep,
+) -> APIResponse[dict]:
+    """标记提醒为已读。"""
+    started = perf_counter()
+    params = {"alert_id": alert_id}
+    try:
+        record = mark_alert_read(db, alert_id)
+        if record is None:
+            raise HTTPException(status_code=404, detail="提醒记录不存在")
+        db.commit()
+        return _log(db, "mark_alert_read", params, APIResponse(
+            data={"id": record.id, "is_read": record.is_read},
+            metadata={"tool": POOL_ALERT_NAME, "platform_version": __version__},
+            conclusion_status=ConclusionStatus.COMPUTED,
+        ), started)
+    except Exception as exc:
+        db.rollback()
+        return _log(db, "mark_alert_read", params, APIResponse(
+            data=None,
+            metadata={"tool": POOL_ALERT_NAME, "platform_version": __version__},
+            warnings=[f"标记已读失败: {exc}"],
+            conclusion_status=ConclusionStatus.NEEDS_REVIEW,
+        ), started)
+
+
+@v2_router.post("/pools/{pool_id}/alerts/scan", response_model=APIResponse[dict])
+def scan_pool_alerts_endpoint(
+    pool_id: int,
+    body: AlertScanRequest,
+    db: SessionDep,
+) -> APIResponse[dict]:
+    """手动触发基金池提醒扫描，并将结果持久化到 PoolAlertRecord。"""
+    started = perf_counter()
+    params = {"pool_id": pool_id, **body.model_dump()}
+    try:
+        items, scan_warnings = scan_pool_alerts(
+            db, pool_id, alert_types=body.alert_types, params=body.params
+        )
+        persisted = persist_alerts(db, pool_id, items)
+        records: list[dict[str, Any]] = []
+        for record in persisted:
+            records.append({
+                "id": record.id,
+                "fund_code": record.fund_code,
+                "alert_type": record.alert_type,
+                "severity": record.severity,
+                "message": record.message,
+                "triggered_at": record.triggered_at.isoformat() if record.triggered_at else None,
+            })
+        db.commit()
+        all_warnings = list(scan_warnings)
+        return _log(db, "scan_pool_alerts", params, APIResponse(
+            data={"alerts": records, "total": len(records), "pool_id": pool_id},
+            metadata={
+                "tool": POOL_ALERT_NAME,
+                "algorithm_version": POOL_ALERT_VERSION,
+                "platform_version": __version__,
+            },
+            warnings=all_warnings if all_warnings else None,
+            conclusion_status=ConclusionStatus.COMPUTED,
+        ), started)
+    except Exception as exc:
+        db.rollback()
+        return _log(db, "scan_pool_alerts", params, APIResponse(
+            data=None,
+            metadata={
+                "tool": POOL_ALERT_NAME,
+                "algorithm_version": POOL_ALERT_VERSION,
+                "platform_version": __version__,
+            },
+            warnings=[f"提醒扫描失败: {exc}"],
+            conclusion_status=ConclusionStatus.NEEDS_REVIEW,
+        ), started)
+
+
+# ============================================================
+# P3.5: 股票反选基金
+# ============================================================
+
+
+class ReverseLookupRequest(BaseModel):
+    stock_codes: list[str] = Field(..., min_length=1, max_length=50)
+    fund_scope: str = Field(default="all", pattern="^(all|pool|fund_type)$")
+    scope_id: str | None = None
+    method: str = Field(default="weighted", pattern="^(disclosed|simulated|weighted)$")
+    top_n: int = Field(default=20, ge=1, le=100)
+
+
+@v2_router.post("/analysis/reverse-lookup", response_model=APIResponse[dict])
+def reverse_lookup_endpoint(
+    db: SessionDep,
+    request: ReverseLookupRequest,
+) -> APIResponse[dict]:
+    """股票反选基金 — 给定一篮子股票代码，查找持有这些股票的基金并按暴露度排序。
+
+    支持三种方法：disclosed（披露持仓，fact）、simulated（模拟持仓，estimated）、
+    weighted（披露优先，模拟回退）。结果持久化到 reverse_lookup_result 表。
+    """
+    started = perf_counter()
+    params = {
+        "stock_codes": request.stock_codes,
+        "fund_scope": request.fund_scope,
+        "scope_id": request.scope_id,
+        "method": request.method,
+        "top_n": request.top_n,
+    }
+    try:
+        result = reverse_lookup(
+            db,
+            request.stock_codes,
+            method=request.method,
+            fund_scope=request.fund_scope,
+            scope_id=request.scope_id,
+            top_n=request.top_n,
+        )
+        persist_reverse_lookup(
+            db,
+            request.stock_codes,
+            result,
+            request.fund_scope,
+            request.scope_id,
+            request.method,
+        )
+        db.commit()
+
+        warnings: list[str] = []
+        if not result["results"]:
+            warnings.append("未找到持有给定股票的基金")
+
+        # Overall conclusion status reflects the mix of fact / estimated sources.
+        sources = {r.get("source") for r in result["results"]}
+        if not result["results"]:
+            conclusion_status = ConclusionStatus.NEEDS_REVIEW
+        elif sources == {"fact"}:
+            conclusion_status = ConclusionStatus.FACT
+        elif sources == {"estimated"}:
+            conclusion_status = ConclusionStatus.ESTIMATED
+            warnings.append("结果仅来自模拟持仓，属于 estimated，不可作为高置信结论")
+        else:
+            conclusion_status = ConclusionStatus.COMPUTED
+
+        return _log(
+            db,
+            "reverse_lookup",
+            params,
+            APIResponse(
+                data={
+                    "results": result["results"],
+                    "stock_coverage": result["stock_coverage"],
+                    "method": result["method"],
+                    "fund_count": result["fund_count"],
+                },
+                metadata={
+                    "tool": REVERSE_LOOKUP_NAME,
+                    "algorithm_version": REVERSE_LOOKUP_VERSION,
+                    "platform_version": __version__,
+                },
+                warnings=warnings,
+                conclusion_status=conclusion_status,
+            ),
+            started,
+        )
+    except Exception as exc:
+        db.rollback()
+        return _log(
+            db,
+            "reverse_lookup",
+            params,
+            APIResponse(
+                data=None,
+                metadata={
+                    "tool": REVERSE_LOOKUP_NAME,
+                    "algorithm_version": REVERSE_LOOKUP_VERSION,
+                    "platform_version": __version__,
+                },
+                warnings=[str(exc)],
+                conclusion_status=ConclusionStatus.NEEDS_REVIEW,
+            ),
+            started,
+        )
+
+
+# ============================================================
+# P3.6: 研究任务模板
+# ============================================================
+
+
+class TemplateRunRequest(BaseModel):
+    """Request body for executing a research task template."""
+
+    inputs: dict[str, Any] = Field(default_factory=dict)
+
+
+@v2_router.post("/templates/seed", response_model=APIResponse[dict])
+def seed_templates_endpoint(db: SessionDep) -> APIResponse[dict]:
+    """植入内置研究任务模板。返回新插入的模板数量。"""
+    started = perf_counter()
+    params: dict[str, Any] = {}
+    try:
+        count = seed_builtin_templates(db)
+        db.commit()
+        return _log(
+            db,
+            "template_seed",
+            params,
+            APIResponse(
+                data={"inserted": count},
+                metadata={
+                    "tool": TEMPLATE_NAME,
+                    "algorithm_version": TEMPLATE_VERSION,
+                    "platform_version": __version__,
+                },
+                conclusion_status=ConclusionStatus.COMPUTED,
+            ),
+            started,
+        )
+    except Exception as exc:
+        db.rollback()
+        return _log(
+            db,
+            "template_seed",
+            params,
+            APIResponse(
+                data=None,
+                metadata={
+                    "tool": TEMPLATE_NAME,
+                    "algorithm_version": TEMPLATE_VERSION,
+                    "platform_version": __version__,
+                },
+                warnings=[str(exc)],
+                conclusion_status=ConclusionStatus.NEEDS_REVIEW,
+            ),
+            started,
+        )
+
+
+@v2_router.get("/templates", response_model=APIResponse[dict])
+def list_templates_endpoint(
+    db: SessionDep,
+    builtin_only: bool = Query(False, description="仅返回内置模板"),
+) -> APIResponse[dict]:
+    """列出所有研究任务模板。"""
+    started = perf_counter()
+    params = {"builtin_only": builtin_only}
+    try:
+        templates = list_templates(db, builtin_only=builtin_only)
+        data = [
+            {
+                "template_id": t.template_id,
+                "name": t.name,
+                "description": t.description,
+                "definition": t.definition,
+                "is_builtin": t.is_builtin,
+                "created_at": (
+                    t.created_at.isoformat() if t.created_at else None
+                ),
+            }
+            for t in templates
+        ]
+        return _log(
+            db,
+            "template_list",
+            params,
+            APIResponse(
+                data={"templates": data, "total": len(data)},
+                metadata={
+                    "tool": TEMPLATE_NAME,
+                    "algorithm_version": TEMPLATE_VERSION,
+                    "platform_version": __version__,
+                },
+                conclusion_status=ConclusionStatus.COMPUTED,
+            ),
+            started,
+        )
+    except Exception as exc:
+        db.rollback()
+        return _log(
+            db,
+            "template_list",
+            params,
+            APIResponse(
+                data=None,
+                metadata={
+                    "tool": TEMPLATE_NAME,
+                    "algorithm_version": TEMPLATE_VERSION,
+                    "platform_version": __version__,
+                },
+                warnings=[str(exc)],
+                conclusion_status=ConclusionStatus.NEEDS_REVIEW,
+            ),
+            started,
+        )
+
+
+@v2_router.get("/templates/runs", response_model=APIResponse[dict])
+def list_template_runs_endpoint(
+    db: SessionDep,
+    template_id: str | None = Query(None, description="按模板 ID 过滤"),
+    limit: int = Query(20, ge=1, le=100, description="返回条数上限"),
+) -> APIResponse[dict]:
+    """列出模板执行记录，支持按模板 ID 过滤。"""
+    started = perf_counter()
+    params = {"template_id": template_id, "limit": limit}
+    try:
+        records = get_run_records(db, template_id=template_id, limit=limit)
+        data = [
+            {
+                "id": r.id,
+                "template_id": r.template_id,
+                "status": r.status,
+                "steps_total": r.steps_total,
+                "steps_completed": r.steps_completed,
+                "steps_failed": r.steps_failed,
+                "started_at": r.started_at.isoformat() if r.started_at else None,
+                "completed_at": (
+                    r.completed_at.isoformat() if r.completed_at else None
+                ),
+                "error_message": r.error_message,
+            }
+            for r in records
+        ]
+        return _log(
+            db,
+            "template_run_list",
+            params,
+            APIResponse(
+                data={"runs": data, "total": len(data)},
+                metadata={
+                    "tool": TEMPLATE_NAME,
+                    "algorithm_version": TEMPLATE_VERSION,
+                    "platform_version": __version__,
+                },
+                conclusion_status=ConclusionStatus.COMPUTED,
+            ),
+            started,
+        )
+    except Exception as exc:
+        db.rollback()
+        return _log(
+            db,
+            "template_run_list",
+            params,
+            APIResponse(
+                data=None,
+                metadata={
+                    "tool": TEMPLATE_NAME,
+                    "algorithm_version": TEMPLATE_VERSION,
+                    "platform_version": __version__,
+                },
+                warnings=[str(exc)],
+                conclusion_status=ConclusionStatus.NEEDS_REVIEW,
+            ),
+            started,
+        )
+
+
+@v2_router.get("/templates/runs/{run_id}", response_model=APIResponse[dict])
+def get_template_run_endpoint(
+    run_id: int,
+    db: SessionDep,
+) -> APIResponse[dict]:
+    """查询单条模板执行记录。"""
+    started = perf_counter()
+    params = {"run_id": run_id}
+    try:
+        record = get_run_record(db, run_id)
+        if record is None:
+            raise HTTPException(status_code=404, detail=f"run record not found: {run_id}")
+        data = {
+            "id": record.id,
+            "template_id": record.template_id,
+            "inputs": record.inputs,
+            "status": record.status,
+            "steps_total": record.steps_total,
+            "steps_completed": record.steps_completed,
+            "steps_failed": record.steps_failed,
+            "step_results": record.step_results or [],
+            "research_packet_id": record.research_packet_id,
+            "started_at": record.started_at.isoformat() if record.started_at else None,
+            "completed_at": (
+                record.completed_at.isoformat() if record.completed_at else None
+            ),
+            "error_message": record.error_message,
+        }
+        return _log(
+            db,
+            "template_run_detail",
+            params,
+            APIResponse(
+                data=data,
+                metadata={
+                    "tool": TEMPLATE_NAME,
+                    "algorithm_version": TEMPLATE_VERSION,
+                    "platform_version": __version__,
+                },
+                conclusion_status=ConclusionStatus.COMPUTED,
+            ),
+            started,
+        )
+    except HTTPException:
+        raise
+    except Exception as exc:
+        db.rollback()
+        return _log(
+            db,
+            "template_run_detail",
+            params,
+            APIResponse(
+                data=None,
+                metadata={
+                    "tool": TEMPLATE_NAME,
+                    "algorithm_version": TEMPLATE_VERSION,
+                    "platform_version": __version__,
+                },
+                warnings=[str(exc)],
+                conclusion_status=ConclusionStatus.NEEDS_REVIEW,
+            ),
+            started,
+        )
+
+
+@v2_router.get("/templates/{template_id}", response_model=APIResponse[dict])
+def get_template_endpoint(
+    template_id: str,
+    db: SessionDep,
+) -> APIResponse[dict]:
+    """查询单个研究任务模板。"""
+    started = perf_counter()
+    params = {"template_id": template_id}
+    try:
+        template = get_template(db, template_id)
+        if template is None:
+            raise HTTPException(
+                status_code=404, detail=f"template not found: {template_id}"
+            )
+        data = {
+            "template_id": template.template_id,
+            "name": template.name,
+            "description": template.description,
+            "definition": template.definition,
+            "is_builtin": template.is_builtin,
+            "created_at": (
+                template.created_at.isoformat() if template.created_at else None
+            ),
+        }
+        return _log(
+            db,
+            "template_detail",
+            params,
+            APIResponse(
+                data=data,
+                metadata={
+                    "tool": TEMPLATE_NAME,
+                    "algorithm_version": TEMPLATE_VERSION,
+                    "platform_version": __version__,
+                },
+                conclusion_status=ConclusionStatus.COMPUTED,
+            ),
+            started,
+        )
+    except HTTPException:
+        raise
+    except Exception as exc:
+        db.rollback()
+        return _log(
+            db,
+            "template_detail",
+            params,
+            APIResponse(
+                data=None,
+                metadata={
+                    "tool": TEMPLATE_NAME,
+                    "algorithm_version": TEMPLATE_VERSION,
+                    "platform_version": __version__,
+                },
+                warnings=[str(exc)],
+                conclusion_status=ConclusionStatus.NEEDS_REVIEW,
+            ),
+            started,
+        )
+
+
+@v2_router.post("/templates/{template_id}/run", response_model=APIResponse[dict])
+def run_template_endpoint(
+    template_id: str,
+    request: TemplateRunRequest,
+    db: SessionDep,
+) -> APIResponse[dict]:
+    """执行研究任务模板，按步骤分派到对应分析模块。"""
+    started = perf_counter()
+    params = {"template_id": template_id, "inputs": request.inputs}
+    try:
+        result = run_template(db, template_id, request.inputs)
+        db.commit()
+        return _log(
+            db,
+            "template_run",
+            params,
+            APIResponse(
+                data=result.to_data(),
+                metadata={
+                    "tool": TEMPLATE_NAME,
+                    "algorithm_version": TEMPLATE_VERSION,
+                    "platform_version": __version__,
+                },
+                warnings=result.warnings or None,
+                conclusion_status=ConclusionStatus.COMPUTED,
+            ),
+            started,
+        )
+    except Exception as exc:
+        db.rollback()
+        return _log(
+            db,
+            "template_run",
+            params,
+            APIResponse(
+                data=None,
+                metadata={
+                    "tool": TEMPLATE_NAME,
+                    "algorithm_version": TEMPLATE_VERSION,
+                    "platform_version": __version__,
+                },
+                warnings=[str(exc)],
+                conclusion_status=ConclusionStatus.NEEDS_REVIEW,
+            ),
+            started,
+        )
+
+
+# ============================================================
+# P3.7: 研究看板
+# ============================================================
+
+
+@v2_router.get("/dashboard", response_model=APIResponse[dict])
+def dashboard_endpoint(
+    db: SessionDep,
+    fund_codes: list[str] | None = Query(None, description="指定基金代码列表，留空则全部"),  # noqa: B008
+) -> APIResponse[dict]:
+    """研究看板 — 聚合今日变动、基金池提醒、算法告警、AI 告警和市场概览。
+
+    每个面板独立 gather，单面板失败不影响其余面板，失败信息记入 warnings。
+    """
+    started = perf_counter()
+    params: dict[str, Any] = {"fund_codes": fund_codes}
+    try:
+        data = generate_dashboard(db, fund_codes=fund_codes)
+        return _log(
+            db,
+            "dashboard",
+            params,
+            APIResponse(
+                data=data.to_data(),
+                metadata={
+                    "tool": DASHBOARD_NAME,
+                    "algorithm_version": DASHBOARD_VERSION,
+                    "platform_version": __version__,
+                },
+                warnings=data.warnings or None,
+                conclusion_status=ConclusionStatus.COMPUTED,
+            ),
+            started,
+        )
+    except Exception as exc:
+        db.rollback()
+        return _log(
+            db,
+            "dashboard",
+            params,
+            APIResponse(
+                data=None,
+                metadata={
+                    "tool": DASHBOARD_NAME,
+                    "algorithm_version": DASHBOARD_VERSION,
+                    "platform_version": __version__,
+                },
+                warnings=[str(exc)],
                 conclusion_status=ConclusionStatus.NEEDS_REVIEW,
             ),
             started,

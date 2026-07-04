@@ -84,6 +84,7 @@ from fund_research.db.models import (
 from fund_research.db.models import (
     EvidenceRecord as DBEvidenceRecord,
 )
+from fund_research.research.credibility import evaluate_credibility
 
 SUPPORTED_TEMPLATES = {
     "single_fund_checkup",
@@ -1251,18 +1252,37 @@ def build_single_fund_packet(
         "simulated_holding": sim_status,
         "dynamic_attribution": dyn_status,
     }
-    warnings = [
-        *profile_warnings,
-        *manager_warnings,
-        *nav_warnings,
-        *holdings_warnings,
-        *holder_warnings,
-        *exposure_warnings,
-        *attribution_warnings,
-        *scoring_warnings,
-        *sim_warnings,
-        *dyn_warnings,
-    ]
+
+    # ---- 五道可信度门禁（需求书 §5.5） ----
+    fund_type = fund_profile.get("fund_type") if fund_profile else None
+    all_modules = {
+        "fund_profile": fund_profile,
+        "manager_info": manager_info,
+        "nav_metrics": nav_metrics,
+        "disclosed_holdings": holdings,
+        "holder_structure": holder_structure,
+        "exposure": exposure,
+        "attribution": attribution,
+        "scoring": scoring,
+        "simulated_holding": simulated_holding,
+        "dynamic_attribution": dynamic_attribution,
+    }
+    # 各模块数据源等级
+    module_source_levels: dict[str, DataSourceLevel | None] = {
+        "fund_profile": _safe_source_level(fund_profile.get("data_source_level")) if fund_profile else None,
+        "manager_info": DataSourceLevel.B,
+        "nav_metrics": DataSourceLevel.B,
+        "disclosed_holdings": DataSourceLevel.B,
+        "holder_structure": DataSourceLevel.B,
+        "exposure": DataSourceLevel.B,
+        "attribution": DataSourceLevel.B,
+    }
+    # 覆盖率元数据
+    module_meta: dict[str, dict] = {}
+    if nav_metrics and nav_metrics.get("start_date") and nav_metrics.get("end_date"):
+        module_meta["nav_metrics"] = {"coverage_rate": 0.9}  # NAV数据来自B级源，视为高覆盖
+
+    # 先构建证据（门禁5需要证据计数）
     evidence = _build_evidence(
         fund_code,
         fund_profile,
@@ -1285,6 +1305,65 @@ def build_single_fund_packet(
         dynamic_attribution=dynamic_attribution,
         dyn_status=dyn_status,
     )
+    # 按模块统计证据条数（evidence_id前缀 → 模块名）
+    _evidence_prefix_to_module: dict[str, str] = {
+        "profile:": "fund_profile",
+        "manager_info:": "manager_info",
+        "nav_metrics:": "nav_metrics",
+        "holdings:": "disclosed_holdings",
+        "holder_structure:": "holder_structure",
+        "exposure:": "exposure",
+        "attribution:": "attribution",
+        "scoring:": "scoring",
+        "simulated_holding:": "simulated_holding",
+        "dynamic_attribution:": "dynamic_attribution",
+    }
+    module_evidence_counts: dict[str, int] = {}
+    for ev in evidence:
+        for prefix, mod in _evidence_prefix_to_module.items():
+            if ev.evidence_id.startswith(prefix):
+                module_evidence_counts[mod] = module_evidence_counts.get(mod, 0) + 1
+                break
+
+    # 执行五道可信度门禁
+    credibility_report = evaluate_credibility(
+        fund_code=fund_code,
+        fund_type=fund_type,
+        modules=all_modules,
+        module_source_levels=module_source_levels,
+        module_meta=module_meta,
+        module_evidence_counts=module_evidence_counts,
+    )
+    # 用门禁结果覆盖模块状态（hard gate 降级为 NEEDS_REVIEW，soft gate 降级为 OBSERVATION）
+    for mod_name, gate_status in credibility_report.module_statuses.items():
+        if mod_name in conclusion_map:
+            current = conclusion_map[mod_name]
+            # 门禁降级方向：FACT → COMPUTED → OBSERVATION → NEEDS_REVIEW
+            status_order = {
+                ConclusionStatus.FACT: 0,
+                ConclusionStatus.COMPUTED: 1,
+                ConclusionStatus.ESTIMATED: 2,
+                ConclusionStatus.OBSERVATION: 3,
+                ConclusionStatus.NEEDS_REVIEW: 4,
+            }
+            if status_order.get(gate_status, 0) > status_order.get(current, 0):
+                conclusion_map[mod_name] = gate_status
+    # 添加门禁警告
+    gating_warnings = credibility_report.warnings
+
+    warnings = [
+        *profile_warnings,
+        *manager_warnings,
+        *nav_warnings,
+        *holdings_warnings,
+        *holder_warnings,
+        *exposure_warnings,
+        *attribution_warnings,
+        *scoring_warnings,
+        *sim_warnings,
+        *dyn_warnings,
+        *gating_warnings,
+    ]
     residuals = _build_residuals(exposure, attribution, dynamic_attribution)
     risk_alerts = _build_risk_alerts(
         nav_metrics,
@@ -1361,6 +1440,9 @@ def build_single_fund_packet(
             "dynamic_attribution_status": dyn_status.value,
             "evidence_count": len(evidence),
             "risk_alert_count": len(risk_alerts),
+            "credibility_gates_passed": sum(1 for r in credibility_report.results if r.passed),
+            "credibility_gates_total": len(credibility_report.results),
+            "credibility_overall": credibility_report.overall_status.value,
         },
         conclusion_map=conclusion_map,
         warnings=warnings,

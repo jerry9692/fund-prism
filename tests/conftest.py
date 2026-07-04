@@ -4,6 +4,7 @@ Pytest 配置和共享 fixtures。
 提供测试数据库、测试客户端等基础设施。
 """
 
+import contextlib
 from collections.abc import Generator
 
 import pytest
@@ -15,6 +16,35 @@ from sqlalchemy.pool import StaticPool
 
 from fund_research.api.app import create_app
 from fund_research.db.models import Base
+
+
+@pytest.fixture(autouse=True)
+def _clear_analysis_result_tables(test_engine: Engine) -> Generator[None, None, None]:
+    """每个测试前清空算法结果表,避免测试隔离问题。"""
+    from sqlalchemy import text
+
+    result_tables = [
+        "simulated_holding_result",
+        "dynamic_attribution_result",
+        "scoring_result",
+        "trading_ability_result",
+        "experiment_result",
+        "algorithm_experiment",
+        "fund_fingerprint",
+        "fingerprint_similarity_cache",
+        "anomaly_record",
+        "pool_alert_rule",
+        "pool_alert_record",
+        "reverse_lookup_result",
+        "research_template",
+        "template_run_record",
+        "fund_comparison_cache",
+    ]
+    with test_engine.begin() as conn:
+        for table in result_tables:
+            with contextlib.suppress(Exception):
+                conn.execute(text(f"DELETE FROM {table}"))
+    yield
 
 
 @pytest.fixture(autouse=True)

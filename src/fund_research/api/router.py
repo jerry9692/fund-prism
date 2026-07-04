@@ -800,6 +800,179 @@ def get_nav_metrics(
 
 
 # ============================================================
+# 2b. get_nav_series — 净值时间序列（用于图表绘制）
+# ============================================================
+
+
+@router.get("/funds/{fund_code}/nav-series")
+def get_nav_series(
+    fund_code: str,
+    db: SessionDep,
+    start: StartDateQuery = None,
+    end: EndDateQuery = None,
+    period: str | None = Query(
+        None,
+        description="快捷时间区间: 1M/3M/6M/1Y/3Y/5Y/YTD/ALL，与start/end互斥，优先使用start/end",
+    ),
+) -> APIResponse[dict]:
+    """
+    获取基金净值时间序列（日频），用于前端图表绘制。
+
+    返回 dates[], unit_nav[], accumulated_nav[], daily_return[], 以及
+    可选基准指数的 benchmark_dates[] 和 benchmark_nav[]。
+    """
+    from datetime import date as date_type
+
+    from dateutil.relativedelta import relativedelta
+
+    started_at = perf_counter()
+
+    # 解析时间区间
+    stmt = select(FundNAV).where(FundNAV.fund_code == fund_code)
+    all_rows = db.scalars(stmt.order_by(FundNAV.trade_date)).all()
+    if not all_rows:
+        response = APIResponse(
+            data=None,
+            metadata={"tool": "get_nav_series", "fund_code": fund_code, "platform_version": __version__},
+            warnings=["基金净值数据不存在或尚未更新到本地数据库"],
+            conclusion_status=ConclusionStatus.NEEDS_REVIEW,
+        )
+        return _log_tool_api_call(db, "get_nav_series", {"fund_code": fund_code}, response, started_at)
+
+    # 确定起始日期
+    first_date = all_rows[0].trade_date
+    last_date = all_rows[-1].trade_date
+
+    if start and end:
+        range_start, range_end = start, end
+    elif period:
+        range_end = last_date
+        p = period.upper()
+        if p == "1M":
+            range_start = range_end - relativedelta(months=1)
+        elif p == "3M":
+            range_start = range_end - relativedelta(months=3)
+        elif p == "6M":
+            range_start = range_end - relativedelta(months=6)
+        elif p == "1Y":
+            range_start = range_end - relativedelta(years=1)
+        elif p == "3Y":
+            range_start = range_end - relativedelta(years=3)
+        elif p == "5Y":
+            range_start = range_end - relativedelta(years=5)
+        elif p == "YTD":
+            range_start = date_type(range_end.year, 1, 1)
+        else:  # ALL
+            range_start = first_date
+    else:
+        # 默认近1年
+        range_end = last_date
+        range_start = range_end - relativedelta(years=1)
+
+    # 过滤数据
+    filtered = [r for r in all_rows if r.trade_date >= range_start and r.trade_date <= range_end]
+    if not filtered:
+        response = APIResponse(
+            data=None,
+            metadata={"tool": "get_nav_series", "fund_code": fund_code},
+            warnings=[f"指定区间 {range_start} ~ {range_end} 内无净值数据"],
+            conclusion_status=ConclusionStatus.NEEDS_REVIEW,
+        )
+        return _log_tool_api_call(db, "get_nav_series", {"fund_code": fund_code}, response, started_at)
+
+    # 归一化净值（起始日=1.0）
+    base_nav = filtered[0].accumulated_nav or filtered[0].unit_nav
+    dates = []
+    unit_navs = []
+    acc_navs = []
+    norm_navs = []
+    daily_rets = []
+    for r in filtered:
+        dates.append(str(r.trade_date))
+        unit_navs.append(round(float(r.unit_nav), 4) if r.unit_nav else None)
+        acc_navs.append(round(float(r.accumulated_nav), 4) if r.accumulated_nav else None)
+        an = float(r.accumulated_nav or r.unit_nav or 0)
+        norm_navs.append(round(an / base_nav, 4) if base_nav else None)
+        daily_rets.append(round(float(r.daily_return), 6) if r.daily_return is not None else None)
+
+    # 基准指数（如有）
+    bm_dates = []
+    bm_norm = []
+    fund_row = db.scalar(select(FundMain).where(FundMain.fund_code == fund_code))
+    bm_code = fund_row.benchmark if fund_row else None
+    bm_warnings: list[str] = []
+    if bm_code:
+        bm_candidates = (
+            [f"sh{bm_code}", f"sz{bm_code}"]
+            if len(bm_code) == 6 and bm_code.isdigit()
+            else [bm_code]
+        )
+        bm_rows = db.scalars(
+            select(StockDaily)
+            .where(StockDaily.stock_code.in_(bm_candidates))
+            .where(StockDaily.trade_date >= range_start)
+            .where(StockDaily.trade_date <= range_end)
+            .order_by(StockDaily.trade_date)
+        ).all()
+        if bm_rows:
+            bm_base = bm_rows[0].close_price
+            for r in bm_rows:
+                bm_dates.append(str(r.trade_date))
+                bm_norm.append(round(float(r.close_price) / bm_base, 4) if bm_base else None)
+        else:
+            bm_warnings.append(f"基准 {bm_code} 行情未找到")
+
+    data = {
+        "fund_code": fund_code,
+        "start_date": str(filtered[0].trade_date),
+        "end_date": str(filtered[-1].trade_date),
+        "dates": dates,
+        "unit_nav": unit_navs,
+        "accumulated_nav": acc_navs,
+        "normalized_nav": norm_navs,
+        "daily_return": daily_rets,
+        "benchmark_code": bm_code,
+        "benchmark_dates": bm_dates,
+        "benchmark_normalized_nav": bm_norm,
+        "total_points": len(dates),
+    }
+
+    evidence = [
+        EvidenceRecord(
+            evidence_id=f"nav_series:{fund_code}:{filtered[0].trade_date}_{filtered[-1].trade_date}",
+            entity_id=f"fund:{fund_code}",
+            evidence_type=EvidenceType.RAW_DATA,
+            source="fund_nav",
+            source_level=DataSourceLevel.B,
+            date_range=(filtered[0].trade_date, filtered[-1].trade_date),
+            data_summary=f"净值时间序列 {len(dates)} 个交易日，来自本地 fund_nav 表",
+            confidence=ConfidenceLevel.MEDIUM,
+            conclusion_status=ConclusionStatus.FACT,
+        ),
+    ]
+
+    response = APIResponse(
+        data=data,
+        metadata={
+            "tool": "get_nav_series",
+            "fund_code": fund_code,
+            "platform_version": __version__,
+            "period": period,
+            "requested_start": str(range_start),
+            "requested_end": str(range_end),
+        },
+        evidence=evidence,
+        warnings=bm_warnings,
+        conclusion_status=ConclusionStatus.FACT,
+    )
+    return _log_tool_api_call(
+        db, "get_nav_series",
+        {"fund_code": fund_code, "start": str(start), "end": str(end), "period": period},
+        response, started_at,
+    )
+
+
+# ============================================================
 # 3. get_disclosed_holdings — 公开披露持仓
 # ============================================================
 

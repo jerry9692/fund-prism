@@ -6,6 +6,7 @@ Create Date: 2026-07-02 00:01:00.000000
 
 """
 
+import contextlib
 from collections.abc import Sequence
 
 import sqlalchemy as sa
@@ -52,9 +53,7 @@ def downgrade() -> None:
     dialect = bind.dialect.name
     for table in reversed(_TABLES):
         if dialect == "duckdb":
-            try:
+            with contextlib.suppress(Exception):
                 op.execute(f'ALTER TABLE "{table}" DROP COLUMN "experiment_id"')
-            except Exception:
-                pass
         else:
             op.drop_column(table, "experiment_id")

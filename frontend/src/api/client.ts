@@ -78,6 +78,21 @@ export interface NavMetricsData {
   custom: NavPeriod | null;
 }
 
+export interface NavSeriesData {
+  fund_code: string;
+  start_date: string;
+  end_date: string;
+  dates: string[];
+  unit_nav: (number | null)[];
+  accumulated_nav: (number | null)[];
+  normalized_nav: (number | null)[];
+  daily_return: (number | null)[];
+  benchmark_code: string | null;
+  benchmark_dates: string[];
+  benchmark_normalized_nav: (number | null)[];
+  total_points: number;
+}
+
 export interface HoldingItem {
   asset_type: string;
   security_code: string;
@@ -336,7 +351,14 @@ export interface ScoringBacktestDetail extends ScoringBacktestItem {
 
 // ---- Reviewer Annotation types ----
 
-export type AnnotationType = "note" | "lock" | "exclude" | "approve";
+export type AnnotationType =
+  | "note"
+  | "lock"
+  | "exclude"
+  | "approve"
+  | "flag"
+  | "benchmark_override"
+  | "confidence_override";
 export type TargetModule = "scoring" | "simulated_holding" | "dynamic_attribution";
 export type EffectiveStatus = "excluded" | "locked" | "approved" | "open";
 
@@ -347,7 +369,7 @@ export interface ReviewerAnnotation {
   target_module: TargetModule | null;
   detail: Record<string, unknown>;
   reason: string;
-  evidence_id: string | null;
+  evidence_ids: string[] | null;
   created_at: string | null;
 }
 
@@ -406,25 +428,53 @@ export interface SimulatedHoldingListData {
   count: number;
 }
 
+export interface TradingAbilityResult {
+  fund_code: string;
+  calc_date: string | null;
+  period_start: string | null;
+  period_end: string | null;
+  estimated_turnover_rate: number | null;
+  estimated_buy_timing_score: number | null;
+  estimated_sell_timing_score: number | null;
+  estimated_holding_period: number | null;
+  estimated_excess_return_from_trading: number | null;
+  trading_detail: Array<Record<string, unknown>> | null;
+  confidence: string | null;
+  conclusion_status: string | null;
+  warnings: string[] | null;
+}
+
 export interface DynamicAttributionResult {
   id: number;
   fund_code: string;
+  calc_date: string | null;
   period_start: string | null;
   period_end: string | null;
-  algorithm_name: string;
-  algorithm_version: string;
-  parameters: Record<string, unknown> | null;
-  total_return: number | null;
-  beta_return: number | null;
-  allocation_return: number | null;
-  sector_rotation_return: number | null;
-  stock_selection_return: number | null;
-  convertible_bond_return: number | null;
-  ipo_return: number | null;
-  interaction_return: number | null;
-  residual: number | null;
-  residual_pct: number | null;
-  detail: Record<string, unknown> | null;
+  algorithm_name?: string;
+  algorithm_version?: string;
+  benchmark_symbol?: string | null;
+  uses_simulated_holdings?: boolean | null;
+  // Fields use estimated_ prefix when uses_simulated_holdings=true, no prefix otherwise.
+  // Non-prefixed fields (for computed results from disclosed holdings):
+  total_portfolio_return?: number | null;
+  total_benchmark_return?: number | null;
+  total_allocation_effect?: number | null;
+  total_selection_effect?: number | null;
+  total_interaction_effect?: number | null;
+  // estimated_ prefixed fields (for results using simulated holdings):
+  estimated_total_portfolio_return?: number | null;
+  estimated_total_benchmark_return?: number | null;
+  estimated_total_allocation_effect?: number | null;
+  estimated_total_selection_effect?: number | null;
+  estimated_total_interaction_effect?: number | null;
+  // Residual/IPO/CB/invisible always carry estimated_ prefix:
+  estimated_total_residual?: number | null;
+  estimated_residual_ratio?: number | null;
+  estimated_ipo_return?: number | null;
+  estimated_convertible_bond_return?: number | null;
+  estimated_invisible_return?: number | null;
+  detail?: Record<string, unknown> | null;
+  waterfall_data?: Array<Record<string, unknown>> | null;
   confidence: string | null;
   conclusion_status: string | null;
   warnings: string[] | null;
@@ -435,6 +485,38 @@ export interface DynamicAttributionListData {
   fund_code: string;
   results: DynamicAttributionResult[];
   count: number;
+}
+
+// ---- Quality Dashboard ----
+
+export interface QualitySnapshot {
+  source_name: string;
+  source_level: string | null;
+  entity_type: string;
+  fetch_timestamp: string | null;
+  record_count: number | null;
+  coverage_rate: number | null;
+  anomaly_count: number | null;
+  is_success: boolean;
+  error_message: string | null;
+}
+
+export interface QualityTask {
+  task_id: string;
+  task_type: string | null;
+  status: string | null;
+  target_entity: string | null;
+  started_at: string | null;
+  duration_ms: number | null;
+  result_summary: string | null;
+  error_message: string | null;
+}
+
+export interface QualityDashboard {
+  table_counts: Record<string, number>;
+  freshness: Record<string, string | null>;
+  recent_snapshots: QualitySnapshot[];
+  recent_tasks: QualityTask[];
 }
 
 // ---- Generic fetch wrapper ----
@@ -468,6 +550,15 @@ export const api = {
       ? "?" + new URLSearchParams(params as Record<string, string>).toString()
       : "";
     return request<NavMetricsData>(`/api/v1/funds/${code}/nav-metrics${search}`);
+  },
+
+  getNavSeries: (code: string, params?: { period?: string; start?: string; end?: string }) => {
+    const search = params
+      ? "?" + new URLSearchParams(Object.fromEntries(
+          Object.entries(params).filter(([, v]) => v !== undefined)
+        ) as Record<string, string>).toString()
+      : "";
+    return request<NavSeriesData>(`/api/v1/funds/${code}/nav-series${search}`);
   },
 
   getHoldings: (code: string, params?: { report_date?: string }) => {
@@ -635,7 +726,7 @@ export const api = {
     target_module?: TargetModule | null;
     detail?: Record<string, unknown>;
     reason: string;
-    evidence_id?: string | null;
+    evidence_ids?: string[];
   }) =>
     request<ReviewerAnnotation>("/api/v2/reviewer-annotations", {
       method: "POST",
@@ -667,7 +758,7 @@ export const api = {
       annotation_type?: AnnotationType;
       detail?: Record<string, unknown>;
       reason?: string;
-      evidence_id?: string | null;
+      evidence_ids?: string[];
     }
   ) =>
     request<ReviewerAnnotation>(`/api/v2/reviewer-annotations/${id}`, {
@@ -697,14 +788,17 @@ export const api = {
     fund_code: string;
     start_date?: string | null;
     end_date?: string | null;
-    candidate_pool?: string;
     max_positions?: number;
-    sparse_lambda?: number;
-    turnover_lambda?: number;
+    max_single_weight?: number;
+    turnover_penalty?: number;
+    industry_penalty?: number;
+    window_days?: number;
+    rebalance_freq?: "M" | "Q";
   }) =>
     request<{
       experiment_id: string;
-      status: string;
+      fund_code: string;
+      success: boolean;
       result: SimulatedHoldingResult | null;
     }>("/api/v2/analysis/simulated-holding", {
       method: "POST",
@@ -715,34 +809,382 @@ export const api = {
 
   runReturnAttribution: (body: {
     fund_code: string;
-    report_date?: string | null;
+    method?: "BHB" | "BF";
     benchmark_symbol?: string | null;
-    holdings_source?: string;
-    min_return_observations?: number;
-    max_snapshot_age_days?: number;
+    start_date?: string | null;
+    end_date?: string | null;
   }) =>
     request<{
       experiment_id: string;
-      status: string;
-      result: Record<string, unknown> | null;
+      fund_code: string;
+      success: boolean;
+      result: DynamicAttributionResult | null;
     }>("/api/v2/analysis/return-attribution", {
       method: "POST",
       body: JSON.stringify(body),
     }),
 
-  listDynamicAttribution: (fundCode: string, params?: {
-    start_date?: string;
-    end_date?: string;
-    algorithm_version?: string;
-    include_backtest?: boolean;
+  listDynamicAttribution: (fundCode: string, limit = 10) =>
+    request<DynamicAttributionListData>(
+      `/api/v2/analysis/return-attribution?fund_code=${encodeURIComponent(fundCode)}&limit=${limit}`
+    ),
+
+  // ---- Dynamic Attribution Readiness ----
+
+  checkDynamicAttributionReadiness: (params?: {
+    fund_code?: string[];
+    benchmark_symbol?: string;
+    min_report_date?: string;
+    max_report_date?: string;
+    min_return_observations?: number;
+    max_snapshot_age_days?: number;
+    ready_only?: boolean;
+    limit?: number;
   }) => {
-    const search = params
-      ? "?" + new URLSearchParams(
-          Object.entries(params).filter(([, v]) => v != null) as [string, string][]
-        ).toString()
-      : "";
-    return request<DynamicAttributionListData>(
-      `/api/v2/analysis/dynamic-attribution/${fundCode}${search}`
+    const sp = new URLSearchParams();
+    if (params?.fund_code) {
+      for (const fc of params.fund_code) sp.append("fund_code", fc);
+    }
+    if (params?.benchmark_symbol) sp.set("benchmark_symbol", params.benchmark_symbol);
+    if (params?.min_report_date) sp.set("min_report_date", params.min_report_date);
+    if (params?.max_report_date) sp.set("max_report_date", params.max_report_date);
+    if (params?.min_return_observations != null)
+      sp.set("min_return_observations", String(params.min_return_observations));
+    if (params?.max_snapshot_age_days != null)
+      sp.set("max_snapshot_age_days", String(params.max_snapshot_age_days));
+    if (params?.ready_only) sp.set("ready_only", "true");
+    if (params?.limit != null) sp.set("limit", String(params.limit));
+    const qs = sp.toString();
+    return request<{
+      rows: Array<Record<string, unknown>>;
+      total: number;
+      ready: number;
+    }>(`/api/v2/experiments/dynamic-attribution/readiness${qs ? "?" + qs : ""}`);
+  },
+
+  createDynamicAttributionFromReady: (body: {
+    experiment_name?: string;
+    report_date: string;
+    benchmark_symbol?: string | null;
+    fund_codes?: string[] | null;
+    min_return_observations?: number;
+    max_snapshot_age_days?: number;
+    limit?: number | null;
+  }) =>
+    request<{
+      experiment_id: string | null;
+      sample_fund_codes: string[];
+      ready_candidates: number;
+      report_date: string;
+    }>("/api/v2/experiments/dynamic-attribution/from-ready", {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+
+  // ---- Review Business Endpoints (§5.5.3) ----
+
+  lockSecurities: (body: {
+    fund_code: string;
+    security_code: string;
+    action: "lock" | "exclude";
+    target_module?: "simulated_holding" | "scoring" | "dynamic_attribution";
+    reason?: string;
+    lock_weight?: number | null;
+  }) =>
+    request<ReviewerAnnotation>("/api/v2/review/lock-securities", {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+
+  adjustBenchmark: (body: {
+    fund_code: string;
+    benchmark_symbol: string;
+    custom_weights?: Record<string, number> | null;
+    reason?: string;
+  }) =>
+    request<ReviewerAnnotation>("/api/v2/review/adjust-benchmark", {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+
+  annotateConfidence: (body: {
+    fund_code: string;
+    target_module: "simulated_holding" | "scoring" | "dynamic_attribution";
+    adjusted_status: "fact" | "computed" | "estimated" | "observation" | "needs_review";
+    original_status?: string | null;
+    reason?: string;
+  }) =>
+    request<ReviewerAnnotation>("/api/v2/review/annotate-confidence", {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+
+  getReviewHistory: (fundCode: string) =>
+    request<ReviewerAnnotationListData>(
+      `/api/v2/review/history/${encodeURIComponent(fundCode)}`
+    ),
+
+  // ---- Experiment Results (manual record) ----
+
+  recordExperimentResult: (experimentId: string, body: {
+    fund_code: string;
+    is_success: boolean;
+    metrics?: Record<string, unknown> | null;
+    error_message?: string | null;
+    warnings?: string[] | null;
+  }) =>
+    request<{ id: number; experiment_id: string }>("/api/v2/experiments/" + experimentId + "/results", {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+
+  // ---- Fund Pool (P2.5-1) ----
+
+  listPools: () =>
+    request<{ id: number; name: string; description: string | null; fund_count: number; created_at: string | null; updated_at: string | null }[]>(
+      "/api/v2/pools"
+    ),
+
+  createPool: (body: { name: string; description?: string }) =>
+    request<{ id: number; name: string; description: string | null }>(
+      "/api/v2/pools",
+      { method: "POST", body: JSON.stringify(body) }
+    ),
+
+  getPool: (poolId: number) =>
+    request<{ id: number; name: string; description: string | null; created_at: string | null; funds: { fund_code: string; note: string | null; added_at: string | null }[] }>(
+      `/api/v2/pools/${poolId}`
+    ),
+
+  deletePool: (poolId: number) =>
+    request<{ deleted: boolean; pool_id: number }>(
+      `/api/v2/pools/${poolId}`,
+      { method: "DELETE" }
+    ),
+
+  addPoolMember: (poolId: number, body: { fund_code: string; note?: string }) =>
+    request<{ id: number; pool_id: number; fund_code: string }>(
+      `/api/v2/pools/${poolId}/funds`,
+      { method: "POST", body: JSON.stringify(body) }
+    ),
+
+  removePoolMember: (poolId: number, fundCode: string) =>
+    request<{ removed: boolean; fund_code: string }>(
+      `/api/v2/pools/${poolId}/funds/${encodeURIComponent(fundCode)}`,
+      { method: "DELETE" }
+    ),
+
+  // ---- Saved Screens (P2.5-1) ----
+
+  listScreens: () =>
+    request<{ id: number; name: string; filters: Record<string, unknown>; sort_by: string | null; sort_order: string | null; created_at: string | null }[]>(
+      "/api/v2/screens"
+    ),
+
+  saveScreen: (body: { name: string; filters: Record<string, unknown>; sort_by?: string; sort_order?: string }) =>
+    request<{ id: number; name: string }>(
+      "/api/v2/screens",
+      { method: "POST", body: JSON.stringify(body) }
+    ),
+
+  deleteScreen: (screenId: number) =>
+    request<{ deleted: boolean; screen_id: number }>(
+      `/api/v2/screens/${screenId}`,
+      { method: "DELETE" }
+    ),
+
+  // ---- Trading Ability (P2.6-1) ----
+
+  runTradingAbility: (body: {
+    fund_code: string;
+    start_date?: string | null;
+    end_date?: string | null;
+    evaluation_window_days?: number;
+  }) =>
+    request<TradingAbilityResult & { id: number }>(
+      "/api/v2/analysis/trading-ability",
+      { method: "POST", body: JSON.stringify(body) }
+    ),
+
+  listTradingAbility: (fundCode: string, limit = 10) =>
+    request<{ results: TradingAbilityResult[]; count: number }>(
+      `/api/v2/analysis/trading-ability/${encodeURIComponent(fundCode)}?limit=${limit}`
+    ),
+
+  // ---- Export (P2.5-2) ----
+
+  exportResearchPacket: (fundCode: string, format: "markdown" | "json" | "csv" = "markdown") =>
+    request<{ filename: string; format: string; media_type: string; content_base64: string; size_bytes: number }>(
+      `/api/v2/research/packet/${encodeURIComponent(fundCode)}/export?format=${format}`
+    ),
+
+  exportScreenResults: (body: {
+    filters: Record<string, unknown>;
+    sort_by?: string;
+    sort_order?: string;
+    limit?: number;
+    format?: "csv" | "json";
+  }) =>
+    request<{ filename: string; format: string; media_type: string; content_base64: string; row_count: number }>(
+      "/api/v2/funds/screen/export",
+      { method: "POST", body: JSON.stringify(body) }
+    ),
+
+  // ---- Evidence (P2.5-4) ----
+  listEvidence: (params?: {
+    fund_code?: string;
+    source_level?: string;
+    evidence_type?: string;
+    limit?: number;
+    offset?: number;
+  }) => {
+    const sp = new URLSearchParams();
+    if (params?.fund_code) sp.set("fund_code", params.fund_code);
+    if (params?.source_level) sp.set("source_level", params.source_level);
+    if (params?.evidence_type) sp.set("evidence_type", params.evidence_type);
+    if (params?.limit != null) sp.set("limit", String(params.limit));
+    if (params?.offset != null) sp.set("offset", String(params.offset));
+    const qs = sp.toString();
+    return request<{
+      items: EvidenceRecord[];
+      total: number;
+      limit: number;
+      offset: number;
+    }>(`/api/v2/evidence${qs ? "?" + qs : ""}`);
+  },
+
+  getEvidence: (evidenceId: string) =>
+    request<EvidenceRecord>(`/api/v2/evidence/${encodeURIComponent(evidenceId)}`),
+
+  getQualityDashboard: () =>
+    request<QualityDashboard>("/api/v2/quality/dashboard"),
+
+  // ---- Phase 3: Fingerprint & Similarity ----
+
+  generateFingerprint: (fundCode: string) =>
+    request<Record<string, unknown>>(`/api/v2/fingerprint/${encodeURIComponent(fundCode)}`, {
+      method: "POST",
+    }),
+
+  getFingerprint: (fundCode: string) =>
+    request<Record<string, unknown>>(`/api/v2/fingerprint/${encodeURIComponent(fundCode)}`),
+
+  findSimilarFunds: (fundCode: string, params?: { metric_space?: string; top_n?: number; same_type_only?: boolean }) =>
+    request<{ similar_funds: Array<Record<string, unknown>>; fund_code: string; metric_space: string; count: number }>(
+      `/api/v2/fingerprint/${encodeURIComponent(fundCode)}/similar`,
+      { method: "POST", body: JSON.stringify(params ?? {}) }
+    ),
+
+  compareFunds: (fundCodes: string[], dimensions?: string[]) =>
+    request<{
+      basic_info: Record<string, Record<string, unknown>>;
+      comparison_data: Record<string, Record<string, unknown>>;
+      similarity_matrix: Record<string, unknown> | null;
+      dimensions: string[];
+    }>(
+      "/api/v2/funds/compare",
+      { method: "POST", body: JSON.stringify({ fund_codes: fundCodes, dimensions }) }
+    ),
+
+  // ---- Phase 3: Anomaly Detection ----
+
+  scanAnomalies: (body: { scope: string; scope_id?: string | null; rules?: string[] | null; params?: Record<string, unknown> | null }) =>
+    request<{ anomalies: Array<Record<string, unknown>>; total: number; rules_run: string[] }>(
+      "/api/v2/anomalies/scan",
+      { method: "POST", body: JSON.stringify(body) }
+    ),
+
+  listAnomalies: (params?: { fund_code?: string; rule_name?: string; severity?: string; limit?: number }) => {
+    const sp = new URLSearchParams();
+    if (params?.fund_code) sp.set("fund_code", params.fund_code);
+    if (params?.rule_name) sp.set("rule_name", params.rule_name);
+    if (params?.severity) sp.set("severity", params.severity);
+    if (params?.limit != null) sp.set("limit", String(params.limit));
+    const qs = sp.toString();
+    return request<{ anomalies: Array<Record<string, unknown>>; total: number }>(
+      `/api/v2/anomalies${qs ? "?" + qs : ""}`
     );
+  },
+
+  getAnomaly: (id: number) =>
+    request<Record<string, unknown>>(`/api/v2/anomalies/${id}`),
+
+  // ---- Phase 3: Pool Alerts ----
+
+  scanPoolAlerts: (poolId: number, alertTypes?: string[]) =>
+    request<{ results: Array<Record<string, unknown>>; total: number }>(
+      `/api/v2/pools/${poolId}/alerts/scan`,
+      { method: "POST", body: JSON.stringify({ alert_types: alertTypes }) }
+    ),
+
+  getPoolAlerts: (poolId?: number, isRead?: boolean, limit = 50) => {
+    const sp = new URLSearchParams();
+    if (poolId != null) sp.set("pool_id", String(poolId));
+    if (isRead != null) sp.set("is_read", String(isRead));
+    sp.set("limit", String(limit));
+    return request<{ items: Array<Record<string, unknown>>; total: number }>(
+      `/api/v2/alerts?${sp.toString()}`
+    );
+  },
+
+  markAlertRead: (alertId: number) =>
+    request<Record<string, unknown>>(`/api/v2/alerts/${alertId}/read`, { method: "POST" }),
+
+  deleteAlertRule: (poolId: number, ruleId: number) =>
+    request<Record<string, unknown>>(`/api/v2/pools/${poolId}/alert-rules/${ruleId}`, { method: "DELETE" }),
+
+  // ---- Phase 3: Reverse Lookup ----
+
+  reverseLookup: (body: { stock_codes: string[]; fund_scope?: string; scope_id?: string; method?: string; top_n?: number }) =>
+    request<{ results: Array<Record<string, unknown>>; stock_coverage: Record<string, number>; method: string; fund_count: number }>(
+      "/api/v2/analysis/reverse-lookup",
+      { method: "POST", body: JSON.stringify(body) }
+    ),
+
+  // ---- Phase 3: Research Templates ----
+
+  seedTemplates: () =>
+    request<{ inserted: number }>("/api/v2/templates/seed", { method: "POST" }),
+
+  listTemplates: (builtinOnly = false) =>
+    request<{ templates: Array<Record<string, unknown>>; total: number }>(
+      `/api/v2/templates?builtin_only=${builtinOnly}`
+    ),
+
+  getTemplate: (templateId: string) =>
+    request<Record<string, unknown>>(`/api/v2/templates/${encodeURIComponent(templateId)}`),
+
+  runTemplate: (templateId: string, inputs: Record<string, unknown>) =>
+    request<Record<string, unknown>>(`/api/v2/templates/${encodeURIComponent(templateId)}/run`, {
+      method: "POST",
+      body: JSON.stringify({ inputs }),
+    }),
+
+  listTemplateRuns: (templateId?: string, limit = 20) => {
+    const sp = new URLSearchParams();
+    if (templateId) sp.set("template_id", templateId);
+    sp.set("limit", String(limit));
+    return request<{ runs: Array<Record<string, unknown>>; total: number }>(
+      `/api/v2/templates/runs?${sp.toString()}`
+    );
+  },
+
+  // ---- Phase 3: Dashboard ----
+
+  getDashboard: (fundCodes?: string[]) => {
+    const sp = new URLSearchParams();
+    if (fundCodes && fundCodes.length > 0) {
+      fundCodes.forEach((c) => sp.append("fund_codes", c));
+    }
+    const qs = sp.toString();
+    return request<{
+      today_changes: Record<string, unknown>;
+      pool_monitoring: Record<string, unknown>;
+      algorithm_alerts: Record<string, unknown>;
+      ai_alerts: Record<string, unknown>;
+      market_overview: Record<string, unknown>;
+      generated_at: string;
+      warnings: string[];
+    }>(`/api/v2/dashboard${qs ? "?" + qs : ""}`);
   },
 };

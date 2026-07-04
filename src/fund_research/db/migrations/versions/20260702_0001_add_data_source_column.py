@@ -6,8 +6,9 @@ Create Date: 2026-07-02 00:00:00.000000
 
 """
 
+import contextlib
 from collections.abc import Sequence
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import sqlalchemy as sa
 from alembic import op
@@ -59,7 +60,7 @@ def _pg_column_exists(table_name: str, column_name: str) -> bool:
 def upgrade() -> None:
     bind = op.get_bind()
     dialect = bind.dialect.name
-    now = datetime.now(timezone.utc).replace(tzinfo=None).isoformat()
+    now = datetime.now(UTC).replace(tzinfo=None).isoformat()
 
     for table, column, sql_type, nullable in _ADDITIONS:
         if dialect == "duckdb":
@@ -90,9 +91,7 @@ def downgrade() -> None:
 
     for table, column, _sql_type, _nullable in reversed(_ADDITIONS):
         if dialect == "duckdb":
-            try:
+            with contextlib.suppress(Exception):
                 op.execute(f'ALTER TABLE "{table}" DROP COLUMN "{column}"')
-            except Exception:
-                pass
         else:
             op.drop_column(table, column)

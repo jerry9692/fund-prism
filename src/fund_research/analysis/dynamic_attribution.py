@@ -187,12 +187,14 @@ class AttributionResult:
         return len(self.periods) > 0 and self.residual_ratio <= MAX_RESIDUAL_RATIO
 
     def get_conclusion_status(self) -> str:
-        """Return the conclusion_status string for this result."""
+        """Return the conclusion_status string for this result.
+
+        Dynamic attribution always uses estimated/approximated decomposition,
+        so the status is ``estimated`` unless the residual is too large.
+        """
         if self.residual_ratio > MAX_RESIDUAL_RATIO:
             return "needs_review"
-        if self.uses_simulated_holdings:
-            return "estimated"
-        return "computed"
+        return "estimated"
 
 
 # ============================================================

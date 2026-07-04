@@ -11,6 +11,7 @@ import {
   MetricCard,
   LoadingState,
   EmptyState,
+  ExportButton,
   type BreadcrumbItem,
 } from "../components/display";
 
@@ -274,23 +275,11 @@ export default function PacketDiffPage() {
           {/* JSON 导出 */}
           {result.changed && (
             <div className="fade-up fade-up-6 mb-4">
-              <button
-                className="btn btn-secondary btn-sm"
-                onClick={() => {
-                  const blob = new Blob(
-                    [JSON.stringify(result, null, 2)],
-                    { type: "application/json" },
-                  );
-                  const url = URL.createObjectURL(blob);
-                  const a = document.createElement("a");
-                  a.href = url;
-                  a.download = `diff_${code}_${leftDate}_${rightDate}.json`;
-                  a.click();
-                  URL.revokeObjectURL(url);
-                }}
-              >
-                导出 JSON
-              </button>
+              <ExportButton
+                data={result}
+                filename={`diff_${code}_${leftDate}_${rightDate}.json`}
+                label="导出 JSON"
+              />
             </div>
           )}
         </>

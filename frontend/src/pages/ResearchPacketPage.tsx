@@ -11,6 +11,7 @@ import {
   MetricCard,
   LoadingState,
   ErrorState,
+  ExportButton,
   type BreadcrumbItem,
 } from "../components/display";
 
@@ -115,23 +116,19 @@ export default function ResearchPacketPage() {
           <h1>研究包</h1>
           <div className="flex items-center gap-3">
             <StatusBadge status={conclusionStatus} />
-            <button
-              className="btn btn-secondary btn-sm"
-              onClick={() => {
-                const blob = new Blob(
-                  [JSON.stringify(packet, null, 2)],
-                  { type: "application/json" }
-                );
-                const url = URL.createObjectURL(blob);
-                const a = document.createElement("a");
-                a.href = url;
-                a.download = `research_packet_${code}.json`;
-                a.click();
-                URL.revokeObjectURL(url);
+            <ExportButton
+              label="导出 MD"
+              filename={`research_packet_${code}.md`}
+              onExport={async () => {
+                const res = await api.exportResearchPacket(code!, "markdown");
+                return res.data!;
               }}
-            >
-              导出 JSON
-            </button>
+            />
+            <ExportButton
+              data={packet}
+              filename={`research_packet_${code}.json`}
+              label="导出 JSON"
+            />
           </div>
         </div>
         <div className="text-sm text-tertiary mt-2">

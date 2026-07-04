@@ -23,6 +23,9 @@ const ANNOTATION_TYPE_LABELS: Record<AnnotationType, string> = {
   lock: "锁定",
   exclude: "排除",
   approve: "批准",
+  flag: "标记",
+  benchmark_override: "基准调整",
+  confidence_override: "置信度调整",
 };
 
 const ANNOTATION_TYPE_COLORS: Record<AnnotationType, string> = {
@@ -30,6 +33,9 @@ const ANNOTATION_TYPE_COLORS: Record<AnnotationType, string> = {
   lock: "var(--warning)",
   exclude: "var(--negative)",
   approve: "var(--positive)",
+  flag: "var(--accent)",
+  benchmark_override: "var(--accent)",
+  confidence_override: "var(--accent)",
 };
 
 // 审核类型 → 结论状态映射（用于 SharedStatusBadge 着色）
@@ -38,6 +44,9 @@ const ANNOTATION_TYPE_TO_CONCLUSION: Record<AnnotationType, string> = {
   lock: "estimated",
   exclude: "needs_review",
   approve: "fact",
+  flag: "needs_review",
+  benchmark_override: "observation",
+  confidence_override: "observation",
 };
 
 const TARGET_MODULE_LABELS: Record<TargetModule, string> = {
@@ -147,7 +156,7 @@ function AnnotationCard({
       >
         {annotation.reason}
       </p>
-      {annotation.evidence_id && (
+      {annotation.evidence_ids && annotation.evidence_ids.length > 0 && (
         <p
           className="text-xs"
           style={{
@@ -155,7 +164,13 @@ function AnnotationCard({
             margin: "var(--space-1) 0 0",
           }}
         >
-          证据 ID: <span className="mono">{annotation.evidence_id}</span>
+          证据 ID:{" "}
+          {annotation.evidence_ids.map((eid, i) => (
+            <span key={eid} className="mono">
+              {i > 0 ? ", " : ""}
+              {eid}
+            </span>
+          ))}
         </p>
       )}
       <div
@@ -222,7 +237,7 @@ function CreateAnnotationForm({
         annotation_type: annotationType,
         target_module: targetModule || null,
         reason: reason.trim(),
-        evidence_id: evidenceId.trim() || null,
+        evidence_ids: evidenceId.trim() ? [evidenceId.trim()] : [],
       });
       if (resp.data === null) {
         setError(resp.warnings.join("; ") || "创建失败");
@@ -360,6 +375,419 @@ function CreateAnnotationForm({
           className="btn btn-primary"
           disabled={submitting || !reason.trim()}
         >
+          {submitting ? "提交中..." : "提交"}
+        </button>
+      </div>
+    </form>
+  );
+}
+
+// ---- 证券锁定/排除表单 (POST /review/lock-securities) ----
+
+function LockSecuritiesForm({
+  fundCode,
+  onCreated,
+}: {
+  fundCode: string;
+  onCreated: () => void;
+}) {
+  const [securityCode, setSecurityCode] = useState("");
+  const [action, setAction] = useState<"lock" | "exclude">("lock");
+  const [targetModule, setTargetModule] = useState<TargetModule>("simulated_holding");
+  const [lockWeight, setLockWeight] = useState("");
+  const [reason, setReason] = useState("");
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  async function handleSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    if (!securityCode.trim()) {
+      setError("请填写证券代码");
+      return;
+    }
+    setSubmitting(true);
+    setError(null);
+    try {
+      const resp = await api.lockSecurities({
+        fund_code: fundCode,
+        security_code: securityCode.trim(),
+        action,
+        target_module: targetModule,
+        reason: reason.trim() || undefined,
+        lock_weight: lockWeight.trim() ? parseFloat(lockWeight) : null,
+      });
+      if (resp.data === null) {
+        setError(resp.warnings.join("; ") || "操作失败");
+        return;
+      }
+      setSecurityCode("");
+      setLockWeight("");
+      setReason("");
+      onCreated();
+    } catch (e) {
+      setError(`操作异常: ${e instanceof Error ? e.message : String(e)}`);
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  return (
+    <form
+      onSubmit={handleSubmit}
+      className="fade-up fade-up-4"
+      style={{
+        background: "var(--surface-raised)",
+        border: "1px solid var(--border-hairline)",
+        borderRadius: "var(--radius-md)",
+        padding: "var(--space-4)",
+        marginBottom: "var(--space-5)",
+      }}
+    >
+      <SectionHeader title="证券锁定/排除" subtitle="强制包含或排除特定证券（影响模拟持仓）" />
+      <div
+        className="grid"
+        style={{
+          gridTemplateColumns: "repeat(auto-fill, minmax(200px, 1fr))",
+          gap: "var(--space-3)",
+          marginTop: "var(--space-3)",
+        }}
+      >
+        <label className="form-label">
+          <span>证券代码 *</span>
+          <input
+            type="text"
+            className="form-input"
+            value={securityCode}
+            onChange={(e) => setSecurityCode(e.target.value)}
+            placeholder="如 600519"
+          />
+        </label>
+        <label className="form-label">
+          <span>操作</span>
+          <select
+            className="form-input"
+            value={action}
+            onChange={(e) => setAction(e.target.value as "lock" | "exclude")}
+          >
+            <option value="lock">锁定（强制包含）</option>
+            <option value="exclude">排除（强制剔除）</option>
+          </select>
+        </label>
+        <label className="form-label">
+          <span>目标模块</span>
+          <select
+            className="form-input"
+            value={targetModule}
+            onChange={(e) => setTargetModule(e.target.value as TargetModule)}
+          >
+            {Object.entries(TARGET_MODULE_LABELS).map(([k, v]) => (
+              <option key={k} value={k}>
+                {v}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label className="form-label">
+          <span>锁定权重（可选）</span>
+          <input
+            type="number"
+            className="form-input"
+            value={lockWeight}
+            onChange={(e) => setLockWeight(e.target.value)}
+            placeholder="0.0 ~ 1.0"
+            min="0"
+            max="1"
+            step="0.01"
+          />
+        </label>
+      </div>
+      <label className="form-label" style={{ display: "block", marginTop: "var(--space-3)" }}>
+        <span>原因说明</span>
+        <input
+          type="text"
+          className="form-input"
+          value={reason}
+          onChange={(e) => setReason(e.target.value)}
+          placeholder="说明锁定/排除的原因"
+        />
+      </label>
+      {error && (
+        <div style={{ marginTop: "var(--space-3)", color: "var(--negative)", fontSize: "0.82rem" }}>
+          {error}
+        </div>
+      )}
+      <div style={{ marginTop: "var(--space-4)" }}>
+        <button type="submit" className="btn btn-primary" disabled={submitting || !securityCode.trim()}>
+          {submitting ? "提交中..." : "提交"}
+        </button>
+      </div>
+    </form>
+  );
+}
+
+// ---- 基准调整表单 (POST /review/adjust-benchmark) ----
+
+function AdjustBenchmarkForm({
+  fundCode,
+  onCreated,
+}: {
+  fundCode: string;
+  onCreated: () => void;
+}) {
+  const [benchmarkSymbol, setBenchmarkSymbol] = useState("");
+  const [customWeights, setCustomWeights] = useState("");
+  const [reason, setReason] = useState("");
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  async function handleSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    if (!benchmarkSymbol.trim()) {
+      setError("请填写基准代码");
+      return;
+    }
+    let weightsParsed: Record<string, number> | null = null;
+    if (customWeights.trim()) {
+      try {
+        weightsParsed = JSON.parse(customWeights);
+      } catch {
+        setError("自定义权重要求 JSON 格式，如 {\"行业1\": 0.3}");
+        return;
+      }
+    }
+    setSubmitting(true);
+    setError(null);
+    try {
+      const resp = await api.adjustBenchmark({
+        fund_code: fundCode,
+        benchmark_symbol: benchmarkSymbol.trim(),
+        custom_weights: weightsParsed,
+        reason: reason.trim() || undefined,
+      });
+      if (resp.data === null) {
+        setError(resp.warnings.join("; ") || "操作失败");
+        return;
+      }
+      setBenchmarkSymbol("");
+      setCustomWeights("");
+      setReason("");
+      onCreated();
+    } catch (e) {
+      setError(`操作异常: ${e instanceof Error ? e.message : String(e)}`);
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  return (
+    <form
+      onSubmit={handleSubmit}
+      className="fade-up fade-up-4"
+      style={{
+        background: "var(--surface-raised)",
+        border: "1px solid var(--border-hairline)",
+        borderRadius: "var(--radius-md)",
+        padding: "var(--space-4)",
+        marginBottom: "var(--space-5)",
+      }}
+    >
+      <SectionHeader title="基准调整" subtitle="覆盖默认基准代码和行业权重（影响动态归因）" />
+      <div
+        className="grid"
+        style={{
+          gridTemplateColumns: "repeat(auto-fill, minmax(200px, 1fr))",
+          gap: "var(--space-3)",
+          marginTop: "var(--space-3)",
+        }}
+      >
+        <label className="form-label">
+          <span>基准代码 *</span>
+          <input
+            type="text"
+            className="form-input"
+            value={benchmarkSymbol}
+            onChange={(e) => setBenchmarkSymbol(e.target.value)}
+            placeholder="如 sh000300"
+          />
+        </label>
+      </div>
+      <label className="form-label" style={{ display: "block", marginTop: "var(--space-3)" }}>
+        <span>自定义行业权重（可选 JSON）</span>
+        <input
+          type="text"
+          className="form-input"
+          value={customWeights}
+          onChange={(e) => setCustomWeights(e.target.value)}
+          placeholder='如 {"制造业": 0.4, "金融业": 0.3}'
+        />
+      </label>
+      <label className="form-label" style={{ display: "block", marginTop: "var(--space-3)" }}>
+        <span>原因说明</span>
+        <input
+          type="text"
+          className="form-input"
+          value={reason}
+          onChange={(e) => setReason(e.target.value)}
+          placeholder="说明调整基准的原因"
+        />
+      </label>
+      {error && (
+        <div style={{ marginTop: "var(--space-3)", color: "var(--negative)", fontSize: "0.82rem" }}>
+          {error}
+        </div>
+      )}
+      <div style={{ marginTop: "var(--space-4)" }}>
+        <button type="submit" className="btn btn-primary" disabled={submitting || !benchmarkSymbol.trim()}>
+          {submitting ? "提交中..." : "提交"}
+        </button>
+      </div>
+    </form>
+  );
+}
+
+// ---- 置信度标注表单 (POST /review/annotate-confidence) ----
+
+function AnnotateConfidenceForm({
+  fundCode,
+  onCreated,
+}: {
+  fundCode: string;
+  onCreated: () => void;
+}) {
+  const [targetModule, setTargetModule] = useState<TargetModule>("scoring");
+  const [adjustedStatus, setAdjustedStatus] = useState<
+    "fact" | "computed" | "estimated" | "observation" | "needs_review"
+  >("needs_review");
+  const [originalStatus, setOriginalStatus] = useState("");
+  const [reason, setReason] = useState("");
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const STATUS_LABELS: Record<string, string> = {
+    fact: "事实 (fact)",
+    computed: "计算 (computed)",
+    estimated: "估算 (estimated)",
+    observation: "观察 (observation)",
+    needs_review: "待复核 (needs_review)",
+  };
+
+  async function handleSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    if (!reason.trim()) {
+      setError("请填写原因说明");
+      return;
+    }
+    setSubmitting(true);
+    setError(null);
+    try {
+      const resp = await api.annotateConfidence({
+        fund_code: fundCode,
+        target_module: targetModule,
+        adjusted_status: adjustedStatus,
+        original_status: originalStatus.trim() || null,
+        reason: reason.trim(),
+      });
+      if (resp.data === null) {
+        setError(resp.warnings.join("; ") || "操作失败");
+        return;
+      }
+      setReason("");
+      setOriginalStatus("");
+      onCreated();
+    } catch (e) {
+      setError(`操作异常: ${e instanceof Error ? e.message : String(e)}`);
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  return (
+    <form
+      onSubmit={handleSubmit}
+      className="fade-up fade-up-4"
+      style={{
+        background: "var(--surface-raised)",
+        border: "1px solid var(--border-hairline)",
+        borderRadius: "var(--radius-md)",
+        padding: "var(--space-4)",
+        marginBottom: "var(--space-5)",
+      }}
+    >
+      <SectionHeader title="置信度标注" subtitle="手动调整算法结果的结论状态等级" />
+      <div
+        className="grid"
+        style={{
+          gridTemplateColumns: "repeat(auto-fill, minmax(200px, 1fr))",
+          gap: "var(--space-3)",
+          marginTop: "var(--space-3)",
+        }}
+      >
+        <label className="form-label">
+          <span>目标模块 *</span>
+          <select
+            className="form-input"
+            value={targetModule}
+            onChange={(e) => setTargetModule(e.target.value as TargetModule)}
+          >
+            {Object.entries(TARGET_MODULE_LABELS).map(([k, v]) => (
+              <option key={k} value={k}>
+                {v}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label className="form-label">
+          <span>调整后状态 *</span>
+          <select
+            className="form-input"
+            value={adjustedStatus}
+            onChange={(e) =>
+              setAdjustedStatus(
+                e.target.value as
+                  | "fact"
+                  | "computed"
+                  | "estimated"
+                  | "observation"
+                  | "needs_review"
+              )
+            }
+          >
+            {Object.entries(STATUS_LABELS).map(([k, v]) => (
+              <option key={k} value={k}>
+                {v}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label className="form-label">
+          <span>原始状态（可选）</span>
+          <input
+            type="text"
+            className="form-input"
+            value={originalStatus}
+            onChange={(e) => setOriginalStatus(e.target.value)}
+            placeholder="如 estimated"
+          />
+        </label>
+      </div>
+      <label className="form-label" style={{ display: "block", marginTop: "var(--space-3)" }}>
+        <span>原因说明 *</span>
+        <textarea
+          className="form-input"
+          value={reason}
+          onChange={(e) => setReason(e.target.value)}
+          rows={2}
+          placeholder="说明调整置信度的原因"
+          style={{ width: "100%", height: "auto", resize: "vertical" }}
+        />
+      </label>
+      {error && (
+        <div style={{ marginTop: "var(--space-3)", color: "var(--negative)", fontSize: "0.82rem" }}>
+          {error}
+        </div>
+      )}
+      <div style={{ marginTop: "var(--space-4)" }}>
+        <button type="submit" className="btn btn-primary" disabled={submitting || !reason.trim()}>
           {submitting ? "提交中..." : "提交"}
         </button>
       </div>
@@ -542,6 +970,11 @@ export default function FundReviewPage() {
 
           {/* 新增审核记录表单 */}
           <CreateAnnotationForm fundCode={fundCode} onCreated={loadData} />
+
+          {/* 业务级审核操作 */}
+          <LockSecuritiesForm fundCode={fundCode} onCreated={loadData} />
+          <AdjustBenchmarkForm fundCode={fundCode} onCreated={loadData} />
+          <AnnotateConfidenceForm fundCode={fundCode} onCreated={loadData} />
 
           {/* 审核记录历史 */}
           <div className="fade-up fade-up-5">

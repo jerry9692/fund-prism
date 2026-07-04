@@ -187,7 +187,7 @@ class TestDynamicAttribution:
             {"report_date": "2026-02-01", "sector": "A", "port_return": 0.10, "bench_return": 0.00},
         ])
 
-        # Default: uses_simulated_holdings=False → computed level, no estimated_ prefix
+        # Dynamic attribution is always estimated-level per project hard constraints
         result = run_attribution("000001", holdings, returns)
 
         assert result.total_portfolio_return == pytest.approx(0.21)
@@ -198,7 +198,7 @@ class TestDynamicAttribution:
         assert "total_benchmark_return" in api
         assert "estimated_total_residual" in api  # residual always estimated
         assert "estimated_residual_ratio" in api
-        assert api["conclusion_status"] == "computed"
+        assert api["conclusion_status"] == "estimated"
         assert api["uses_simulated_holdings"] is False
         # Period-level fields also follow the same rule
         assert "portfolio_return" in api["periods"][0]

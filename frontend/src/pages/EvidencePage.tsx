@@ -1,6 +1,4 @@
-// 证据链浏览页 — 调用现有基金 API 并展示响应中嵌入的证据记录
-// 由于后端尚无独立 /evidence 端点（P2.5-4 待实现），本页作为证据检视工具，
-// 让用户选择基金 + 分析维度，复用现有 APIResponse.evidence 字段。
+// 证据链浏览页 — 调用基金分析 API 或独立 /evidence 端点展示证据记录
 
 import { useState } from "react";
 import {
@@ -21,6 +19,7 @@ import {
 import { DataTable, type Column } from "../components/data/DataTable";
 
 type AnalysisType =
+  | "all"
   | "profile"
   | "nav-metrics"
   | "holdings"
@@ -37,6 +36,7 @@ interface AnalysisOption {
 }
 
 const ANALYSIS_OPTIONS: AnalysisOption[] = [
+  { value: "all", label: "全部证据", desc: "list all evidence" },
   { value: "profile", label: "基金档案", desc: "fund profile" },
   { value: "nav-metrics", label: "净值指标", desc: "nav metrics" },
   { value: "holdings", label: "持仓明细", desc: "disclosed holdings" },
@@ -125,48 +125,61 @@ const COLUMNS: Column<EvidenceRow>[] = [
 
 export default function EvidencePage() {
   const [fundCode, setFundCode] = useState("");
-  const [analysisType, setAnalysisType] = useState<AnalysisType>("profile");
+  const [analysisType, setAnalysisType] = useState<AnalysisType>("all");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [response, setResponse] = useState<APIResponse | null>(null);
+  const [directEvidence, setDirectEvidence] = useState<EvidenceRecord[] | null>(null);
+  const [directTotal, setDirectTotal] = useState<number>(0);
 
   async function handleQuery() {
-    if (!fundCode.trim()) {
+    const fundCodeTrimmed = fundCode.trim();
+    if (analysisType !== "all" && !fundCodeTrimmed) {
       setError("请输入基金代码");
       return;
     }
     setLoading(true);
     setError(null);
     setResponse(null);
+    setDirectEvidence(null);
+    setDirectTotal(0);
     try {
       let resp: APIResponse;
       switch (analysisType) {
+        case "all":
+          resp = await api.listEvidence({ fund_code: fundCodeTrimmed || undefined });
+          if (resp.data && Array.isArray((resp.data as { items: EvidenceRecord[] }).items)) {
+            const d = resp.data as { items: EvidenceRecord[]; total: number };
+            setDirectEvidence(d.items);
+            setDirectTotal(d.total);
+          }
+          break;
         case "profile":
-          resp = await api.getFundProfile(fundCode.trim());
+          resp = await api.getFundProfile(fundCodeTrimmed);
           break;
         case "nav-metrics":
-          resp = await api.getNavMetrics(fundCode.trim());
+          resp = await api.getNavMetrics(fundCodeTrimmed);
           break;
         case "holdings":
-          resp = await api.getHoldings(fundCode.trim());
+          resp = await api.getHoldings(fundCodeTrimmed);
           break;
         case "exposure":
-          resp = await api.getExposure(fundCode.trim());
+          resp = await api.getExposure(fundCodeTrimmed);
           break;
         case "research-packet":
-          resp = await api.getResearchPacket(fundCode.trim());
+          resp = await api.getResearchPacket(fundCodeTrimmed);
           break;
         case "simulated-holding":
-          resp = await api.listSimulatedHolding(fundCode.trim());
+          resp = await api.listSimulatedHolding(fundCodeTrimmed);
           break;
         case "dynamic-attribution":
-          resp = await api.listDynamicAttribution(fundCode.trim());
+          resp = await api.listDynamicAttribution(fundCodeTrimmed);
           break;
         case "review-status":
-          resp = await api.getFundReviewStatus(fundCode.trim());
+          resp = await api.getFundReviewStatus(fundCodeTrimmed);
           break;
       }
-      setResponse(resp);
+      setResponse(resp!);
     } catch (e) {
       setError(`查询异常: ${e instanceof Error ? e.message : String(e)}`);
     } finally {
@@ -174,10 +187,9 @@ export default function EvidencePage() {
     }
   }
 
-  const evidenceList: EvidenceRow[] = (response?.evidence ?? []).map((e) => ({
-    ...e,
-    id: e.evidence_id,
-  }));
+  const evidenceList: EvidenceRow[] = directEvidence
+    ? directEvidence.map((e) => ({ ...e, id: e.evidence_id }))
+    : (response?.evidence ?? []).map((e) => ({ ...e, id: e.evidence_id }));
 
   // 数据源级别分布
   const levelCounts: Record<string, number> = {};
@@ -212,23 +224,6 @@ export default function EvidencePage() {
         </div>
       </div>
 
-      {/* 说明横幅 */}
-      <div
-        className="fade-up fade-up-2"
-        style={{
-          marginBottom: "var(--space-4)",
-          padding: "var(--space-3) var(--space-4)",
-          background: "var(--surface-sunken)",
-          borderLeft: "3px solid var(--ink-tertiary)",
-          borderRadius: "0 var(--radius-sm) var(--radius-sm) 0",
-          fontSize: "0.82rem",
-          color: "var(--ink-secondary)",
-        }}
-      >
-        ⓘ 后端独立 /evidence 端点尚未实现（P2.5-4）。本页通过复用现有基金分析接口的
-        <span className="mono"> evidence </span>字段进行证据检视。
-      </div>
-
       {/* 查询表单 */}
       <form
         className="fade-up fade-up-2"
@@ -244,7 +239,7 @@ export default function EvidencePage() {
           handleQuery();
         }}
       >
-        <SectionHeader title="查询条件" subtitle="选择基金与分析维度，复用现有 API 拉取证据记录" />
+        <SectionHeader title="查询条件" subtitle="选择基金与分析维度，拉取证据记录" />
         <div
           className="grid"
           style={{
@@ -282,7 +277,7 @@ export default function EvidencePage() {
           <button
             type="submit"
             className="btn btn-primary"
-            disabled={loading || !fundCode.trim()}
+            disabled={loading || (analysisType !== "all" && !fundCode.trim())}
           >
             {loading ? "查询中..." : "查询证据"}
           </button>
@@ -318,7 +313,13 @@ export default function EvidencePage() {
             <MetricCard
               label="证据条数"
               value={evidenceList.length}
-              sub={evidenceList.length === 0 ? "本次响应无证据" : "已附证据记录"}
+              sub={
+                directEvidence
+                  ? `共 ${directTotal} 条`
+                  : evidenceList.length === 0
+                    ? "本次响应无证据"
+                    : "已附证据记录"
+              }
             />
             <MetricCard
               label="结论状态"
@@ -342,7 +343,7 @@ export default function EvidencePage() {
           <div style={{ marginBottom: "var(--space-4)" }}>
             <SectionHeader
               title="证据记录"
-              subtitle={`共 ${evidenceList.length} 条`}
+              subtitle={directEvidence ? `共 ${directTotal} 条，当前显示 ${evidenceList.length} 条` : `共 ${evidenceList.length} 条`}
             />
             <div style={{ marginTop: "var(--space-3)" }}>
               {evidenceList.length === 0 ? (

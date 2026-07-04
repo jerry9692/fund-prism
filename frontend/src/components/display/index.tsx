@@ -1,6 +1,8 @@
 // 核心展示组件库 — StatusBadge / SectionHeader / MetricCard / EmptyState / LoadingState / ErrorState / TabNav / PeriodTabs / Breadcrumb / Drawer
 
 import { type ReactNode, useState, useEffect } from "react";
+import { Link } from "react-router-dom";
+import { type EvidenceRecord } from "../../api/client";
 
 // ---- StatusBadge ----
 
@@ -216,7 +218,16 @@ export function Breadcrumb({ items }: { items: BreadcrumbItem[] }) {
         return (
           <span key={i} className="flex items-center gap-2">
             {item.to && !isLast ? (
-              <a href={item.to}>{item.label}</a>
+              <Link
+                to={item.to}
+                style={{
+                  color: "var(--accent)",
+                  textDecoration: "none",
+                  cursor: "pointer",
+                }}
+              >
+                {item.label}
+              </Link>
             ) : (
               <span className="breadcrumb-current">{item.label}</span>
             )}
@@ -291,4 +302,311 @@ export function FilterGroup({
       <div className="filter-group-body">{children}</div>
     </div>
   );
+}
+
+// ---- ExportButton (通用导出按钮) ----
+
+export interface ExportResult {
+  content_base64: string;
+  filename: string;
+  format: string;
+  media_type: string;
+}
+
+export function ExportButton({
+  data,
+  onExport,
+  filename,
+  label = "导出",
+  variant = "secondary",
+  size = "sm",
+  disabled = false,
+}: {
+  /** 直接提供数据,序列化为 JSON 导出 */
+  data?: unknown;
+  /** 异步导出函数,返回 base64 编码内容 (配合 API 导出接口) */
+  onExport?: () => Promise<ExportResult>;
+  /** 下载文件名 */
+  filename: string;
+  /** 按钮文字 */
+  label?: string;
+  /** 按钮样式 */
+  variant?: "primary" | "secondary" | "ghost";
+  /** 按钮大小 */
+  size?: "sm" | "md";
+  /** 禁用 */
+  disabled?: boolean;
+}) {
+  const [exporting, setExporting] = useState(false);
+
+  const handleExport = async () => {
+    if (exporting || disabled) return;
+    setExporting(true);
+    try {
+      if (onExport) {
+        const result = await onExport();
+        const binary = atob(result.content_base64);
+        const bytes = new Uint8Array(binary.length);
+        for (let i = 0; i < binary.length; i++) {
+          bytes[i] = binary.charCodeAt(i);
+        }
+        const blob = new Blob([bytes], { type: result.media_type });
+        triggerDownload(blob, result.filename || filename);
+      } else if (data !== undefined) {
+        const blob = new Blob([JSON.stringify(data, null, 2)], {
+          type: "application/json",
+        });
+        triggerDownload(blob, filename);
+      }
+    } catch {
+      // 静默失败
+    } finally {
+      setExporting(false);
+    }
+  };
+
+  return (
+    <button
+      className={`btn btn-${variant} ${size === "sm" ? "btn-sm" : ""}`}
+      onClick={handleExport}
+      disabled={exporting || disabled}
+    >
+      {exporting ? "导出中…" : label}
+    </button>
+  );
+}
+
+// ---- ConfidenceBadge ----
+
+export function ConfidenceBadge({
+  confidence,
+  conclusion_status,
+}: {
+  confidence: string;
+  conclusion_status: string;
+}) {
+  const c = confidence.toLowerCase();
+  let bg = "var(--surface-sunken)";
+  let color = "var(--ink-secondary)";
+  if (c === "high") {
+    bg = "var(--positive-soft)";
+    color = "var(--positive)";
+  } else if (c === "medium") {
+    bg = "var(--warning-soft)";
+    color = "var(--warning)";
+  } else if (c === "low") {
+    bg = "var(--negative-soft)";
+    color = "var(--negative)";
+  }
+  return (
+    <span
+      style={{
+        display: "inline-flex",
+        alignItems: "center",
+        gap: "var(--space-1)",
+        padding: "2px 8px",
+        borderRadius: "var(--radius-sm)",
+        background: bg,
+        color,
+        fontFamily: "var(--font-mono)",
+        fontSize: "0.7rem",
+        textTransform: "uppercase",
+        fontWeight: 600,
+        letterSpacing: "0.02em",
+      }}
+    >
+      {conclusion_status || c}
+    </span>
+  );
+}
+
+// ---- EvidenceList ----
+
+export function EvidenceList({ evidence }: { evidence: EvidenceRecord[] }) {
+  const [expanded, setExpanded] = useState<Set<string>>(new Set());
+
+  if (evidence.length === 0) {
+    return (
+      <EmptyState
+        icon="∅"
+        title="暂无证据记录"
+        desc="该结果未附带证据链"
+      />
+    );
+  }
+
+  const toggle = (id: string) => {
+    setExpanded((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: "var(--space-2)" }}>
+      {evidence.map((ev) => {
+        const isOpen = expanded.has(ev.evidence_id);
+        return (
+          <div
+            key={ev.evidence_id}
+            style={{
+              border: "1px solid var(--border-hairline)",
+              borderRadius: "var(--radius-md)",
+              background: "var(--surface-raised)",
+              overflow: "hidden",
+            }}
+          >
+            <button
+              onClick={() => toggle(ev.evidence_id)}
+              style={{
+                display: "flex",
+                alignItems: "center",
+                gap: "var(--space-2)",
+                width: "100%",
+                padding: "var(--space-2) var(--space-3)",
+                background: "transparent",
+                border: "none",
+                cursor: "pointer",
+                textAlign: "left",
+                fontSize: "0.85rem",
+                color: "var(--ink-primary)",
+              }}
+            >
+              <span
+                style={{
+                  fontFamily: "var(--font-mono)",
+                  fontSize: "0.75rem",
+                  transform: isOpen ? "rotate(90deg)" : "rotate(0deg)",
+                  transition: "transform 0.15s",
+                  color: "var(--ink-tertiary)",
+                  flexShrink: 0,
+                }}
+              >
+                ▶
+              </span>
+              <span
+                style={{
+                  fontFamily: "var(--font-mono)",
+                  fontSize: "0.78rem",
+                  color: "var(--ink-secondary)",
+                  flexShrink: 0,
+                  minWidth: 120,
+                }}
+              >
+                {ev.evidence_type}
+              </span>
+              <span
+                className="mono text-sm"
+                style={{ color: "var(--ink-tertiary)", flexShrink: 0 }}
+              >
+                {ev.source}
+              </span>
+              <span
+                style={{
+                  fontFamily: "var(--font-mono)",
+                  fontSize: "0.7rem",
+                  padding: "1px 6px",
+                  borderRadius: "var(--radius-sm)",
+                  background: "var(--surface-sunken)",
+                  color: "var(--ink-secondary)",
+                  flexShrink: 0,
+                }}
+              >
+                {ev.source_level}
+              </span>
+              <span style={{ marginLeft: "auto", flexShrink: 0 }}>
+                <StatusBadge status={ev.conclusion_status} />
+              </span>
+            </button>
+            {isOpen && (
+              <div
+                style={{
+                  padding: "var(--space-3) var(--space-4)",
+                  borderTop: "1px solid var(--border-hairline)",
+                  background: "var(--surface-sunken)",
+                  fontSize: "0.82rem",
+                }}
+              >
+                {ev.data_summary && (
+                  <div style={{ marginBottom: "var(--space-2)" }}>
+                    <span className="text-tertiary">摘要：</span>
+                    <span>{ev.data_summary}</span>
+                  </div>
+                )}
+                <div
+                  style={{
+                    display: "grid",
+                    gridTemplateColumns: "repeat(auto-fill, minmax(200px, 1fr))",
+                    gap: "var(--space-2)",
+                  }}
+                >
+                  {ev.date_range && (
+                    <div>
+                      <span className="text-tertiary">日期范围：</span>
+                      <span className="mono text-sm">
+                        {ev.date_range[0]} ~ {ev.date_range[1]}
+                      </span>
+                    </div>
+                  )}
+                  <div>
+                    <span className="text-tertiary">证据ID：</span>
+                    <span className="mono text-sm">{ev.evidence_id}</span>
+                  </div>
+                  <div>
+                    <span className="text-tertiary">置信度：</span>
+                    <ConfidenceBadge
+                      confidence={ev.confidence}
+                      conclusion_status={ev.conclusion_status}
+                    />
+                  </div>
+                </div>
+              </div>
+            )}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+// ---- Toolbar ----
+
+export function Toolbar({
+  left,
+  right,
+}: {
+  left?: ReactNode;
+  right?: ReactNode;
+}) {
+  return (
+    <div
+      style={{
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "space-between",
+        padding: "var(--space-3) 0",
+        marginBottom: "var(--space-4)",
+        borderBottom: "1px solid var(--border-default)",
+        gap: "var(--space-3)",
+      }}
+    >
+      <div style={{ display: "flex", alignItems: "center", gap: "var(--space-2)", flexWrap: "wrap" }}>
+        {left}
+      </div>
+      <div style={{ display: "flex", alignItems: "center", gap: "var(--space-2)", flexShrink: 0 }}>
+        {right}
+      </div>
+    </div>
+  );
+}
+
+function triggerDownload(blob: Blob, filename: string) {
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  a.click();
+  URL.revokeObjectURL(url);
 }

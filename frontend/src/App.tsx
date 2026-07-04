@@ -2,7 +2,8 @@ import { Routes, Route } from "react-router-dom";
 import AppShell from "./components/shell/AppShell";
 import HomePage from "./pages/HomePage";
 import FundListPage from "./pages/FundListPage";
-import FundDetailPage from "./pages/FundDetailPage";
+import FundDetailLayout from "./pages/FundDetailLayout";
+import FundOverviewPage from "./pages/FundOverviewPage";
 import HoldingsPage from "./pages/HoldingsPage";
 import ExposurePage from "./pages/ExposurePage";
 import ResearchPacketPage from "./pages/ResearchPacketPage";
@@ -18,30 +19,48 @@ import DynamicAttributionPage from "./pages/DynamicAttributionPage";
 import EvidencePage from "./pages/EvidencePage";
 import ApiDebugPage from "./pages/ApiDebugPage";
 import FundPoolPage from "./pages/FundPoolPage";
+import ReverseLookupPage from "./pages/ReverseLookupPage";
+import TemplateListPage from "./pages/TemplateListPage";
+import SimilarFundsPage from "./pages/SimilarFundsPage";
+import FundComparePage from "./pages/FundComparePage";
+import AnomalyListPage from "./pages/AnomalyListPage";
+import ErrorBoundary, { RouteErrorBoundary } from "./components/ErrorBoundary";
 
 export default function App() {
   return (
     <AppShell>
-      <Routes>
-        <Route path="/" element={<HomePage />} />
-        <Route path="/funds" element={<FundListPage />} />
-        <Route path="/funds/:code" element={<FundDetailPage />} />
-        <Route path="/funds/:code/holdings" element={<HoldingsPage />} />
-        <Route path="/funds/:code/exposure" element={<ExposurePage />} />
-        <Route path="/funds/:code/packet" element={<ResearchPacketPage />} />
-        <Route path="/funds/:code/diff" element={<PacketDiffPage />} />
-        <Route path="/funds/:code/scoring" element={<FundScoringPage />} />
-        <Route path="/funds/:code/simulated" element={<SimulatedHoldingPage />} />
-        <Route path="/funds/:code/attribution" element={<DynamicAttributionPage />} />
-        <Route path="/funds/:code/review" element={<FundReviewPage />} />
-        <Route path="/fund-pool" element={<FundPoolPage />} />
-        <Route path="/data-quality" element={<DataQualityPage />} />
-        <Route path="/evidence" element={<EvidencePage />} />
-        <Route path="/api-debug" element={<ApiDebugPage />} />
-        <Route path="/experiments" element={<ExperimentsPage />} />
-        <Route path="/experiments/p2b-report" element={<P2BValidationPage />} />
-        <Route path="/scoring/backtest" element={<ScoringBacktestPage />} />
-      </Routes>
+      <ErrorBoundary>
+        <Routes>
+          <Route path="/" element={<HomePage />} />
+          <Route path="/funds" element={<FundListPage />} />
+
+          {/* 基金详情嵌套路由：Layout 包含面包屑+标题+TabNav，Outlet 渲染子页面 */}
+          <Route path="/funds/:code" element={<FundDetailLayout />}>
+            <Route index element={<RouteErrorBoundary><FundOverviewPage /></RouteErrorBoundary>} />
+            <Route path="holdings" element={<RouteErrorBoundary><HoldingsPage /></RouteErrorBoundary>} />
+            <Route path="exposure" element={<RouteErrorBoundary><ExposurePage /></RouteErrorBoundary>} />
+            <Route path="packet" element={<RouteErrorBoundary><ResearchPacketPage /></RouteErrorBoundary>} />
+            <Route path="diff" element={<RouteErrorBoundary><PacketDiffPage /></RouteErrorBoundary>} />
+            <Route path="scoring" element={<RouteErrorBoundary><FundScoringPage /></RouteErrorBoundary>} />
+            <Route path="simulated" element={<RouteErrorBoundary><SimulatedHoldingPage /></RouteErrorBoundary>} />
+            <Route path="attribution" element={<RouteErrorBoundary><DynamicAttributionPage /></RouteErrorBoundary>} />
+            <Route path="review" element={<RouteErrorBoundary><FundReviewPage /></RouteErrorBoundary>} />
+          </Route>
+
+          <Route path="/fund-pool" element={<FundPoolPage />} />
+          <Route path="/data-quality" element={<DataQualityPage />} />
+          <Route path="/evidence" element={<EvidencePage />} />
+          <Route path="/api-debug" element={<ApiDebugPage />} />
+          <Route path="/experiments" element={<ExperimentsPage />} />
+          <Route path="/experiments/p2b-report" element={<P2BValidationPage />} />
+          <Route path="/scoring/backtest" element={<ScoringBacktestPage />} />
+          <Route path="/reverse-lookup" element={<ReverseLookupPage />} />
+          <Route path="/templates" element={<TemplateListPage />} />
+          <Route path="/similar-funds" element={<SimilarFundsPage />} />
+          <Route path="/fund-compare" element={<FundComparePage />} />
+          <Route path="/anomalies" element={<AnomalyListPage />} />
+        </Routes>
+      </ErrorBoundary>
     </AppShell>
   );
 }

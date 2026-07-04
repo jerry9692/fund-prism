@@ -1562,6 +1562,66 @@ def export(
             raise typer.Exit(code=1)
 
 
+@app.command("import")
+def import_data(
+    file_path: Annotated[
+        str,
+        typer.Argument(help="本地文件路径 (CSV/Parquet/Excel)"),
+    ],
+    entity: Annotated[
+        str,
+        typer.Option(
+            "--entity",
+            "-e",
+            help="实体类型: fund_nav / fund_holdings / stock_daily / fund_scale / fund_manager / fund_manager_tenure",
+        ),
+    ] = "fund_nav",
+    dry_run: Annotated[
+        bool,
+        typer.Option("--dry-run", help="仅验证不写入"),
+    ] = False,
+    db_path: DbPathOption = None,
+) -> None:
+    """从本地文件导入数据 (CSV/Parquet/Excel)。
+
+    数据源等级为 LOCAL，高于 B 级 AKShare。
+
+    示例:
+        fund-research import data/nav.csv --entity fund_nav
+        fund-research import data/stocks.parquet --entity stock_daily
+        fund-research import data/holdings.xlsx --entity fund_holdings --dry-run
+    """
+    from sqlalchemy.orm import sessionmaker
+
+    from fund_research.data.adapters.local_file import LocalFileAdapter
+    from fund_research.db.session import create_engine_from_path
+
+    engine = create_engine_from_path(db_path)
+    session_factory = sessionmaker(bind=engine)
+    adapter = LocalFileAdapter()
+
+    with session_factory() as db:
+        result = adapter.import_file(db, file_path, entity=entity, dry_run=dry_run)
+
+    if result.errors:
+        for err in result.errors:
+            console.print(f"[red]错误:[/] {err}")
+        raise typer.Exit(code=1)
+
+    console.print(f"[green]导入完成:[/] {result.entity}")
+    console.print(f"  文件: {result.file_path}")
+    console.print(f"  总行数: {result.total_rows}")
+    console.print(f"  导入: {result.imported_rows}")
+    console.print(f"  跳过: {result.skipped_rows}")
+    if result.warnings:
+        for w in result.warnings[:10]:
+            console.print(f"  [yellow]警告:[/] {w}")
+        if len(result.warnings) > 10:
+            console.print(f"  [yellow]... 还有 {len(result.warnings) - 10} 条警告")
+    if dry_run:
+        console.print("[blue]（dry-run 模式，未实际写入）[/]")
+
+
 @app.callback()
 def main(
     log_level: str = typer.Option("INFO", "--log-level", "-l", help="日志级别"),

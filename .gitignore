@@ -19,6 +19,7 @@ env/
 .idea/
 .vscode/
 .claude/
+.trae-html-share-packages/
 *.swp
 *.swo
 

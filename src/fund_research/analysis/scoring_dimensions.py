@@ -15,6 +15,7 @@ only see information available at or before T.
 from datetime import date
 
 import numpy as np
+import pandas as pd
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -33,14 +34,126 @@ from fund_research.db.models import (
 
 
 def compute_alpha(db: Session, fund_code: str, as_of_date: date | None = None) -> float | None:
-    """Selection + allocation effect from the latest static attribution.
+    """Compute Alpha dimension using Jensen's Alpha against the real benchmark index.
 
-    When ``as_of_date`` is provided, only attributions with
-    ``report_date <= as_of_date`` are considered, preventing lookahead bias.
+    This function loads the fund's daily returns and the benchmark index daily
+    returns from the database, then computes Jensen's Alpha via OLS regression:
+        r_fund - r_f = alpha + beta * (r_bench - r_f) + epsilon
+
+    If benchmark index data is unavailable, it falls back to the static
+    attribution (selection + allocation effect) as a proxy.
+
+    Args:
+        db: Database session
+        fund_code: Fund code
+        as_of_date: Only use data up to this date (prevents lookahead bias)
+
+    Returns:
+        Alpha score (higher is better), or None if insufficient data.
     """
-    stmt = (
-        select(StaticAttributionResult)
-        .where(StaticAttributionResult.fund_code == fund_code)
+    import numpy as np
+
+    from fund_research.db.models import FundMain, FundNAV, StockDaily
+
+    # 1. Determine the benchmark index symbol for this fund
+    fund = db.scalar(select(FundMain).where(FundMain.fund_code == fund_code))
+    if not fund:
+        return None
+
+    # Map common benchmark names to index codes stored in StockDaily
+    benchmark_name = (fund.benchmark or "").lower()
+    bench_symbol = _resolve_benchmark_symbol(benchmark_name)
+
+    # 2. Load fund daily returns
+    nav_stmt = select(FundNAV).where(FundNAV.fund_code == fund_code)
+    if as_of_date is not None:
+        nav_stmt = nav_stmt.where(FundNAV.trade_date <= as_of_date)
+    nav_stmt = nav_stmt.order_by(FundNAV.trade_date)
+    nav_rows = db.execute(nav_stmt).scalars().all()
+
+    if len(nav_rows) < 20:
+        # Insufficient NAV data — fall back to static attribution
+        return _alpha_from_static_attribution(db, fund_code, as_of_date)
+
+    fund_returns = pd.Series(
+        {r.trade_date: r.daily_return for r in nav_rows if r.daily_return is not None}
+    ).dropna()
+
+    if len(fund_returns) < 20:
+        return _alpha_from_static_attribution(db, fund_code, as_of_date)
+
+    # 3. Load benchmark index daily returns
+    alpha_score = None
+    if bench_symbol:
+        bench_stmt = select(StockDaily).where(StockDaily.stock_code == bench_symbol)
+        if as_of_date is not None:
+            bench_stmt = bench_stmt.where(StockDaily.trade_date <= as_of_date)
+        bench_stmt = bench_stmt.order_by(StockDaily.trade_date)
+        bench_rows = db.execute(bench_stmt).scalars().all()
+
+        if len(bench_rows) >= 20:
+            bench_returns = pd.Series(
+                {r.trade_date: r.daily_return for r in bench_rows if r.daily_return is not None}
+            ).dropna()
+
+            if len(bench_returns) >= 20:
+                # Align dates
+                aligned = pd.DataFrame({"fund": fund_returns, "bench": bench_returns}).dropna()
+                if len(aligned) >= 20:
+                    risk_free_daily = 0.02 / 252  # 2% annualized
+                    excess_fund = aligned["fund"] - risk_free_daily
+                    excess_bench = aligned["bench"] - risk_free_daily
+
+                    # OLS regression: excess_fund = alpha + beta * excess_bench
+                    x = excess_bench.values
+                    y = excess_fund.values
+                    beta_num = np.sum((x - x.mean()) * (y - y.mean()))
+                    beta_den = np.sum((x - x.mean()) ** 2)
+                    if beta_den > 0:
+                        beta = beta_num / beta_den
+                        alpha = y.mean() - beta * x.mean()
+                        # Annualize alpha (daily → annual)
+                        alpha_score = float(alpha * 252)
+                    else:
+                        alpha_score = float(excess_fund.mean() * 252)
+
+    # 4. Fall back to static attribution if no benchmark data
+    if alpha_score is None:
+        return _alpha_from_static_attribution(db, fund_code, as_of_date)
+
+    return alpha_score
+
+
+def _resolve_benchmark_symbol(benchmark_name: str) -> str | None:
+    """Map a benchmark name to the index code stored in StockDaily."""
+    # Common mappings: name → stock_code in StockDaily
+    mappings = [
+        ("沪深300", "sh000300"),
+        ("300", "sh000300"),
+        ("中证500", "sh000905"),
+        ("500", "sh000905"),
+        ("中证1000", "sh000852"),
+        ("1000", "sh000852"),
+        ("上证50", "sh000016"),
+        ("创业板", "sz399006"),
+        ("科创50", "sh000688"),
+        ("中证全债", "sh000012"),
+    ]
+    for keyword, symbol in mappings:
+        if keyword in benchmark_name:
+            return symbol
+    # Default to CSI 300
+    if benchmark_name:
+        return "sh000300"
+    return None
+
+
+def _alpha_from_static_attribution(
+    db: Session, fund_code: str, as_of_date: date | None
+) -> float | None:
+    """Fallback: Alpha from static attribution (selection + allocation effect)."""
+    stmt = select(StaticAttributionResult).where(
+        StaticAttributionResult.fund_code == fund_code
     )
     if as_of_date is not None:
         stmt = stmt.where(StaticAttributionResult.report_date <= as_of_date)

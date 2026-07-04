@@ -27,6 +27,16 @@ const NAV_GROUPS: NavGroup[] = [
     items: [
       { to: "/funds", label: "基金筛选", icon: "◇" },
       { to: "/fund-pool", label: "基金池", icon: "◫" },
+      { to: "/similar-funds", label: "相似搜索", icon: "⬡" },
+      { to: "/fund-compare", label: "基金对比", icon: "⬢" },
+    ],
+  },
+  {
+    label: "发现与反选",
+    items: [
+      { to: "/anomalies", label: "异常发现", icon: "⚠" },
+      { to: "/reverse-lookup", label: "股票反选", icon: "⇄" },
+      { to: "/templates", label: "研究模板", icon: "▦" },
     ],
   },
   {

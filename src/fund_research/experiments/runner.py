@@ -645,6 +645,12 @@ def _run_optimized_simulation(
                 "note": "manual_fallback_calc_date_mismatch",
             })
 
+    # Sync backtest metrics into sim_result so is_reliable() sees them (R-17 fix)
+    if backtest.get("top10_recall") is not None and sim_result.overall_top10_recall is None:
+        sim_result.overall_top10_recall = float(backtest["top10_recall"])
+    if backtest.get("industry_correlation") is not None and sim_result.overall_industry_correlation is None:
+        sim_result.overall_industry_correlation = float(backtest["industry_correlation"])
+
     latest_report = holdings_df["report_date"].max() if not holdings_df.empty else None
     latest_holdings = (
         holdings_df[holdings_df["report_date"] == latest_report]

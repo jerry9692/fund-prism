@@ -55,7 +55,7 @@ function ResultCard({
     title: { text: "Top 15 重仓股权重" },
     tooltip: {
       trigger: "axis",
-      formatter: (params) => {
+      formatter: (params: unknown) => {
         const p = (params as Array<{ name: string; value: number }>)[0];
         return `${p.name}: ${p.value.toFixed(2)}%`;
       },
@@ -68,7 +68,7 @@ function ResultCard({
     yAxis: {
       type: "value",
       name: "权重(%)",
-      axisLabel: { formatter: (v) => `${v.toFixed(1)}%` },
+      axisLabel: { formatter: (v: number) => `${v.toFixed(1)}%` },
     },
     series: [
       {

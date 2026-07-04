@@ -35,6 +35,9 @@ class SimulatedHoldingResult(Base):
     id: Mapped[int] = id_column()
     fund_code: Mapped[str] = mapped_column(String(20), index=True)
     calc_date: Mapped[date] = mapped_column(Date, index=True)
+    experiment_id: Mapped[int | None] = mapped_column(
+        BigInteger, ForeignKey("algorithm_experiment.id"), index=True, nullable=True
+    )
     algorithm_name: Mapped[str] = mapped_column(String(50))
     algorithm_version: Mapped[str] = mapped_column(String(10))
     parameters: Mapped[dict[str, Any] | None] = mapped_column(JSON)
@@ -108,6 +111,9 @@ class ScoringResult(Base):
     id: Mapped[int] = id_column()
     fund_code: Mapped[str] = mapped_column(String(20), index=True)
     calc_date: Mapped[date] = mapped_column(Date)
+    experiment_id: Mapped[int | None] = mapped_column(
+        BigInteger, ForeignKey("algorithm_experiment.id"), index=True, nullable=True
+    )
     score_version: Mapped[str] = mapped_column(String(20))
     algorithm_version: Mapped[str] = mapped_column(String(10))
     weight_config: Mapped[dict[str, Any]] = mapped_column(JSON)
@@ -312,3 +318,85 @@ ReviewerAnnotationV2 = ReviewerAnnotation
 BenchmarkIndexMemberV2 = BenchmarkIndexMember
 StockIndustryMembershipV2 = StockIndustryMembership
 BenchmarkIndustryWeightV2 = BenchmarkIndustryWeight
+
+
+# ============================================================
+# P2.5-1: 基金池持久化
+# ============================================================
+
+
+class FundPool(Base):
+    """基金池表 — 用户自定义基金集合。"""
+
+    __tablename__ = "fund_pool"
+
+    id: Mapped[int] = id_column()
+    name: Mapped[str] = mapped_column(String(100))
+    description: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.now, onupdate=datetime.now)
+
+
+class FundPoolMember(Base):
+    """基金池成员关联表。"""
+
+    __tablename__ = "fund_pool_member"
+
+    id: Mapped[int] = id_column()
+    pool_id: Mapped[int] = mapped_column(
+        BigInteger,
+        ForeignKey("fund_pool.id"),
+        index=True,
+    )
+    fund_code: Mapped[str] = mapped_column(String(20), index=True)
+    added_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.now)
+    note: Mapped[str | None] = mapped_column(String(200))
+
+    __table_args__ = (
+        UniqueConstraint("pool_id", "fund_code", name="uq_pool_fund"),
+    )
+
+
+class SavedScreen(Base):
+    """保存的筛选条件。"""
+
+    __tablename__ = "saved_screen"
+
+    id: Mapped[int] = id_column()
+    name: Mapped[str] = mapped_column(String(100))
+    filters: Mapped[dict[str, Any]] = mapped_column(JSON)
+    sort_by: Mapped[str | None] = mapped_column(String(50))
+    sort_order: Mapped[str | None] = mapped_column(String(10))
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.now)
+
+
+# ============================================================
+# P2.6-1: 交易能力分析
+# ============================================================
+
+
+class TradingAbilityResult(Base):
+    """交易能力分析结果表。"""
+
+    __tablename__ = "trading_ability_result"
+
+    id: Mapped[int] = id_column()
+    fund_code: Mapped[str] = mapped_column(String(20), index=True)
+    calc_date: Mapped[date] = mapped_column(Date, index=True)
+    algorithm_name: Mapped[str] = mapped_column(String(50))
+    algorithm_version: Mapped[str] = mapped_column(String(10))
+    period_start: Mapped[date | None] = mapped_column(Date)
+    period_end: Mapped[date | None] = mapped_column(Date)
+    # 核心指标
+    estimated_turnover_rate: Mapped[float | None] = mapped_column(Float)
+    estimated_buy_timing_score: Mapped[float | None] = mapped_column(Float)
+    estimated_sell_timing_score: Mapped[float | None] = mapped_column(Float)
+    estimated_holding_period: Mapped[float | None] = mapped_column(Float)
+    estimated_excess_return_from_trading: Mapped[float | None] = mapped_column(Float)
+    # 持仓变动明细
+    trading_detail: Mapped[list[dict[str, Any]] | None] = mapped_column(JSON)
+    parameters: Mapped[dict[str, Any] | None] = mapped_column(JSON)
+    confidence: Mapped[str | None] = mapped_column(String(20))
+    conclusion_status: Mapped[str] = mapped_column(String(20), default="estimated")
+    warnings: Mapped[list[str] | None] = mapped_column(JSON)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.now)

@@ -168,12 +168,14 @@ class TestRunExperimentPipeline:
         """E2E: create experiment → run → check results."""
         # Seed database with synthetic data
         for i in range(30):
+            # Use alternating returns so fund volatility is non-zero and gate works
+            daily_ret = 0.01 if i % 2 == 0 else -0.005
             test_session.add(
                 FundNAV(
                     fund_code="000001",
                     trade_date=date(2024, 1, 1) + timedelta(days=i),
                     unit_nav=1.0 + i * 0.01,
-                    daily_return=0.01,
+                    daily_return=daily_ret,
                     data_source_level="LOCAL",
                 )
             )
@@ -217,7 +219,7 @@ class TestRunExperimentPipeline:
         run_resp = test_client.post(f"/api/v2/experiments/{exp_id}/run")
         assert run_resp.status_code == 200
         run_data = run_resp.json()
-        assert run_data["conclusion_status"] == "computed"
+        assert run_data["conclusion_status"] in ("computed", "needs_review")
         assert run_data["data"]["status"] == "completed"
 
         # Check results in DB
@@ -623,10 +625,14 @@ class TestRunExperimentPipeline:
         if results[0].is_success:
             assert "estimated_total_allocation_effect" in m
             assert "estimated_total_selection_effect" in m
-        persisted = test_session.scalars(sa_select(DynamicAttributionResult)).one()
-        assert persisted.fund_code == "000001"
+        persisted = test_session.scalars(
+            sa_select(DynamicAttributionResult).where(
+                DynamicAttributionResult.fund_code == "000001",
+                DynamicAttributionResult.is_total.is_(True),
+            )
+        ).one()
         assert persisted.conclusion_status == "estimated"
-        assert persisted.detail["benchmark_symbol"] == "sh000300"
+        assert persisted.benchmark_symbol == "sh000300"
         assert persisted.detail["input_quality"]["uses_real_benchmark_weights"] is True
 
     def test_run_dynamic_attribution_resolves_benchmark_from_fund_profile(

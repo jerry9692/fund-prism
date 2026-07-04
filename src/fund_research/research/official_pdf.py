@@ -5,6 +5,7 @@ failure must produce warnings instead of pretending an A-level source exists.
 """
 
 import hashlib
+import io
 import re
 from dataclasses import dataclass, field
 from datetime import date, datetime
@@ -13,6 +14,20 @@ from typing import Any
 
 import httpx
 import pandas as pd
+
+# ---------------------------------------------------------------------------
+# Optional PDF parsing libraries.  We try pdfplumber first (best CJK/text
+# layout support), then pypdf, and finally fall back to a raw bytes decode.
+# ---------------------------------------------------------------------------
+try:
+    import pdfplumber as _pdfplumber  # type: ignore[import-untyped]
+except ImportError:  # pragma: no cover - optional dependency
+    _pdfplumber = None
+
+try:
+    from pypdf import PdfReader as _PdfReader  # type: ignore[import-untyped]
+except ImportError:  # pragma: no cover - optional dependency
+    _PdfReader = None
 
 from fund_research.core.enums import (
     ConclusionStatus,
@@ -64,10 +79,71 @@ def _pdf_page_count(content: bytes) -> int | None:
     return len(matches) or None
 
 
-def _pdf_text_snippet(content: bytes, keywords: tuple[str, ...]) -> str | None:
+def _extract_text_with_pdfplumber(content: bytes) -> str | None:
+    """Extract text using pdfplumber (best CJK support). Returns None on failure."""
+    if _pdfplumber is None:
+        return None
+    try:
+        with _pdfplumber.open(io.BytesIO(content)) as pdf:
+            pages_text: list[str] = []
+            for page in pdf.pages:
+                page_text = page.extract_text() or ""
+                pages_text.append(page_text)
+            return "\n".join(pages_text)
+    except Exception:
+        return None
+
+
+def _extract_text_with_pypdf(content: bytes) -> str | None:
+    """Extract text using pypdf. Returns None on failure."""
+    if _PdfReader is None:
+        return None
+    try:
+        reader = _PdfReader(io.BytesIO(content))
+        pages_text: list[str] = []
+        for page in reader.pages:
+            page_text = page.extract_text() or ""
+            pages_text.append(page_text)
+        return "\n".join(pages_text)
+    except Exception:
+        return None
+
+
+def _extract_text_raw_decode(content: bytes) -> str:
+    """Fallback: raw bytes decode (original behaviour)."""
     text = content.decode("utf-8", errors="ignore")
     if not text.strip():
         text = content.decode("latin-1", errors="ignore")
+    return text
+
+
+def _pdf_extract_text(content: bytes) -> tuple[str, str]:
+    """Extract full text from PDF bytes.
+
+    Returns a tuple of ``(text, method_used)`` where *method_used* is one of
+    ``"pdfplumber"``, ``"pypdf"``, or ``"raw_decode"``.  The returned text is
+    never ``None`` (worst case it is an empty string).
+    """
+    text = _extract_text_with_pdfplumber(content)
+    if text and text.strip():
+        return text, "pdfplumber"
+
+    text = _extract_text_with_pypdf(content)
+    if text and text.strip():
+        return text, "pypdf"
+
+    return _extract_text_raw_decode(content), "raw_decode"
+
+
+def _pdf_text_snippet(content: bytes, keywords: tuple[str, ...]) -> str | None:
+    """Extract a keyword-relevant snippet from PDF content.
+
+    Uses pdfplumber/pypdf when available for proper text extraction, with a
+    raw-bytes-decode fallback.  This replaces the previous approach that
+    relied solely on ``bytes.decode()``, which produced garbled output for
+    most real-world PDFs (compressed streams, CJK fonts, etc.).
+    """
+    text, _method = _pdf_extract_text(content)
     compact = re.sub(r"\s+", " ", text)
     for keyword in keywords:
         index = compact.find(keyword)
@@ -112,6 +188,7 @@ def build_official_pdf_evidence(
     cached_path.write_bytes(content)
 
     page_count = _pdf_page_count(content)
+    _full_text, text_method = _pdf_extract_text(content)
     snippet = _pdf_text_snippet(content, keywords)
     announcement_date = _parse_date(row.get("announcement_date"))
     title = str(row.get("title") or "官方披露 PDF")
@@ -122,7 +199,13 @@ def build_official_pdf_evidence(
         "sha256": digest,
         "page_count": page_count,
         "title": title,
+        "text_extract_method": text_method,
     }
+    if text_method == "raw_decode":
+        warnings.append(
+            "未安装 pdfplumber/pypdf，使用原始字节解码提取文本，"
+            "结果可能包含乱码；建议 pip install pdfplumber pypdf 以获得更好的中文 PDF 解析效果"
+        )
     evidence = EvidenceRecord(
         evidence_id=f"official_pdf:{fund_code}:{digest[:12]}",
         entity_id=f"fund:{fund_code}",
