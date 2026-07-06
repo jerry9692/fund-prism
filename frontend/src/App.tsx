@@ -25,6 +25,8 @@ import SimilarFundsPage from "./pages/SimilarFundsPage";
 import FundComparePage from "./pages/FundComparePage";
 import AnomalyListPage from "./pages/AnomalyListPage";
 import AnomalyDetailPage from "./pages/AnomalyDetailPage";
+import ResearchPacketListPage from "./pages/ResearchPacketListPage";
+import ResearchPacketDetailPage from "./pages/ResearchPacketDetailPage";
 import ErrorBoundary, { RouteErrorBoundary } from "./components/ErrorBoundary";
 
 export default function App() {
@@ -62,6 +64,8 @@ export default function App() {
           <Route path="/fund-compare" element={<FundComparePage />} />
           <Route path="/anomalies" element={<AnomalyListPage />} />
           <Route path="/anomalies/:id" element={<RouteErrorBoundary><AnomalyDetailPage /></RouteErrorBoundary>} />
+          <Route path="/research-packets" element={<RouteErrorBoundary><ResearchPacketListPage /></RouteErrorBoundary>} />
+          <Route path="/research-packets/:id" element={<RouteErrorBoundary><ResearchPacketDetailPage /></RouteErrorBoundary>} />
         </Routes>
       </ErrorBoundary>
     </AppShell>

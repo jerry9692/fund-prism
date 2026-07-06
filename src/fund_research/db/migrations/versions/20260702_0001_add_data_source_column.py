@@ -70,9 +70,9 @@ def upgrade() -> None:
                     f'ALTER TABLE "{table}" ADD COLUMN "{column}" {sql_type} {null_clause}'
                 )
                 if column == "updated_at":
-                    op.execute(
-                        f'UPDATE "{table}" SET "{column}" = ?',
-                        (now,),
+                    bind.execute(
+                        sa.text(f'UPDATE "{table}" SET "{column}" = :now'),
+                        {"now": now},
                     )
         else:
             if not _pg_column_exists(table, column):

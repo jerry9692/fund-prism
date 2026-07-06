@@ -4688,7 +4688,7 @@ def scan_pool_alerts_endpoint(
                 "algorithm_version": POOL_ALERT_VERSION,
                 "platform_version": __version__,
             },
-            warnings=all_warnings if all_warnings else None,
+            warnings=all_warnings,
             conclusion_status=ConclusionStatus.COMPUTED,
         ), started)
     except Exception as exc:

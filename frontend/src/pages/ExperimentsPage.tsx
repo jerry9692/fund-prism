@@ -59,6 +59,11 @@ export default function ExperimentsPage() {
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
   const [benchmarkSymbol, setBenchmarkSymbol] = useState("sh000300");
   const [minReturnObs, setMinReturnObs] = useState(3);
+  const [reportDate, setReportDate] = useState<string>(
+    new Date().toISOString().slice(0, 10),
+  );
+  const [fromReadyLoading, setFromReadyLoading] = useState(false);
+  const [fromReadyResult, setFromReadyResult] = useState<string | null>(null);
 
   const completedCount = experiments.filter(
     (e) => e.status === "completed" || e.status === "completed_with_failures",
@@ -131,6 +136,50 @@ export default function ExperimentsPage() {
       load();
     } catch (e) {
       setErrorMessage(`创建异常: ${e instanceof Error ? e.message : String(e)}`);
+    }
+  }
+
+  // R2: 从就绪样本批量创建动态归因实验
+  async function createFromReady() {
+    if (fromReadyLoading) return;
+    setFromReadyLoading(true);
+    setFromReadyResult(null);
+    setErrorMessage(null);
+    const experimentName =
+      name.trim() || `动态归因 ${reportDate} 就绪样本`;
+    const codes = fundCodes
+      .split(",")
+      .map((s) => s.trim())
+      .filter(Boolean);
+    try {
+      const body = await api.createDynamicAttributionFromReady({
+        experiment_name: experimentName,
+        report_date: reportDate,
+        benchmark_symbol: benchmarkSymbol || null,
+        fund_codes: codes.length > 0 ? codes : null,
+        min_return_observations: Number(minReturnObs),
+      });
+      const d = body.data;
+      if (d === null) {
+        setErrorMessage(
+          `从就绪样本创建失败: ${body.warnings.join("; ") || "未知错误"}`,
+        );
+        return;
+      }
+      const sampleCount = d.sample_fund_codes?.length ?? 0;
+      setFromReadyResult(
+        `已创建实验 ${d.experiment_id ?? "—"}：报告期 ${d.report_date}，` +
+          `就绪候选 ${d.ready_candidates} 个，实际入组 ${sampleCount} 只基金。`,
+      );
+      setShowCreate(false);
+      setName("");
+      load();
+    } catch (e) {
+      setErrorMessage(
+        `从就绪样本创建异常: ${e instanceof Error ? e.message : String(e)}`,
+      );
+    } finally {
+      setFromReadyLoading(false);
     }
   }
 
@@ -441,14 +490,47 @@ export default function ExperimentsPage() {
                     min={1}
                   />
                 </label>
+                <label className="form-label">
+                  <span>报告期（从就绪样本用）</span>
+                  <input
+                    className="form-input"
+                    type="date"
+                    value={reportDate}
+                    onChange={(e) => setReportDate(e.target.value)}
+                  />
+                </label>
               </>
             )}
           </div>
-          <div className="mt-3">
+          <div className="mt-3 flex items-center gap-2 flex-wrap">
             <button className="btn btn-primary" onClick={create}>
               创建
             </button>
+            {algo === "dynamic_attribution" && (
+              <button
+                className="btn btn-ghost"
+                onClick={createFromReady}
+                disabled={fromReadyLoading}
+                title="基于就绪检查通过的基金批量创建动态归因实验"
+              >
+                {fromReadyLoading ? "创建中..." : "从就绪样本创建"}
+              </button>
+            )}
           </div>
+          {fromReadyResult && (
+            <div
+              className="mt-3 text-sm"
+              style={{
+                padding: "var(--space-2) var(--space-3)",
+                background: "var(--positive-soft)",
+                borderLeft: "3px solid var(--positive)",
+                borderRadius: "0 var(--radius-sm) var(--radius-sm) 0",
+                color: "var(--positive)",
+              }}
+            >
+              {fromReadyResult}
+            </div>
+          )}
         </div>
       )}
 

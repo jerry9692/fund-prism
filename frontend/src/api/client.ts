@@ -140,6 +140,23 @@ export interface DiffData {
   diffs: Record<string, unknown>;
 }
 
+// R4: 已保存的研究包列表/详情（v2）
+export interface ResearchPacketListItem {
+  packet_id: string;
+  fund_code: string;
+  template: string;
+  generated_at: string | null;
+  data_date: string | null;
+  platform_version: string | null;
+  overall_confidence: string | null;
+  is_latest: boolean | null;
+}
+
+export interface ResearchPacketDetail extends ResearchPacketListItem {
+  packet: Record<string, unknown>;
+  markdown: string | null;
+}
+
 export interface ScreenFilters {
   category?: string;
   min_inception_years?: number;
@@ -574,17 +591,34 @@ export const api = {
       { method: "POST", body: JSON.stringify({ fund_code: code, window }) }
     ),
 
+  // R3: 研究包生成/对比已迁移至 v2（含 Phase2 estimated 模块警告 + packet_id 持久化）
   getResearchPacket: (code: string, template = "single_fund_checkup") =>
-    request<{ packet_id: string; packet: Record<string, unknown> }>(
-      "/api/v1/research/packet",
+    request<{ packet_id: string; packet: Record<string, unknown>; markdown: string }>(
+      "/api/v2/research/packet",
       { method: "POST", body: JSON.stringify({ fund_code: code, template }) }
     ),
 
   diffPackets: (body: Record<string, unknown>) =>
-    request<DiffData>("/api/v1/research/diff", {
+    request<DiffData>("/api/v2/research/diff", {
       method: "POST",
       body: JSON.stringify(body),
     }),
+
+  // R4: 已保存研究包列表/详情
+  listResearchPackets: (params?: { fund_code?: string; limit?: number }) => {
+    const sp = new URLSearchParams();
+    if (params?.fund_code) sp.set("fund_code", params.fund_code);
+    if (params?.limit != null) sp.set("limit", String(params.limit));
+    const qs = sp.toString();
+    return request<{ packets: ResearchPacketListItem[]; count: number }>(
+      `/api/v2/research/packets${qs ? "?" + qs : ""}`,
+    );
+  },
+
+  getResearchPacketDetail: (packetId: string) =>
+    request<ResearchPacketDetail>(
+      `/api/v2/research/packets/${encodeURIComponent(packetId)}`,
+    ),
 
   screenFunds: (body: {
     filters?: ScreenFilters;

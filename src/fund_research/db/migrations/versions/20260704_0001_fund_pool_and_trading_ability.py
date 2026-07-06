@@ -31,7 +31,7 @@ def upgrade() -> None:
     if not _table_exists("fund_pool"):
         op.create_table(
             "fund_pool",
-            sa.Column("id", sa.BigInteger, primary_key=True, autoincrement=True),
+            sa.Column("id", sa.BigInteger, primary_key=True, autoincrement=False),
             sa.Column("name", sa.String(100), nullable=False),
             sa.Column("description", sa.Text, nullable=True),
             sa.Column("created_at", sa.DateTime, server_default=sa.func.now()),
@@ -41,7 +41,7 @@ def upgrade() -> None:
     if not _table_exists("fund_pool_member"):
         op.create_table(
             "fund_pool_member",
-            sa.Column("id", sa.BigInteger, primary_key=True, autoincrement=True),
+            sa.Column("id", sa.BigInteger, primary_key=True, autoincrement=False),
             sa.Column(
                 "pool_id",
                 sa.BigInteger,
@@ -58,7 +58,7 @@ def upgrade() -> None:
     if not _table_exists("saved_screen"):
         op.create_table(
             "saved_screen",
-            sa.Column("id", sa.BigInteger, primary_key=True, autoincrement=True),
+            sa.Column("id", sa.BigInteger, primary_key=True, autoincrement=False),
             sa.Column("name", sa.String(100), nullable=False),
             sa.Column("filters", sa.JSON, nullable=False),
             sa.Column("sort_by", sa.String(50), nullable=True),
@@ -70,7 +70,7 @@ def upgrade() -> None:
     if not _table_exists("trading_ability_result"):
         op.create_table(
             "trading_ability_result",
-            sa.Column("id", sa.BigInteger, primary_key=True, autoincrement=True),
+            sa.Column("id", sa.BigInteger, primary_key=True, autoincrement=False),
             sa.Column("fund_code", sa.String(20), nullable=False, index=True),
             sa.Column("calc_date", sa.Date, nullable=False, index=True),
             sa.Column("algorithm_name", sa.String(50), nullable=False),

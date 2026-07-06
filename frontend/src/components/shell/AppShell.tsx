@@ -37,6 +37,7 @@ const NAV_GROUPS: NavGroup[] = [
       { to: "/anomalies", label: "异常发现", icon: "⚠" },
       { to: "/reverse-lookup", label: "股票反选", icon: "⇄" },
       { to: "/templates", label: "研究模板", icon: "▦" },
+      { to: "/research-packets", label: "研究包归档", icon: "▤" },
     ],
   },
   {
