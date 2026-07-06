@@ -1,8 +1,8 @@
 // 相似基金搜索页 — 基于基金指纹的多维度相似基金检索
 // 输入基金代码，选择度量空间，检索最相似的基金并展示贡献维度
 
-import { useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { useState, useEffect, useCallback } from "react";
+import { useNavigate, useParams } from "react-router-dom";
 import { api } from "../api/client";
 import { DataTable, type Column } from "../components/data/DataTable";
 import {
@@ -167,7 +167,12 @@ function formatScore(v: number | null): { text: string; pct: number } {
 
 export default function SimilarFundsPage() {
   const navigate = useNavigate();
-  const [fundCode, setFundCode] = useState("");
+  const params = useParams<{ code: string }>();
+  // 当作为 /funds/:code/similar 子路由时，params.code 有值（嵌入模式）
+  const embedCode = params.code ?? "";
+  const isEmbed = embedCode.length > 0;
+
+  const [fundCode, setFundCode] = useState(embedCode);
   const [metricSpace, setMetricSpace] = useState("composite");
   const [topN, setTopN] = useState(10);
   const [sameTypeOnly, setSameTypeOnly] = useState(false);
@@ -179,8 +184,7 @@ export default function SimilarFundsPage() {
   const [queryFundCode, setQueryFundCode] = useState("");
   const [queryMetricSpace, setQueryMetricSpace] = useState("");
 
-  async function handleSearch() {
-    const code = fundCode.trim();
+  const runSearch = useCallback(async (code: string, ms: string, n: number, sameType: boolean) => {
     if (!code) {
       setError("请输入基金代码");
       return;
@@ -190,29 +194,43 @@ export default function SimilarFundsPage() {
     setHasSearched(true);
     try {
       const res = await api.findSimilarFunds(code, {
-        metric_space: metricSpace,
-        top_n: topN,
-        same_type_only: sameTypeOnly,
+        metric_space: ms,
+        top_n: n,
+        same_type_only: sameType,
       });
       const data = res.data;
       if (!data) {
         setError(res.warnings.join("; ") || "搜索失败");
         setResults([]);
         setQueryFundCode(code);
-        setQueryMetricSpace(metricSpace);
+        setQueryMetricSpace(ms);
         return;
       }
       setResults((data.similar_funds ?? []).map(toRow));
       setQueryFundCode(data.fund_code ?? code);
-      setQueryMetricSpace(data.metric_space ?? metricSpace);
+      setQueryMetricSpace(data.metric_space ?? ms);
     } catch (e) {
       setError(e instanceof Error ? e.message : "搜索失败");
       setResults([]);
       setQueryFundCode(code);
-      setQueryMetricSpace(metricSpace);
+      setQueryMetricSpace(ms);
     } finally {
       setLoading(false);
     }
+  }, []);
+
+  // 嵌入模式下，跟随 URL 中的基金代码自动搜索
+  useEffect(() => {
+    if (isEmbed && embedCode) {
+      setFundCode(embedCode);
+      runSearch(embedCode, metricSpace, topN, sameTypeOnly);
+    }
+    // 仅在 embedCode 变化时触发，避免 metricSpace 等变化重复触发
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [embedCode, isEmbed]);
+
+  async function handleSearch() {
+    await runSearch(fundCode.trim(), metricSpace, topN, sameTypeOnly);
   }
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
@@ -356,15 +374,17 @@ export default function SimilarFundsPage() {
 
   return (
     <div>
-      <Breadcrumb items={crumbs} />
+      {!isEmbed && <Breadcrumb items={crumbs} />}
 
-      {/* 标题区 */}
-      <div className="fade-up fade-up-1 mb-4">
-        <h1>相似基金搜索</h1>
-        <div className="text-sm text-tertiary mt-2">
-          基于基金指纹，从多个度量空间检索最相似的基金，并展示主要贡献维度
+      {/* 标题区 — 嵌入模式下由 FundDetailLayout 提供，此处隐藏 */}
+      {!isEmbed && (
+        <div className="fade-up fade-up-1 mb-4">
+          <h1>相似基金搜索</h1>
+          <div className="text-sm text-tertiary mt-2">
+            基于基金指纹，从多个度量空间检索最相似的基金，并展示主要贡献维度
+          </div>
         </div>
-      </div>
+      )}
 
       {/* 搜索表单 */}
       <div
@@ -394,6 +414,7 @@ export default function SimilarFundsPage() {
               onChange={(e) => setFundCode(e.target.value)}
               onKeyDown={handleKeyDown}
               placeholder="如 000001"
+              disabled={isEmbed}
               style={{ fontFamily: "var(--font-mono)" }}
             />
           </label>

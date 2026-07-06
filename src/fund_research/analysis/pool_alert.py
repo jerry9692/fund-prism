@@ -9,10 +9,10 @@ PoolAlertRule / PoolAlertRecord tables.
 
 Alert types:
 1. nav_change — 单日净值异动
-2. ranking_change — 排名变化（占位，暂未实现检测逻辑）
+2. ranking_change — 同类排名升降
 3. manager_change — 基金经理变更
 4. scale_change — 规模异常变动
-5. style_drift — 风格漂移（占位，暂未实现检测逻辑）
+5. style_drift — 风格漂移（复用 anomaly.detect_style_drift）
 6. score_change — 评分跳变
 
 References:
@@ -291,13 +291,94 @@ def check_score_change(
     )
 
 
+def check_ranking_change(
+    db: Session, fund_code: str, params: dict[str, Any] | None = None
+) -> AlertRecordData | None:
+    """Detect peer-group percentile-rank shift between the latest two scoring runs.
+
+    ScoringResult.percentile_rank is stored as a fraction in [0, 1] where 1.0
+    is the top rank. Flags if the absolute change exceeds threshold (default
+    0.20, i.e. 20 percentile points). severity: "warning" if change > 0.40,
+    otherwise "info".
+    """
+    p = _merge_params("ranking_change", params)
+    threshold = float(p.get("threshold", 0.20))
+
+    rows = db.scalars(
+        select(ScoringResult)
+        .where(ScoringResult.fund_code == fund_code)
+        .order_by(ScoringResult.calc_date.desc())
+        .limit(2)
+    ).all()
+
+    if len(rows) < 2:
+        return None
+
+    latest, prev = rows[0], rows[1]
+    latest_rank = safe_float(latest.percentile_rank)
+    prev_rank = safe_float(prev.percentile_rank)
+    if latest_rank is None or prev_rank is None:
+        return None
+
+    change = latest_rank - prev_rank
+    if abs(change) <= threshold:
+        return None
+
+    severity = "warning" if abs(change) > 0.40 else "info"
+    direction = "上升" if change > 0 else "下降"
+    return AlertRecordData(
+        fund_code=fund_code,
+        alert_type="ranking_change",
+        severity=severity,
+        message=(
+            f"排名变化：{fund_code} 同类百分位从 {prev_rank * 100:.1f}% "
+            f"变动至 {latest_rank * 100:.1f}%（{direction} {abs(change) * 100:.1f} 个百分点）"
+        ),
+        detail={
+            "latest_date": str(latest.calc_date),
+            "previous_date": str(prev.calc_date),
+            "latest_percentile_rank": round(latest_rank, 4),
+            "previous_percentile_rank": round(prev_rank, 4),
+            "change": round(change, 4),
+            "threshold": threshold,
+            "score_version": latest.score_version,
+        },
+    )
+
+
+def check_style_drift(
+    db: Session, fund_code: str, params: dict[str, Any] | None = None
+) -> AlertRecordData | None:
+    """Detect style exposure drift by reusing anomaly.detect_style_drift.
+
+    Delegates the statistical detection (latest vs historical mean ± std) to
+    the P3.3 anomaly engine and converts a triggered AnomalyItem into an
+    AlertRecordData. severity follows the anomaly rule ("warning").
+    """
+    # Lazy import to keep module-load graph acyclic.
+    from fund_research.analysis.anomaly import detect_style_drift
+
+    item = detect_style_drift(db, fund_code, params)
+    if item is None:
+        return None
+
+    return AlertRecordData(
+        fund_code=fund_code,
+        alert_type="style_drift",
+        severity=item.severity,
+        message=item.description,
+        detail=item.detail,
+        conclusion_status=item.conclusion_status,
+    )
+
+
 # Alert type → checker function mapping.
-# ranking_change and style_drift are declared in ALERT_TYPES but do not yet
-# have dedicated checkers; they are skipped during scans.
 _ALERT_CHECKERS: dict[str, Any] = {
     "nav_change": check_nav_change,
-    "scale_change": check_scale_change,
+    "ranking_change": check_ranking_change,
     "manager_change": check_manager_change,
+    "scale_change": check_scale_change,
+    "style_drift": check_style_drift,
     "score_change": check_score_change,
 }
 

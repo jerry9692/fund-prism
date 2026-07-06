@@ -34,6 +34,45 @@ interface PoolRow extends PoolMember {
   removeSelf: (code: string) => void;
 }
 
+interface AlertRule {
+  id: number;
+  pool_id: number;
+  fund_code: string;
+  alert_type: string;
+  params: Record<string, unknown>;
+  is_active: boolean;
+  created_at: string | null;
+}
+
+interface AlertRecord {
+  id: number;
+  rule_id: number | null;
+  pool_id: number;
+  fund_code: string;
+  alert_type: string;
+  severity: string;
+  message: string;
+  detail: Record<string, unknown> | null;
+  triggered_at: string | null;
+  is_read: boolean;
+}
+
+const ALERT_TYPE_OPTIONS: Array<{ value: string; label: string }> = [
+  { value: "nav_change", label: "净值异动" },
+  { value: "ranking_change", label: "排名变化" },
+  { value: "manager_change", label: "经理变更" },
+  { value: "scale_change", label: "规模异常" },
+  { value: "style_drift", label: "风格漂移" },
+  { value: "score_change", label: "评分跳变" },
+];
+
+const SEVERITY_COLOR: Record<string, string> = {
+  info: "var(--info)",
+  warning: "var(--warning)",
+  critical: "var(--negative)",
+  observation: "var(--ink-tertiary)",
+};
+
 const COLUMNS: Column<PoolRow>[] = [
   {
     key: "fund_code",
@@ -102,6 +141,15 @@ export default function FundPoolPage() {
   const [newPoolName, setNewPoolName] = useState("");
   const [newPoolDesc, setNewPoolDesc] = useState("");
 
+  // Alert rule editor state
+  const [alertRules, setAlertRules] = useState<AlertRule[]>([]);
+  const [alertRecords, setAlertRecords] = useState<AlertRecord[]>([]);
+  const [ruleFundCode, setRuleFundCode] = useState("");
+  const [ruleAlertType, setRuleAlertType] = useState("nav_change");
+  const [ruleThreshold, setRuleThreshold] = useState("");
+  const [scanning, setScanning] = useState(false);
+  const [alertsLoading, setAlertsLoading] = useState(false);
+
   const loadPools = useCallback(async () => {
     try {
       const res = await api.listPools();
@@ -131,6 +179,35 @@ export default function FundPoolPage() {
     }
   }, []);
 
+  const loadAlerts = useCallback(async (poolId: number) => {
+    setAlertsLoading(true);
+    try {
+      const [rulesRes, recordsRes] = await Promise.all([
+        api.listAlertRules(poolId),
+        api.getPoolAlerts(poolId),
+      ]);
+      setAlertRules(rulesRes.data?.rules ?? []);
+      const recordsRaw = (recordsRes.data?.items ?? []) as Array<Record<string, unknown>>;
+      setAlertRecords(recordsRaw.map((r) => ({
+        id: Number(r.id),
+        rule_id: r.rule_id != null ? Number(r.rule_id) : null,
+        pool_id: Number(r.pool_id),
+        fund_code: String(r.fund_code ?? ""),
+        alert_type: String(r.alert_type ?? ""),
+        severity: String(r.severity ?? "info"),
+        message: String(r.message ?? ""),
+        detail: (r.detail as Record<string, unknown> | null) ?? null,
+        triggered_at: r.triggered_at ? String(r.triggered_at) : null,
+        is_read: Boolean(r.is_read),
+      })));
+      setError(null);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "加载提醒数据失败");
+    } finally {
+      setAlertsLoading(false);
+    }
+  }, []);
+
   useEffect(() => {
     loadPools();
   }, [loadPools]);
@@ -138,8 +215,12 @@ export default function FundPoolPage() {
   useEffect(() => {
     if (activePool) {
       loadMembers(activePool.id);
+      loadAlerts(activePool.id);
+    } else {
+      setAlertRules([]);
+      setAlertRecords([]);
     }
-  }, [activePool, loadMembers]);
+  }, [activePool, loadMembers, loadAlerts]);
 
   const handleAddFund = async () => {
     if (!activePool) return;
@@ -235,6 +316,70 @@ export default function FundPoolPage() {
       await loadPools();
     } catch (e) {
       setError(e instanceof Error ? e.message : "清空池子失败");
+    }
+  };
+
+  const handleCreateRule = async () => {
+    if (!activePool) return;
+    const code = ruleFundCode.trim();
+    if (!code) {
+      setError("请输入基金代码");
+      return;
+    }
+    const params: Record<string, unknown> = {};
+    const thresholdStr = ruleThreshold.trim();
+    if (thresholdStr) {
+      const tv = Number(thresholdStr);
+      if (!Number.isNaN(tv)) params.threshold = tv;
+    }
+    try {
+      await api.createAlertRule(activePool.id, {
+        fund_code: code,
+        alert_type: ruleAlertType,
+        params,
+      });
+      setRuleFundCode("");
+      setRuleThreshold("");
+      setError(null);
+      await loadAlerts(activePool.id);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "创建提醒规则失败");
+    }
+  };
+
+  const handleDeleteRule = async (ruleId: number) => {
+    if (!activePool) return;
+    try {
+      await api.deleteAlertRule(activePool.id, ruleId);
+      await loadAlerts(activePool.id);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "删除提醒规则失败");
+    }
+  };
+
+  const handleScanAlerts = async () => {
+    if (!activePool) return;
+    setScanning(true);
+    try {
+      await api.scanPoolAlerts(activePool.id);
+      setError(null);
+      await loadAlerts(activePool.id);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "扫描提醒失败");
+    } finally {
+      setScanning(false);
+    }
+  };
+
+  const handleMarkAlertRead = async (alertId: number) => {
+    if (!activePool) return;
+    try {
+      await api.markAlertRead(alertId);
+      setAlertRecords((prev) =>
+        prev.map((r) => (r.id === alertId ? { ...r, is_read: true } : r))
+      );
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "标记已读失败");
     }
   };
 
@@ -480,6 +625,257 @@ export default function FundPoolPage() {
                 rowKey={(row) => row.key}
                 initialSort={{ key: "added_at", order: "desc" }}
               />
+            )}
+          </div>
+        </div>
+      )}
+
+      {activePool && (
+        <div className="fade-up fade-up-5" style={{ marginTop: "var(--space-5)" }}>
+          <SectionHeader
+            title="提醒规则"
+            subtitle={`为「${activePool.name}」配置自动提醒，6 类规则可按基金单独设定`}
+          />
+          <form
+            style={{
+              background: "var(--surface-raised)",
+              border: "1px solid var(--border-hairline)",
+              borderRadius: "var(--radius-md)",
+              padding: "var(--space-4)",
+              marginTop: "var(--space-3)",
+            }}
+            onSubmit={(e) => {
+              e.preventDefault();
+              handleCreateRule();
+            }}
+          >
+            <div
+              className="grid"
+              style={{
+                gridTemplateColumns: "160px 180px 160px auto",
+                gap: "var(--space-3)",
+                alignItems: "end",
+              }}
+            >
+              <label className="form-label">
+                <span>基金代码 *</span>
+                <input
+                  type="text"
+                  className="form-input"
+                  value={ruleFundCode}
+                  onChange={(e) => setRuleFundCode(e.target.value)}
+                  placeholder="如 000001"
+                  style={{ fontFamily: "var(--font-mono)" }}
+                />
+              </label>
+              <label className="form-label">
+                <span>提醒类型 *</span>
+                <select
+                  className="form-input"
+                  value={ruleAlertType}
+                  onChange={(e) => setRuleAlertType(e.target.value)}
+                >
+                  {ALERT_TYPE_OPTIONS.map((opt) => (
+                    <option key={opt.value} value={opt.value}>
+                      {opt.label}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label className="form-label">
+                <span>阈值（可选）</span>
+                <input
+                  type="text"
+                  className="form-input"
+                  value={ruleThreshold}
+                  onChange={(e) => setRuleThreshold(e.target.value)}
+                  placeholder="留空使用默认"
+                  style={{ fontFamily: "var(--font-mono)" }}
+                />
+              </label>
+              <button type="submit" className="btn btn-primary" disabled={!ruleFundCode.trim()}>
+                新建规则
+              </button>
+            </div>
+            <div className="text-sm text-tertiary" style={{ marginTop: "var(--space-2)" }}>
+              阈值说明：nav_change/ranking_change/scale_change 用小数（如 0.05 表示 5%），
+              score_change 用分数（如 15 表示 15 分），manager_change/style_drift 无需阈值。
+            </div>
+          </form>
+
+          <div style={{ marginTop: "var(--space-3)" }}>
+            {alertRules.length === 0 ? (
+              <EmptyState
+                icon="\Notifications"
+                title="暂无提醒规则"
+                desc="为池内基金新建提醒规则，扫描时将自动检测"
+              />
+            ) : (
+              <div style={{ display: "flex", flexDirection: "column", gap: "var(--space-2)" }}>
+                {alertRules.map((rule) => {
+                  const typeLabel =
+                    ALERT_TYPE_OPTIONS.find((o) => o.value === rule.alert_type)?.label ??
+                    rule.alert_type;
+                  const threshold = rule.params?.threshold;
+                  return (
+                    <div
+                      key={rule.id}
+                      style={{
+                        display: "flex",
+                        alignItems: "center",
+                        gap: "var(--space-3)",
+                        padding: "var(--space-2) var(--space-3)",
+                        background: "var(--surface-raised)",
+                        border: "1px solid var(--border-hairline)",
+                        borderRadius: "var(--radius-sm)",
+                      }}
+                    >
+                      <span className="mono" style={{ fontWeight: 600, minWidth: "80px" }}>
+                        {rule.fund_code}
+                      </span>
+                      <span
+                        style={{
+                          padding: "2px var(--space-2)",
+                          background: "var(--accent-soft)",
+                          color: "var(--accent)",
+                          borderRadius: "var(--radius-xs)",
+                          fontSize: "0.8rem",
+                        }}
+                      >
+                        {typeLabel}
+                      </span>
+                      {threshold != null && (
+                        <span className="mono text-sm text-tertiary">
+                          阈值 {String(threshold)}
+                        </span>
+                      )}
+                      <span
+                        className="text-sm text-tertiary"
+                        style={{ marginLeft: "auto" }}
+                      >
+                        {rule.is_active ? "启用" : "停用"}
+                      </span>
+                      <button
+                        className="btn btn-ghost btn-sm"
+                        style={{ color: "var(--negative)" }}
+                        onClick={() => handleDeleteRule(rule.id)}
+                      >
+                        删除
+                      </button>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {activePool && (
+        <div className="fade-up fade-up-6" style={{ marginTop: "var(--space-5)" }}>
+          <SectionHeader
+            title="提醒记录"
+            subtitle={`共 ${alertRecords.length} 条`}
+            actions={
+              <button
+                className="btn btn-secondary btn-sm"
+                onClick={handleScanAlerts}
+                disabled={scanning || members.length === 0}
+              >
+                {scanning ? "扫描中…" : "立即扫描"}
+              </button>
+            }
+          />
+          <div style={{ marginTop: "var(--space-3)" }}>
+            {alertsLoading ? (
+              <LoadingState rows={3} cols={4} />
+            ) : alertRecords.length === 0 ? (
+              <EmptyState
+                icon="∅"
+                title="暂无提醒记录"
+                desc="点击「立即扫描」手动触发提醒检测，或等待系统定时扫描"
+              />
+            ) : (
+              <div style={{ display: "flex", flexDirection: "column", gap: "var(--space-2)" }}>
+                {alertRecords.map((rec) => {
+                  const sevColor = SEVERITY_COLOR[rec.severity] ?? "var(--ink-tertiary)";
+                  return (
+                    <div
+                      key={rec.id}
+                      style={{
+                        display: "flex",
+                        alignItems: "flex-start",
+                        gap: "var(--space-3)",
+                        padding: "var(--space-3)",
+                        background: rec.is_read
+                          ? "var(--surface-raised)"
+                          : "var(--accent-subtle)",
+                        border: "1px solid var(--border-hairline)",
+                        borderLeft: `3px solid ${sevColor}`,
+                        borderRadius: "0 var(--radius-sm) var(--radius-sm) 0",
+                      }}
+                    >
+                      <span
+                        style={{
+                          padding: "2px var(--space-2)",
+                          background: sevColor,
+                          color: "white",
+                          borderRadius: "var(--radius-xs)",
+                          fontSize: "0.72rem",
+                          fontWeight: 600,
+                          minWidth: "52px",
+                          textAlign: "center",
+                          textTransform: "uppercase",
+                          flexShrink: 0,
+                        }}
+                      >
+                        {rec.severity}
+                      </span>
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <div style={{ display: "flex", gap: "var(--space-2)", alignItems: "baseline" }}>
+                          <span className="mono text-sm" style={{ fontWeight: 600 }}>
+                            {rec.fund_code}
+                          </span>
+                          <span className="text-sm text-tertiary">
+                            {ALERT_TYPE_OPTIONS.find((o) => o.value === rec.alert_type)?.label ??
+                              rec.alert_type}
+                          </span>
+                          {!rec.is_read && (
+                            <span
+                              style={{
+                                fontSize: "0.7rem",
+                                color: "var(--accent)",
+                                fontWeight: 600,
+                              }}
+                            >
+                              ● 未读
+                            </span>
+                          )}
+                        </div>
+                        <div
+                          className="text-sm"
+                          style={{ marginTop: "var(--space-1)", color: "var(--ink-primary)" }}
+                        >
+                          {rec.message}
+                        </div>
+                        <div className="text-sm text-tertiary" style={{ marginTop: "var(--space-1)" }}>
+                          {rec.triggered_at
+                            ? new Date(rec.triggered_at).toLocaleString("zh-CN")
+                            : "—"}
+                        </div>
+                      </div>
+                      {!rec.is_read && (
+                        <button
+                          className="btn btn-ghost btn-sm"
+                          onClick={() => handleMarkAlertRead(rec.id)}
+                        >
+                          标记已读
+                        </button>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
             )}
           </div>
         </div>

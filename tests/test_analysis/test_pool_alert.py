@@ -9,8 +9,10 @@ from fund_research.analysis.pool_alert import (
     AlertRecordData,
     check_manager_change,
     check_nav_change,
+    check_ranking_change,
     check_scale_change,
     check_score_change,
+    check_style_drift,
     create_alert_rule,
     get_alert_records,
     get_alert_rules,
@@ -225,7 +227,12 @@ def test_manager_change_no_trigger_outside_window(test_session):
 # ============================================================
 
 
-def _make_scoring(fund_code: str, calc_date: date, total_score: float) -> ScoringResult:
+def _make_scoring(
+    fund_code: str,
+    calc_date: date,
+    total_score: float,
+    percentile_rank: float | None = None,
+) -> ScoringResult:
     return ScoringResult(
         fund_code=fund_code,
         calc_date=calc_date,
@@ -234,6 +241,7 @@ def _make_scoring(fund_code: str, calc_date: date, total_score: float) -> Scorin
         weight_config={"return": 0.2},
         sub_scores={"return": 80.0},
         total_score=total_score,
+        percentile_rank=percentile_rank,
     )
 
 
@@ -276,6 +284,158 @@ def test_score_change_insufficient_data(test_session):
     db.add(_make_scoring("000001", date(2024, 9, 30), 60.0))
     db.flush()
     result = check_score_change(db, "000001")
+    assert result is None
+
+
+# ============================================================
+# check_ranking_change tests
+# ============================================================
+
+
+def test_ranking_change_triggers_warning(test_session):
+    """Percentile rank change > 0.40 should trigger severity=warning."""
+    db = test_session
+    db.add(_make_scoring("000001", date(2024, 6, 30), 60.0, percentile_rank=0.50))
+    db.add(_make_scoring("000001", date(2024, 9, 30), 90.0, percentile_rank=0.95))
+    db.flush()
+    result = check_ranking_change(db, "000001")
+    assert result is not None
+    assert result.alert_type == "ranking_change"
+    assert result.severity == "warning"
+    assert result.detail["change"] > 0.40
+
+
+def test_ranking_change_triggers_info(test_session):
+    """Percentile rank change between 0.20 and 0.40 should trigger severity=info."""
+    db = test_session
+    db.add(_make_scoring("000001", date(2024, 6, 30), 60.0, percentile_rank=0.50))
+    db.add(_make_scoring("000001", date(2024, 9, 30), 75.0, percentile_rank=0.75))
+    db.flush()
+    result = check_ranking_change(db, "000001")
+    assert result is not None
+    assert result.severity == "info"
+
+
+def test_ranking_change_no_trigger(test_session):
+    """Percentile rank change <= 0.20 should not trigger."""
+    db = test_session
+    db.add(_make_scoring("000001", date(2024, 6, 30), 60.0, percentile_rank=0.60))
+    db.add(_make_scoring("000001", date(2024, 9, 30), 65.0, percentile_rank=0.70))
+    db.flush()
+    result = check_ranking_change(db, "000001")
+    assert result is None
+
+
+def test_ranking_change_insufficient_data(test_session):
+    """Only 1 scoring row should return None."""
+    db = test_session
+    db.add(_make_scoring("000001", date(2024, 9, 30), 60.0, percentile_rank=0.60))
+    db.flush()
+    result = check_ranking_change(db, "000001")
+    assert result is None
+
+
+def test_ranking_change_missing_percentile(test_session):
+    """Missing percentile_rank on either row should return None."""
+    db = test_session
+    db.add(_make_scoring("000001", date(2024, 6, 30), 60.0, percentile_rank=None))
+    db.add(_make_scoring("000001", date(2024, 9, 30), 90.0, percentile_rank=0.95))
+    db.flush()
+    result = check_ranking_change(db, "000001")
+    assert result is None
+
+
+def test_ranking_change_custom_threshold(test_session):
+    """Custom threshold should override default."""
+    db = test_session
+    db.add(_make_scoring("000001", date(2024, 6, 30), 60.0, percentile_rank=0.60))
+    db.add(_make_scoring("000001", date(2024, 9, 30), 65.0, percentile_rank=0.70))
+    db.flush()
+    # Default 0.20 won't trigger on 0.10 change, but 0.05 will
+    result = check_ranking_change(db, "000001", {"threshold": 0.05})
+    assert result is not None
+
+
+# ============================================================
+# check_style_drift tests
+# ============================================================
+
+
+def test_style_drift_triggers(test_session):
+    """Style drift detected by anomaly engine should be converted to an alert."""
+    from fund_research.db.models import FundMain, StyleExposureResult
+
+    db = test_session
+    db.add(FundMain(fund_code="000001", short_name="t", full_name="t", category="混合型"))
+    exposures = [
+        {"large_cap": 0.5, "mid_cap": 0.3, "small_cap": 0.2},
+        {"large_cap": 0.52, "mid_cap": 0.28, "small_cap": 0.2},
+        {"large_cap": 0.48, "mid_cap": 0.32, "small_cap": 0.2},
+        {"large_cap": 0.51, "mid_cap": 0.29, "small_cap": 0.2},
+        {"large_cap": 0.49, "mid_cap": 0.31, "small_cap": 0.2},
+        {"large_cap": 0.50, "mid_cap": 0.30, "small_cap": 0.2},
+        {"large_cap": 0.95, "mid_cap": 0.03, "small_cap": 0.02},  # Drift!
+    ]
+    calc_dates = [
+        date(2023, 6, 30), date(2023, 9, 30), date(2023, 12, 31),
+        date(2024, 3, 31), date(2024, 6, 30), date(2024, 9, 30),
+        date(2024, 12, 31),
+    ]
+    for i, exp in enumerate(exposures):
+        db.add(StyleExposureResult(
+            fund_code="000001", calc_date=calc_dates[i],
+            algorithm_name="style_exposure", algorithm_version="0.1.0",
+            exposure_type="style", exposure_values=exp,
+            r_squared=0.8, conclusion_status="computed",
+        ))
+    db.commit()
+
+    result = check_style_drift(db, "000001", {"std_threshold": 2.0, "lookback_quarters": 4})
+    assert result is not None
+    assert result.alert_type == "style_drift"
+    assert result.severity == "warning"
+    assert result.detail is not None
+    assert "drifted_dimensions" in result.detail
+
+
+def test_style_drift_no_drift(test_session):
+    """No drift detected should return None."""
+    from fund_research.db.models import FundMain, StyleExposureResult
+
+    db = test_session
+    db.add(FundMain(fund_code="000002", short_name="t", full_name="t", category="混合型"))
+    calc_dates = [date(2024, 1, 31), date(2024, 3, 31), date(2024, 6, 30), date(2024, 9, 30), date(2024, 12, 31)]
+    for i in range(5):
+        db.add(StyleExposureResult(
+            fund_code="000002", calc_date=calc_dates[i],
+            algorithm_name="style_exposure", algorithm_version="0.1.0",
+            exposure_type="style",
+            exposure_values={"large_cap": 0.5, "mid_cap": 0.3, "small_cap": 0.2},
+            r_squared=0.8, conclusion_status="computed",
+        ))
+    db.commit()
+
+    result = check_style_drift(db, "000002", {"std_threshold": 2.0, "lookback_quarters": 4})
+    assert result is None
+
+
+def test_style_drift_insufficient_data(test_session):
+    """Insufficient historical data should return None."""
+    from fund_research.db.models import FundMain, StyleExposureResult
+
+    db = test_session
+    db.add(FundMain(fund_code="000003", short_name="t", full_name="t", category="混合型"))
+    for i, dt in enumerate([date(2024, 3, 31), date(2024, 6, 30)]):
+        db.add(StyleExposureResult(
+            fund_code="000003", calc_date=dt,
+            algorithm_name="style_exposure", algorithm_version="0.1.0",
+            exposure_type="style",
+            exposure_values={"large_cap": 0.5 + i * 0.1, "mid_cap": 0.3, "small_cap": 0.2},
+            r_squared=0.8, conclusion_status="computed",
+        ))
+    db.commit()
+
+    result = check_style_drift(db, "000003", {"std_threshold": 2.0, "lookback_quarters": 4})
     assert result is None
 
 

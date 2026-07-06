@@ -24,6 +24,7 @@ import TemplateListPage from "./pages/TemplateListPage";
 import SimilarFundsPage from "./pages/SimilarFundsPage";
 import FundComparePage from "./pages/FundComparePage";
 import AnomalyListPage from "./pages/AnomalyListPage";
+import AnomalyDetailPage from "./pages/AnomalyDetailPage";
 import ErrorBoundary, { RouteErrorBoundary } from "./components/ErrorBoundary";
 
 export default function App() {
@@ -44,6 +45,7 @@ export default function App() {
             <Route path="scoring" element={<RouteErrorBoundary><FundScoringPage /></RouteErrorBoundary>} />
             <Route path="simulated" element={<RouteErrorBoundary><SimulatedHoldingPage /></RouteErrorBoundary>} />
             <Route path="attribution" element={<RouteErrorBoundary><DynamicAttributionPage /></RouteErrorBoundary>} />
+            <Route path="similar" element={<RouteErrorBoundary><SimilarFundsPage /></RouteErrorBoundary>} />
             <Route path="review" element={<RouteErrorBoundary><FundReviewPage /></RouteErrorBoundary>} />
           </Route>
 
@@ -59,6 +61,7 @@ export default function App() {
           <Route path="/similar-funds" element={<SimilarFundsPage />} />
           <Route path="/fund-compare" element={<FundComparePage />} />
           <Route path="/anomalies" element={<AnomalyListPage />} />
+          <Route path="/anomalies/:id" element={<RouteErrorBoundary><AnomalyDetailPage /></RouteErrorBoundary>} />
         </Routes>
       </ErrorBoundary>
     </AppShell>

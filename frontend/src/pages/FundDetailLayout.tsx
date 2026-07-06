@@ -53,6 +53,7 @@ export default function FundDetailLayout() {
     { key: "simulated", label: "模拟持仓", badge: "估算" },
     { key: "attribution", label: "动态归因", badge: "估算" },
     { key: "packet", label: "研究输出" },
+    { key: "similar", label: "相似基金" },
     { key: "review", label: "校验" },
   ];
 
@@ -65,6 +66,7 @@ export default function FundDetailLayout() {
   else if (path.includes("/simulated")) activeTab = "simulated";
   else if (path.includes("/attribution")) activeTab = "attribution";
   else if (path.includes("/packet") || path.includes("/diff")) activeTab = "packet";
+  else if (path.includes("/similar")) activeTab = "similar";
   else if (path.includes("/review")) activeTab = "review";
 
   const handleTabChange = (key: string) => {
@@ -76,6 +78,7 @@ export default function FundDetailLayout() {
       simulated: `/funds/${code}/simulated`,
       attribution: `/funds/${code}/attribution`,
       packet: `/funds/${code}/packet`,
+      similar: `/funds/${code}/similar`,
       review: `/funds/${code}/review`,
     };
     navigate(tabToPath[key] ?? `/funds/${code}`);

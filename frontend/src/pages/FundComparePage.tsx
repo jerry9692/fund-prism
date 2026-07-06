@@ -43,7 +43,7 @@ interface SimilarityMatrix {
 
 // ---- 常量 ----
 
-const MAX_FUNDS = 5;
+const MAX_FUNDS = 6;
 
 const STYLE_LABELS: Record<string, string> = {
   large_cap: "大盘",

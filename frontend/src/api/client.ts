@@ -1130,6 +1130,21 @@ export const api = {
   markAlertRead: (alertId: number) =>
     request<Record<string, unknown>>(`/api/v2/alerts/${alertId}/read`, { method: "POST" }),
 
+  createAlertRule: (poolId: number, body: { fund_code: string; alert_type: string; params?: Record<string, unknown> }) =>
+    request<{ id: number; pool_id: number; fund_code: string; alert_type: string; params: Record<string, unknown>; is_active: boolean }>(
+      `/api/v2/pools/${poolId}/alert-rules`,
+      { method: "POST", body: JSON.stringify(body) }
+    ),
+
+  listAlertRules: (poolId: number, fundCode?: string) => {
+    const sp = new URLSearchParams();
+    if (fundCode) sp.set("fund_code", fundCode);
+    const qs = sp.toString();
+    return request<{ rules: Array<{ id: number; pool_id: number; fund_code: string; alert_type: string; params: Record<string, unknown>; is_active: boolean; created_at: string | null }>; total: number }>(
+      qs ? `/api/v2/pools/${poolId}/alert-rules?${qs}` : `/api/v2/pools/${poolId}/alert-rules`
+    );
+  },
+
   deleteAlertRule: (poolId: number, ruleId: number) =>
     request<Record<string, unknown>>(`/api/v2/pools/${poolId}/alert-rules/${ruleId}`, { method: "DELETE" }),
 
