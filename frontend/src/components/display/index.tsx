@@ -383,3 +383,356 @@ function triggerDownload(blob: Blob, filename: string) {
   a.click();
   URL.revokeObjectURL(url);
 }
+
+// ---- MarkdownView (lightweight, no external deps) ----
+// 支持：#/##/### 标题、-/* 无序列表、1. 有序列表、``` 代码块、`code` 行内代码、
+// **bold**、*italic*、|col|col| 表格、[text](url) 链接、--- 分割线、段落。
+
+function renderInline(text: string, keyPrefix = ""): ReactNode[] {
+  const nodes: ReactNode[] = [];
+  const regex = /(\*\*[^*]+\*\*|\*[^*]+\*|`[^`]+`|\[[^\]]+\]\([^)]+\))/g;
+  let lastIndex = 0;
+  let match: RegExpExecArray | null;
+  let i = 0;
+  while ((match = regex.exec(text)) !== null) {
+    if (match.index > lastIndex) {
+      nodes.push(text.slice(lastIndex, match.index));
+    }
+    const tok = match[0];
+    const key = `${keyPrefix}-${i++}`;
+    if (tok.startsWith("**")) {
+      nodes.push(<strong key={key}>{tok.slice(2, -2)}</strong>);
+    } else if (tok.startsWith("*")) {
+      nodes.push(<em key={key}>{tok.slice(1, -1)}</em>);
+    } else if (tok.startsWith("`")) {
+      nodes.push(
+        <code
+          key={key}
+          style={{
+            background: "var(--surface-sunken)",
+            padding: "1px 5px",
+            borderRadius: "3px",
+            fontSize: "0.88em",
+            fontFamily: "var(--font-mono)",
+          }}
+        >
+          {tok.slice(1, -1)}
+        </code>
+      );
+    } else if (tok.startsWith("[")) {
+      const m = /\[([^\]]+)\]\(([^)]+)\)/.exec(tok);
+      if (m) {
+        nodes.push(
+          <a
+            key={key}
+            href={m[2]}
+            target="_blank"
+            rel="noreferrer"
+            style={{ color: "var(--accent)", textDecoration: "underline" }}
+          >
+            {m[1]}
+          </a>
+        );
+      } else {
+        nodes.push(tok);
+      }
+    } else {
+      nodes.push(tok);
+    }
+    lastIndex = match.index + tok.length;
+  }
+  if (lastIndex < text.length) {
+    nodes.push(text.slice(lastIndex));
+  }
+  return nodes;
+}
+
+interface Block {
+  type: "heading" | "paragraph" | "ul" | "ol" | "code" | "table" | "hr" | "blank";
+  level?: number;
+  text?: string;
+  items?: string[];
+  lang?: string;
+  rows?: string[][];
+  header?: string[];
+}
+
+function parseMarkdown(md: string): Block[] {
+  const lines = md.replace(/\r\n/g, "\n").split("\n");
+  const blocks: Block[] = [];
+  let i = 0;
+  while (i < lines.length) {
+    const line = lines[i];
+
+    // 代码块
+    if (/^\s*```/.test(line)) {
+      const lang = line.replace(/^\s*```/, "").trim();
+      const codeLines: string[] = [];
+      i++;
+      while (i < lines.length && !/^\s*```/.test(lines[i])) {
+        codeLines.push(lines[i]);
+        i++;
+      }
+      i++; // skip closing ```
+      blocks.push({ type: "code", items: codeLines, lang });
+      continue;
+    }
+
+    // 分割线
+    if (/^\s*---+\s*$/.test(line)) {
+      blocks.push({ type: "hr" });
+      i++;
+      continue;
+    }
+
+    // 标题
+    const headingMatch = /^(#{1,4})\s+(.+)$/.exec(line);
+    if (headingMatch) {
+      blocks.push({
+        type: "heading",
+        level: headingMatch[1].length,
+        text: headingMatch[2],
+      });
+      i++;
+      continue;
+    }
+
+    // 表格（| a | b | 后跟 |---|---|）
+    if (/^\s*\|.+\|\s*$/.test(line) && i + 1 < lines.length && /^\s*\|?[\s:|-]+\|?\s*$/.test(lines[i + 1])) {
+      const header = line.split("|").map((s) => s.trim()).filter((s, idx, arr) => !(idx === 0 && s === "") && !(idx === arr.length - 1 && s === ""));
+      i += 2;
+      const rows: string[][] = [];
+      while (i < lines.length && /^\s*\|.+\|\s*$/.test(lines[i])) {
+        const cells = lines[i].split("|").map((s) => s.trim()).filter((s, idx, arr) => !(idx === 0 && s === "") && !(idx === arr.length - 1 && s === ""));
+        rows.push(cells);
+        i++;
+      }
+      blocks.push({ type: "table", header, rows });
+      continue;
+    }
+
+    // 无序列表
+    if (/^\s*[-*+]\s+/.test(line)) {
+      const items: string[] = [];
+      while (i < lines.length && /^\s*[-*+]\s+/.test(lines[i])) {
+        items.push(lines[i].replace(/^\s*[-*+]\s+/, ""));
+        i++;
+      }
+      blocks.push({ type: "ul", items });
+      continue;
+    }
+
+    // 有序列表
+    if (/^\s*\d+\.\s+/.test(line)) {
+      const items: string[] = [];
+      while (i < lines.length && /^\s*\d+\.\s+/.test(lines[i])) {
+        items.push(lines[i].replace(/^\s*\d+\.\s+/, ""));
+        i++;
+      }
+      blocks.push({ type: "ol", items });
+      continue;
+    }
+
+    // 空行
+    if (/^\s*$/.test(line)) {
+      i++;
+      continue;
+    }
+
+    // 段落（合并连续非空行）
+    const paraLines: string[] = [line];
+    i++;
+    while (
+      i < lines.length &&
+      !/^\s*$/.test(lines[i]) &&
+      !/^(#{1,4})\s+/.test(lines[i]) &&
+      !/^\s*[-*+]\s+/.test(lines[i]) &&
+      !/^\s*\d+\.\s+/.test(lines[i]) &&
+      !/^\s*```/.test(lines[i]) &&
+      !/^\s*---+\s*$/.test(lines[i]) &&
+      !/^\s*\|.+\|\s*$/.test(lines[i])
+    ) {
+      paraLines.push(lines[i]);
+      i++;
+    }
+    blocks.push({ type: "paragraph", text: paraLines.join(" ") });
+  }
+  return blocks;
+}
+
+export function MarkdownView({ content }: { content: string }) {
+  if (!content) return null;
+  const blocks = parseMarkdown(content);
+  return (
+    <div
+      className="markdown-body"
+      style={{
+        fontSize: "0.9rem",
+        lineHeight: 1.75,
+        color: "var(--ink-primary)",
+      }}
+    >
+      {blocks.map((block, idx) => {
+        switch (block.type) {
+          case "heading": {
+            const level = block.level ?? 1;
+            const sizes: Record<number, string> = {
+              1: "1.35rem",
+              2: "1.15rem",
+              3: "1.02rem",
+              4: "0.94rem",
+            };
+            const margins: Record<number, string> = {
+              1: "0 0 var(--space-3)",
+              2: "var(--space-4) 0 var(--space-2)",
+              3: "var(--space-3) 0 var(--space-1)",
+              4: "var(--space-2) 0 var(--space-1)",
+            };
+            const Tag = (`h${level}` as unknown) as keyof React.JSX.IntrinsicElements;
+            return (
+              <Tag
+                key={idx}
+                style={{
+                  fontSize: sizes[level],
+                  fontWeight: 600,
+                  margin: margins[level],
+                  color: level <= 2 ? "var(--ink-strong)" : "var(--ink-primary)",
+                  fontFamily: "var(--font-serif)",
+                  borderBottom: level <= 2 ? "1px solid var(--border-hairline)" : "none",
+                  paddingBottom: level <= 2 ? "var(--space-1)" : 0,
+                }}
+              >
+                {renderInline(block.text ?? "", `h${idx}`)}
+              </Tag>
+            );
+          }
+          case "paragraph":
+            return (
+              <p key={idx} style={{ margin: "0 0 var(--space-3)" }}>
+                {renderInline(block.text ?? "", `p${idx}`)}
+              </p>
+            );
+          case "ul":
+            return (
+              <ul
+                key={idx}
+                style={{
+                  margin: "0 0 var(--space-3)",
+                  paddingLeft: "1.5em",
+                  listStyle: "disc",
+                }}
+              >
+                {(block.items ?? []).map((it, j) => (
+                  <li key={j} style={{ marginBottom: "2px" }}>
+                    {renderInline(it, `ul${idx}-${j}`)}
+                  </li>
+                ))}
+              </ul>
+            );
+          case "ol":
+            return (
+              <ol
+                key={idx}
+                style={{
+                  margin: "0 0 var(--space-3)",
+                  paddingLeft: "1.5em",
+                  listStyle: "decimal",
+                }}
+              >
+                {(block.items ?? []).map((it, j) => (
+                  <li key={j} style={{ marginBottom: "2px" }}>
+                    {renderInline(it, `ol${idx}-${j}`)}
+                  </li>
+                ))}
+              </ol>
+            );
+          case "code":
+            return (
+              <pre
+                key={idx}
+                className="mono"
+                style={{
+                  margin: "0 0 var(--space-3)",
+                  padding: "var(--space-3) var(--space-4)",
+                  background: "var(--surface-sunken)",
+                  borderRadius: "var(--radius-sm)",
+                  border: "1px solid var(--border-hairline)",
+                  fontSize: "0.82rem",
+                  lineHeight: 1.55,
+                  overflow: "auto",
+                }}
+              >
+                {(block.items ?? []).join("\n")}
+              </pre>
+            );
+          case "table":
+            return (
+              <div
+                key={idx}
+                style={{
+                  overflowX: "auto",
+                  margin: "0 0 var(--space-3)",
+                }}
+              >
+                <table
+                  style={{
+                    borderCollapse: "collapse",
+                    width: "100%",
+                    fontSize: "0.85rem",
+                  }}
+                >
+                  <thead>
+                    <tr style={{ background: "var(--surface-sunken)" }}>
+                      {(block.header ?? []).map((h, j) => (
+                        <th
+                          key={j}
+                          style={{
+                            padding: "6px 10px",
+                            textAlign: "left",
+                            fontWeight: 600,
+                            border: "1px solid var(--border-hairline)",
+                          }}
+                        >
+                          {renderInline(h, `th${idx}-${j}`)}
+                        </th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {(block.rows ?? []).map((row, r) => (
+                      <tr key={r}>
+                        {row.map((cell, c) => (
+                          <td
+                            key={c}
+                            style={{
+                              padding: "5px 10px",
+                              border: "1px solid var(--border-hairline)",
+                            }}
+                          >
+                            {renderInline(cell, `td${idx}-${r}-${c}`)}
+                          </td>
+                        ))}
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            );
+          case "hr":
+            return (
+              <hr
+                key={idx}
+                style={{
+                  border: "none",
+                  borderTop: "1px solid var(--border-hairline)",
+                  margin: "var(--space-4) 0",
+                }}
+              />
+            );
+          default:
+            return null;
+        }
+      })}
+    </div>
+  );
+}

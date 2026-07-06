@@ -29,6 +29,15 @@ interface DashboardData {
   warnings: string[];
 }
 
+interface ReviewItem {
+  id: number;
+  fund_code: string;
+  annotation_type: string;
+  target_module: string | null;
+  reason: string;
+  created_at: string | null;
+}
+
 // ---- 仪表盘数据防御式取值 ----
 function asString(v: unknown): string {
   return typeof v === "string" ? v : v == null ? "" : String(v);
@@ -88,6 +97,34 @@ function SeverityTag({ severity }: { severity: string }) {
   );
 }
 
+const REVIEW_TYPE_LABELS: Record<string, { label: string; color: string; bg: string }> = {
+  note: { label: "备注", color: "var(--ink-secondary)", bg: "var(--surface-sunken)" },
+  lock: { label: "锁定", color: "var(--warning)", bg: "var(--warning-soft)" },
+  exclude: { label: "排除", color: "var(--negative)", bg: "var(--negative-soft)" },
+  approve: { label: "通过", color: "var(--positive)", bg: "var(--positive-soft)" },
+  benchmark_override: { label: "基准覆盖", color: "var(--info)", bg: "var(--info-soft)" },
+  confidence_override: { label: "置信度覆盖", color: "var(--info)", bg: "var(--info-soft)" },
+};
+
+function ReviewTypeTag({ type }: { type: string }) {
+  const info = REVIEW_TYPE_LABELS[type] ?? { label: type, color: "var(--ink-tertiary)", bg: "var(--surface-sunken)" };
+  return (
+    <span
+      style={{
+        padding: "2px 6px",
+        borderRadius: "var(--radius-sm)",
+        background: info.bg,
+        color: info.color,
+        fontSize: "0.65rem",
+        fontWeight: 600,
+        flexShrink: 0,
+      }}
+    >
+      {info.label}
+    </span>
+  );
+}
+
 export default function HomePage() {
   const navigate = useNavigate();
   const [health, setHealth] = useState<HealthInfo | null>(null);
@@ -95,6 +132,8 @@ export default function HomePage() {
   const [recents, setRecents] = useState<RecentFund[]>([]);
   const [dashboard, setDashboard] = useState<DashboardData | null>(null);
   const [dashboardFailed, setDashboardFailed] = useState(false);
+  const [reviewItems, setReviewItems] = useState<ReviewItem[]>([]);
+  const [reviewLoading, setReviewLoading] = useState(true);
 
   useEffect(() => {
     const loadData = async () => {
@@ -127,6 +166,28 @@ export default function HomePage() {
         setDashboardFailed(true);
       } finally {
         setLoading(false);
+      }
+
+      // 待复核结论（评审标注 exclude/lock 等，需要人工处理）
+      try {
+        setReviewLoading(true);
+        const res = await api.listReviewerAnnotations({ limit: 5 });
+        if (res.data) {
+          const anns = Array.isArray(res.data.annotations) ? res.data.annotations : [];
+          const items: ReviewItem[] = anns.map((a) => ({
+            id: Number(a.id),
+            fund_code: String(a.fund_code ?? ""),
+            annotation_type: String(a.annotation_type ?? "note"),
+            target_module: a.target_module != null ? String(a.target_module) : null,
+            reason: String(a.reason ?? ""),
+            created_at: a.created_at != null ? String(a.created_at) : null,
+          }));
+          setReviewItems(items);
+        }
+      } catch {
+        // ignore
+      } finally {
+        setReviewLoading(false);
       }
     };
     loadData();
@@ -393,15 +454,59 @@ export default function HomePage() {
         <div>
           <SectionHeader
             title="待复核结论"
-            subtitle="needs_review 状态的结论列表"
+            subtitle={reviewItems.length > 0 ? `最近 ${reviewItems.length} 条评审标注` : "暂无待复核结论"}
           />
-          {loading ? (
+          {reviewLoading ? (
             <LoadingState rows={3} cols={2} />
+          ) : reviewItems.length === 0 ? (
+            <div className="text-sm text-tertiary">
+              暂无待复核结论。当研究员标记排除/锁定/备注时，会在此处显示。
+            </div>
           ) : (
             <div className="flex flex-col gap-2">
-              <div className="text-sm text-tertiary">
-                暂无待复核结论。当算法产生低置信度结果时，会在此处显示。
-              </div>
+              {reviewItems.map((item) => (
+                <div
+                  key={item.id}
+                  onClick={() => navigate(`/funds/${item.fund_code}/review`)}
+                  className="hover-lift"
+                  style={{
+                    padding: "var(--space-2) var(--space-3)",
+                    background: "var(--surface-raised)",
+                    border: "1px solid var(--border-hairline)",
+                    borderRadius: "var(--radius-sm)",
+                    cursor: "pointer",
+                    display: "flex",
+                    alignItems: "flex-start",
+                    justifyContent: "space-between",
+                    gap: "var(--space-3)",
+                  }}
+                >
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div className="flex items-center gap-2 mb-1">
+                      <span className="mono text-sm font-semibold">{item.fund_code}</span>
+                      <ReviewTypeTag type={item.annotation_type} />
+                      {item.target_module && (
+                        <span className="text-xs text-tertiary" style={{ fontFamily: "var(--font-mono)" }}>
+                          @{item.target_module}
+                        </span>
+                      )}
+                    </div>
+                    <div
+                      className="text-sm text-tertiary"
+                      style={{
+                        overflow: "hidden",
+                        textOverflow: "ellipsis",
+                        whiteSpace: "nowrap",
+                      }}
+                    >
+                      {item.reason || "（无备注原因）"}
+                    </div>
+                  </div>
+                  <div className="text-xs text-tertiary mono flex-shrink-0" style={{ paddingTop: "2px" }}>
+                    {item.created_at ? new Date(item.created_at).toLocaleDateString("zh-CN") : ""}
+                  </div>
+                </div>
+              ))}
             </div>
           )}
         </div>
@@ -458,6 +563,12 @@ export default function HomePage() {
             onClick={() => navigate("/similar-funds")}
           >
             ⌖ 相似搜索
+          </button>
+          <button
+            className="btn btn-secondary"
+            onClick={() => navigate("/fingerprint")}
+          >
+            ❖ 指纹管理
           </button>
           <button
             className="btn btn-secondary"

@@ -1103,6 +1103,30 @@ export const api = {
   getFingerprint: (fundCode: string) =>
     request<Record<string, unknown>>(`/api/v2/fingerprint/${encodeURIComponent(fundCode)}`),
 
+  batchFingerprint: (body: { fund_codes: string[]; calc_date?: string | null }) =>
+    request<{
+      total: number;
+      success_count: number;
+      failure_count: number;
+      errors: Array<{ fund_code: string; error: string }>;
+      calc_date: string | null;
+    }>("/api/v2/fingerprint/batch", {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+
+  compareFingerprints: (fundCodes: string[]) =>
+    request<{
+      fund_codes: string[];
+      comparison_data: Record<string, unknown>;
+      similarity_matrix: Record<string, unknown>;
+      overlap_analysis: Record<string, unknown>;
+      missing_codes: string[];
+    }>("/api/v2/fingerprint/compare", {
+      method: "POST",
+      body: JSON.stringify({ fund_codes: fundCodes }),
+    }),
+
   findSimilarFunds: (fundCode: string, params?: { metric_space?: string; top_n?: number; same_type_only?: boolean }) =>
     request<{ similar_funds: Array<Record<string, unknown>>; fund_code: string; metric_space: string; count: number }>(
       `/api/v2/fingerprint/${encodeURIComponent(fundCode)}/similar`,

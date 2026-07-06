@@ -75,7 +75,8 @@ export default function FundListPage() {
   // 保存筛选
   const [showSaveScreen, setShowSaveScreen] = useState(false);
   const [screenName, setScreenName] = useState("");
-  const [savedScreens, setSavedScreens] = useState<{ id: number; name: string }[]>([]);
+  const [selectedScreenId, setSelectedScreenId] = useState<number>(0);
+  const [savedScreens, setSavedScreens] = useState<{ id: number; name: string; filters: Record<string, unknown>; sort_by: string | null; sort_order: string | null }[]>([]);
 
   // 防抖
   const debounceRef = useRef<ReturnType<typeof setTimeout>>();
@@ -129,7 +130,13 @@ export default function FundListPage() {
   const loadScreens = useCallback(async () => {
     try {
       const res = await api.listScreens();
-      setSavedScreens((res.data ?? []).map((s) => ({ id: s.id, name: s.name })));
+      setSavedScreens((res.data ?? []).map((s) => ({
+        id: s.id,
+        name: s.name,
+        filters: (s.filters ?? {}) as Record<string, unknown>,
+        sort_by: s.sort_by ?? null,
+        sort_order: s.sort_order ?? null,
+      })));
     } catch {
       // 静默失败
     }
@@ -187,6 +194,27 @@ export default function FundListPage() {
       });
       setShowSaveScreen(false);
       setScreenName("");
+      loadScreens();
+    } catch {
+      // ignore
+    }
+  };
+
+  const handleLoadScreen = (id: number) => {
+    if (!id) return;
+    const s = savedScreens.find((x) => x.id === id);
+    if (!s) return;
+    setFilters(s.filters as ScreenFilters);
+    if (s.sort_by) setSortBy(s.sort_by);
+    if (s.sort_order) setSortOrder(s.sort_order as "asc" | "desc");
+    setSelectedScreenId(id);
+  };
+
+  const handleDeleteScreen = async (id: number) => {
+    if (!id) return;
+    try {
+      await api.deleteScreen(id);
+      if (selectedScreenId === id) setSelectedScreenId(0);
       loadScreens();
     } catch {
       // ignore
@@ -426,30 +454,25 @@ export default function FundListPage() {
             </button>
             {savedScreens.length > 0 && (
               <select
-                className="select"
+                className="form-select"
                 style={{ width: "auto" }}
-                onChange={(e) => {
-                  const id = Number(e.target.value);
-                  if (!id) return;
-                  const screen = savedScreens.find((s) => s.id === id);
-                  if (screen) {
-                    // 加载保存的筛选条件
-                    api.listScreens().then((res) => {
-                      const s = res.data?.find((x) => x.id === id);
-                      if (s) {
-                        setFilters(s.filters as ScreenFilters);
-                        if (s.sort_by) setSortBy(s.sort_by);
-                        if (s.sort_order) setSortOrder(s.sort_order as "asc" | "desc");
-                      }
-                    });
-                  }
-                }}
+                value={selectedScreenId}
+                onChange={(e) => handleLoadScreen(Number(e.target.value))}
               >
                 <option value={0}>加载已保存筛选…</option>
                 {savedScreens.map((s) => (
                   <option key={s.id} value={s.id}>{s.name}</option>
                 ))}
               </select>
+            )}
+            {selectedScreenId > 0 && (
+              <button
+                className="btn btn-ghost btn-sm"
+                onClick={() => handleDeleteScreen(selectedScreenId)}
+                title="删除当前筛选模板"
+              >
+                ✕ 删除模板
+              </button>
             )}
           </div>
         </div>
@@ -471,7 +494,7 @@ export default function FundListPage() {
               <span>筛选名称</span>
               <input
                 type="text"
-                className="input"
+                className="form-input"
                 value={screenName}
                 onChange={(e) => setScreenName(e.target.value)}
                 placeholder="如 稳健偏股3年以上"

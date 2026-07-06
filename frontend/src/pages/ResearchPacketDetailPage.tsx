@@ -12,6 +12,7 @@ import {
   LoadingState,
   ErrorState,
   ExportButton,
+  MarkdownView,
   type BreadcrumbItem,
 } from "../components/display";
 
@@ -62,7 +63,7 @@ export default function ResearchPacketDetailPage() {
   const [detail, setDetail] = useState<ResearchPacketDetail | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [showMarkdown, setShowMarkdown] = useState(false);
+  const [viewMode, setViewMode] = useState<"preview" | "source">("preview");
 
   useEffect(() => {
     if (!id) return;
@@ -277,43 +278,59 @@ export default function ResearchPacketDetailPage() {
         </div>
       )}
 
-      {/* Markdown 切换 */}
+      {/* Markdown 输出 */}
       {detail.markdown && (
         <div
           className="fade-up fade-up-4"
           style={{ marginBottom: "var(--space-4)" }}
         >
           <SectionHeader
-            title="Markdown 输出"
+            title="研究报告"
             actions={
-              <button
-                className="btn btn-ghost btn-sm"
-                onClick={() => setShowMarkdown(!showMarkdown)}
-              >
-                {showMarkdown ? "收起" : "展开"}
-              </button>
+              <div className="flex items-center gap-2">
+                <button
+                  className={`btn btn-sm ${viewMode === "preview" ? "btn-secondary" : "btn-ghost"}`}
+                  onClick={() => setViewMode("preview")}
+                >
+                  预览
+                </button>
+                <button
+                  className={`btn btn-sm ${viewMode === "source" ? "btn-secondary" : "btn-ghost"}`}
+                  onClick={() => setViewMode("source")}
+                >
+                  源码
+                </button>
+              </div>
             }
           />
-          {showMarkdown && (
-            <pre
-              className="mono"
-              style={{
-                marginTop: "var(--space-3)",
-                padding: "var(--space-4)",
-                background: "var(--surface-sunken)",
-                borderRadius: "var(--radius-md)",
-                border: "1px solid var(--border-hairline)",
-                fontSize: "0.78rem",
-                lineHeight: 1.5,
-                overflow: "auto",
-                maxHeight: "60vh",
-                whiteSpace: "pre-wrap",
-                wordBreak: "break-word",
-              }}
-            >
-              {detail.markdown}
-            </pre>
-          )}
+          <div
+            style={{
+              marginTop: "var(--space-3)",
+              padding: "var(--space-4)",
+              background: "var(--surface-raised)",
+              borderRadius: "var(--radius-md)",
+              border: "1px solid var(--border-hairline)",
+            }}
+          >
+            {viewMode === "preview" ? (
+              <MarkdownView content={detail.markdown} />
+            ) : (
+              <pre
+                className="mono"
+                style={{
+                  fontSize: "0.78rem",
+                  lineHeight: 1.5,
+                  overflow: "auto",
+                  maxHeight: "70vh",
+                  whiteSpace: "pre-wrap",
+                  wordBreak: "break-word",
+                  margin: 0,
+                }}
+              >
+                {detail.markdown}
+              </pre>
+            )}
+          </div>
         </div>
       )}
 

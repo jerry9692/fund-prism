@@ -22,6 +22,7 @@ import FundPoolPage from "./pages/FundPoolPage";
 import ReverseLookupPage from "./pages/ReverseLookupPage";
 import TemplateListPage from "./pages/TemplateListPage";
 import SimilarFundsPage from "./pages/SimilarFundsPage";
+import FingerprintPage from "./pages/FingerprintPage";
 import FundComparePage from "./pages/FundComparePage";
 import AnomalyListPage from "./pages/AnomalyListPage";
 import AnomalyDetailPage from "./pages/AnomalyDetailPage";
@@ -61,6 +62,7 @@ export default function App() {
           <Route path="/reverse-lookup" element={<ReverseLookupPage />} />
           <Route path="/templates" element={<TemplateListPage />} />
           <Route path="/similar-funds" element={<SimilarFundsPage />} />
+          <Route path="/fingerprint" element={<FingerprintPage />} />
           <Route path="/fund-compare" element={<FundComparePage />} />
           <Route path="/anomalies" element={<AnomalyListPage />} />
           <Route path="/anomalies/:id" element={<RouteErrorBoundary><AnomalyDetailPage /></RouteErrorBoundary>} />
