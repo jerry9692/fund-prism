@@ -25,6 +25,10 @@ const STYLE_LABELS: Record<string, string> = {
   liquidity: "流动性",
   growth: "成长",
   leverage: "杠杆",
+  // 风格因子指数回归用的 5 个 key
+  large_cap: "大盘",
+  mid_cap: "中盘",
+  small_cap: "小盘",
 };
 
 export default function ExposurePage() {
@@ -202,7 +206,12 @@ export default function ExposurePage() {
               color: "var(--warning)",
             }}
           >
-            ⚠ 静态归因仅基于披露持仓，不反映季度内调仓，结论状态为 observation
+            ⚠ 静态归因仅基于披露持仓，不反映季度内调仓，结论状态为「观察」
+            {attribution.coverage_rate < 0.01 && (
+              <span style={{ display: "block", marginTop: 4 }}>
+                覆盖率 0%：缺少持仓个股行情数据（stock_daily 表未采集），归因结果为空。需补全持仓股票日线后才能计算可解释收益。
+              </span>
+            )}
           </div>
           <div className="grid grid-5">
             <MetricCard

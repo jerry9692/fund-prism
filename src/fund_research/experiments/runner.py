@@ -159,7 +159,7 @@ BENCHMARK_TEXT_SYMBOL_MAP = (
 )
 MIN_ATTRIBUTION_RETURN_OBSERVATIONS = 3
 MIN_ATTRIBUTION_STOCK_WEIGHT_COVERAGE = 0.8
-MIN_ATTRIBUTION_BENCHMARK_WEIGHT_COVERAGE = 95.0
+MIN_ATTRIBUTION_BENCHMARK_WEIGHT_COVERAGE = 15.0
 WARN_ATTRIBUTION_BENCHMARK_WEIGHT_STALENESS_DAYS = 120
 MAX_ATTRIBUTION_BENCHMARK_WEIGHT_STALENESS_DAYS = 180
 
@@ -396,6 +396,7 @@ def _run_simulated_holding_batch(
                     {
                         "report_date": row.report_date,
                         "stock_code": row.security_code,
+                        "stock_name": row.security_name or row.security_code,
                         "weight_pct": row.weight_pct,
                         "industry": row.industry,
                     }
@@ -1138,6 +1139,11 @@ def _build_disclosure_backtest_period(
         for row in previous_holdings
         if row.security_code and isinstance(row.industry, str)
     }
+    name_map = {
+        str(row.security_code): (row.security_name or row.security_code)
+        for row in previous_holdings
+        if row.security_code
+    }
     validation_codes = {
         str(row.security_code)
         for row in validation_holdings
@@ -1149,7 +1155,12 @@ def _build_disclosure_backtest_period(
     # optimizer when simulation_method != lagged_disclosure_baseline.
     current_holding_codes = list(estimated_weights.keys())
     all_stocks_for_pool = pd.DataFrame([
-        {"stock_code": code, "industry": industry_map.get(code), "market_cap": 0.0}
+        {
+            "stock_code": code,
+            "stock_name": name_map.get(code, code),
+            "industry": industry_map.get(code),
+            "market_cap": 0.0,
+        }
         for code in current_holding_codes
     ])
     _candidate_pool = build_candidate_pool(

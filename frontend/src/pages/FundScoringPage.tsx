@@ -44,13 +44,41 @@ export default function FundScoringPage() {
   const [preset, setPreset] = useState("均衡型");
   const [running, setRunning] = useState(false);
 
-  // If navigated from fund detail, auto-run scoring for that fund
+  // If navigated from fund detail, auto-run scoring for the full fund pool
+  // (单只基金评分时 percentile_rank 恒为 100%，无参照意义；拉取全部基金一起评分)
   useEffect(() => {
     if (code) {
       setFundCodes(code);
-      runScoring(code);
+      runScoringForPool(code);
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [code]);
+
+  // 拉取全部基金代码后一起评分，使分位数有意义
+  async function runScoringForPool(currentCode: string) {
+    setRunning(true);
+    setErrorMessage(null);
+    try {
+      const screenBody = await api.screenFunds({ limit: 200, offset: 0 });
+      const allCodes = (screenBody.data?.funds ?? [])
+        .map((f) => String(f.fund_code ?? ""))
+        .filter(Boolean);
+      const codes = allCodes.length > 1 ? allCodes : [currentCode];
+      const body = await api.runScoring({ fund_codes: codes, preset });
+      if (body.data === null) {
+        setErrorMessage(body.warnings.join("; ") || "评分失败");
+        return;
+      }
+      setScores(body.data.fund_scores ?? []);
+      setScoreVersion(body.data.score_version);
+    } catch (e) {
+      // 拉取基金池失败时回退到单只评分
+      setErrorMessage(`评分异常: ${e instanceof Error ? e.message : String(e)}`);
+    } finally {
+      setRunning(false);
+      setLoading(false);
+    }
+  }
 
   async function runScoring(codes?: string) {
     const codesStr = (codes || fundCodes).trim();
@@ -308,7 +336,12 @@ export default function FundScoringPage() {
             />
             <MetricCard
               label="同类排名"
-              value={`前 ${(fundScore.percentile_rank * 100).toFixed(0)}%`}
+              value={
+                scores.length > 1
+                  ? `前 ${(fundScore.percentile_rank * 100).toFixed(0)}%`
+                  : "样本不足"
+              }
+              sub={scores.length > 1 ? `共 ${scores.length} 只同类` : "需评分多只基金"}
             />
             <MetricCard
               label="评分版本"
@@ -325,6 +358,24 @@ export default function FundScoringPage() {
               negative={fundScore.deduction_reasons.length > 0}
             />
           </div>
+
+          {/* 单只基金评分提示 */}
+          {scores.length <= 1 && (
+            <div
+              className="fade-up fade-up-3 mb-4"
+              style={{
+                padding: "var(--space-3) var(--space-4)",
+                background: "var(--warning-soft)",
+                borderLeft: "3px solid var(--warning)",
+                borderRadius: "0 var(--radius-sm) var(--radius-sm) 0",
+                fontSize: "0.82rem",
+                color: "var(--warning)",
+              }}
+            >
+              ⚠ 当前仅评分 {scores.length} 只基金，分位数与排名无参照意义。
+              建议在下方输入多个基金代码（用逗号分隔）一起评分，以获得有意义的同类排名。
+            </div>
+          )}
 
           {/* 维度子评分柱状图 */}
           <div

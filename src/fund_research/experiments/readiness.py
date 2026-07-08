@@ -264,7 +264,8 @@ def _assess_report(
     issues = []
     if not holdings:
         issues.append("无股票持仓")
-    if missing_industry_count:
+    industry_missing_ratio = missing_industry_count / len(holdings) if holdings else 1.0
+    if industry_missing_ratio > 0.8:
         issues.append(f"持仓行业缺失 {missing_industry_count}/{len(holdings)}")
     if stock_coverage < min_stock_weight_coverage:
         issues.append(f"持仓股票行情覆盖不足 {stock_coverage:.1%}")

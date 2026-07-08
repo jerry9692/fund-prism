@@ -663,6 +663,15 @@ def run_simulation(
 
         # Build candidate pool
         all_stocks_for_pool = stocks[["stock_code", "industry", "market_cap"]].drop_duplicates("stock_code")
+        # Merge stock_name from holdings (StockDaily has no stock_name column)
+        if "stock_name" in holdings.columns:
+            name_lookup = holdings[["stock_code", "stock_name"]].drop_duplicates("stock_code")
+            all_stocks_for_pool = all_stocks_for_pool.merge(
+                name_lookup, on="stock_code", how="left"
+            )
+            all_stocks_for_pool["stock_name"] = all_stocks_for_pool["stock_name"].fillna(
+                all_stocks_for_pool["stock_code"]
+            )
         pool = build_candidate_pool(current_holding_codes, all_stocks_for_pool)
 
         # Get stock returns for the window

@@ -4,14 +4,29 @@
 import { useEffect, useRef } from "react";
 import * as echarts from "echarts";
 
+// Canvas 渲染器无法解析 CSS 变量字符串（如 "var(--accent)"），
+// 在 ECharts option 中必须使用具体颜色值。这里与 tokens.css 保持同步。
+export const CHART_COLORS = {
+  accent: "#B45309",
+  info: "#3B6EA5",
+  positive: "#2D7A4F",
+  negative: "#B23A3A",
+  observation: "#6B5B8A",
+  tertiary: "#8F8678",
+  borderHairline: "#E8E0D4",
+  inkPrimary: "#1C1814",
+  inkSecondary: "#5C544A",
+  surface: "#FFFCF7",
+} as const;
+
 const CHART_THEME = {
   color: [
-    "#B45309", // accent
-    "#3B6EA5", // info
-    "#2D7A4F", // positive
-    "#6B5B8A", // observation purple
-    "#8F8678", // tertiary gray
-    "#B23A3A", // negative
+    CHART_COLORS.accent,
+    CHART_COLORS.info,
+    CHART_COLORS.positive,
+    CHART_COLORS.observation,
+    CHART_COLORS.tertiary,
+    CHART_COLORS.negative,
   ],
   textStyle: {
     fontFamily: "IBM Plex Sans, Noto Sans SC, sans-serif",

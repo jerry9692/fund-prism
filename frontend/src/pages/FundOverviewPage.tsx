@@ -12,7 +12,7 @@ import {
   Breadcrumb,
   type BreadcrumbItem,
 } from "../components/display";
-import { ChartWrapper } from "../components/data/ChartWrapper";
+import { ChartWrapper, CHART_COLORS } from "../components/data/ChartWrapper";
 
 interface OutletContext {
   fundCode: string;
@@ -69,7 +69,9 @@ export default function FundOverviewPage() {
   };
 
   const currentPeriodKey = period === "all" ? "since_inception" : period;
-  const currentPeriodData = navMetrics?.periods?.[currentPeriodKey];
+  const metricsPeriodKey =
+    period === "all" ? "since_inception" : (PERIOD_API_MAP[period] ?? period);
+  const currentPeriodData = navMetrics?.periods?.[metricsPeriodKey];
   const metrics = currentPeriodData?.metrics ?? {};
 
   const fmtPct = (v: number | null | undefined) =>
@@ -112,7 +114,7 @@ export default function FundOverviewPage() {
             if (v != null) {
               const ret = ((v - 1) * 100).toFixed(2);
               const isPos = Number(ret) >= 0;
-              const color = isPos ? "var(--positive)" : "var(--negative)";
+              const color = isPos ? CHART_COLORS.positive : CHART_COLORS.negative;
               s += `<span style="color:${p.color}">${p.seriesName}</span>: <span style="color:${color}">${isPos ? "+" : ""}${ret}%</span><br/>`;
             }
           }
@@ -125,10 +127,10 @@ export default function FundOverviewPage() {
         axisLabel: {
           fontSize: 11,
           fontFamily: "var(--font-mono)",
-          color: "var(--ink-tertiary)",
+          color: CHART_COLORS.tertiary,
           interval: Math.floor(navSeries.dates.length / 6),
         },
-        axisLine: { lineStyle: { color: "var(--border-hairline)" } },
+        axisLine: { lineStyle: { color: CHART_COLORS.borderHairline } },
         axisTick: { show: false },
       },
       yAxis: {
@@ -137,10 +139,10 @@ export default function FundOverviewPage() {
         axisLabel: {
           fontSize: 11,
           fontFamily: "var(--font-mono)",
-          color: "var(--ink-tertiary)",
+          color: CHART_COLORS.tertiary,
           formatter: (v: number) => `${((v - 1) * 100).toFixed(0)}%`,
         },
-        splitLine: { lineStyle: { color: "var(--border-hairline)", type: "dashed" as const } },
+        splitLine: { lineStyle: { color: CHART_COLORS.borderHairline, type: "dashed" as const } },
       },
       series: [
         {
@@ -149,8 +151,8 @@ export default function FundOverviewPage() {
           data: fundData,
           smooth: true,
           showSymbol: false,
-          lineStyle: { width: 2, color: "var(--accent)" },
-          itemStyle: { color: "var(--accent)" },
+          lineStyle: { width: 2, color: CHART_COLORS.accent },
+          itemStyle: { color: CHART_COLORS.accent },
           areaStyle: { color: "rgba(180,83,9,0.08)" },
           encode: { x: 0, y: 1 },
         },
@@ -162,8 +164,8 @@ export default function FundOverviewPage() {
                 data: bmData,
                 smooth: true,
                 showSymbol: false,
-                lineStyle: { width: 1.5, color: "var(--info)", type: "dashed" as const },
-                itemStyle: { color: "var(--info)" },
+                lineStyle: { width: 1.5, color: CHART_COLORS.info, type: "dashed" as const },
+                itemStyle: { color: CHART_COLORS.info },
                 encode: { x: 0, y: 1 },
               },
             ]
@@ -186,7 +188,7 @@ export default function FundOverviewPage() {
         />
         <MetricCard label="最大回撤" value={fmtPct(metrics.max_drawdown)} negative={true} />
         <MetricCard label="夏普比率" value={fmtNum(metrics.sharpe_ratio)} />
-        <MetricCard label="波动率" value={fmtPct(metrics.volatility)} />
+        <MetricCard label="波动率" value={fmtPct(metrics.annualized_volatility)} />
       </div>
 
       {/* 净值曲线 */}
@@ -264,7 +266,12 @@ export default function FundOverviewPage() {
               value={
                 profile.fee_info.sales_service_fee_pct !== null
                   ? `${profile.fee_info.sales_service_fee_pct}%`
-                  : "—"
+                  : "不适用"
+              }
+              sub={
+                profile.fee_info.sales_service_fee_pct === null
+                  ? "A 类份额不收销售服务费"
+                  : undefined
               }
             />
           </div>

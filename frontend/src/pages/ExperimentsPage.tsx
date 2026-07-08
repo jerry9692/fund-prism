@@ -38,6 +38,45 @@ const ALGO_LABELS: Record<string, string> = {
   scoring: "综合评分",
 };
 
+// metrics key → 中文展示标签
+const METRIC_LABELS: Record<string, string> = {
+  // 模拟持仓
+  estimated_overall_tracking_error: "整体跟踪误差",
+  estimated_overall_top10_recall: "整体 Top10 召回率",
+  estimated_overall_industry_correlation: "整体行业相关性",
+  estimated_tracking_error: "跟踪误差",
+  method: "优化方法",
+  uses_disclosed_holdings: "使用披露持仓",
+  period_count: "周期数",
+  matched_stock_count: "匹配股票数",
+  return_sample_count: "收益样本数",
+  backtest_detail: "回测明细",
+  max_positions: "最大持仓数",
+  max_single_weight: "单只最大权重",
+  turnover_penalty: "换手惩罚",
+  industry_penalty: "行业惩罚",
+  // 动态归因
+  total_portfolio_return: "组合总收益",
+  total_benchmark_return: "基准总收益",
+  total_allocation_effect: "配置效应",
+  total_selection_effect: "选股效应",
+  total_interaction_effect: "交互效应",
+  estimated_total_portfolio_return: "组合总收益（估计）",
+  estimated_total_benchmark_return: "基准总收益（估计）",
+  estimated_total_allocation_effect: "配置效应（估计）",
+  estimated_total_selection_effect: "选股效应（估计）",
+  estimated_total_interaction_effect: "交互效应（估计）",
+  // 评分
+  total_score: "综合评分",
+  percentile_rank: "分位数",
+  contains_estimated: "含估计成分",
+  sample_years: "样本年数",
+};
+
+function metricLabel(key: string): string {
+  return METRIC_LABELS[key] ?? key;
+}
+
 function renderMetricValue(value: unknown): string {
   if (typeof value === "number") return Number(value).toFixed(4);
   if (typeof value === "boolean") return value ? "是" : "否";
@@ -694,18 +733,22 @@ function ExperimentResultItem({
       {/* 指标 */}
       {keys.length > 0 && (
         <div className="grid grid-2">
-          {keys.slice(0, 8).map((k) => (
-            <div
-              key={k}
-              className="flex items-center justify-between"
-              style={{ padding: "var(--space-1) 0" }}
-            >
-              <span className="text-xs text-tertiary">{k}</span>
-              <span className="mono text-sm font-medium">
-                {renderMetricValue(metrics[k])}
-              </span>
-            </div>
-          ))}
+          {keys.slice(0, 8).map((k) => {
+            const v = metrics[k];
+            const isCompound = Array.isArray(v) || (typeof v === "object" && v !== null);
+            return (
+              <div
+                key={k}
+                className="flex items-center justify-between"
+                style={{ padding: "var(--space-1) 0" }}
+              >
+                <span className="text-xs text-tertiary">{metricLabel(k)}</span>
+                <span className="mono text-sm font-medium">
+                  {isCompound ? `共 ${Array.isArray(v) ? v.length : Object.keys(v).length} 项` : renderMetricValue(v)}
+                </span>
+              </div>
+            );
+          })}
           {keys.length > 8 && (
             <div className="text-xs text-tertiary">... 共 {keys.length} 项</div>
           )}

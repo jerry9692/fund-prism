@@ -5,19 +5,22 @@ import { Link } from "react-router-dom";
 
 // ---- StatusBadge ----
 
-const STATUS_LABELS: Record<string, string> = {
-  fact: "fact",
-  computed: "computed",
-  estimated: "estimated",
-  observation: "observation",
-  needs_review: "needs_review",
-  "needs-review": "needs_review",
+// CSS class key 保留英文以匹配已有样式；displayLabel 为中文展示文本
+const STATUS_LABELS: Record<string, { classKey: string; display: string }> = {
+  fact: { classKey: "fact", display: "事实" },
+  computed: { classKey: "computed", display: "已计算" },
+  estimated: { classKey: "estimated", display: "估计" },
+  observation: { classKey: "observation", display: "观察" },
+  needs_review: { classKey: "needs_review", display: "待复核" },
+  "needs-review": { classKey: "needs_review", display: "待复核" },
 };
 
 export function StatusBadge({ status }: { status: string }) {
   const normalized = status.replace(/-/g, "_");
-  const label = STATUS_LABELS[normalized] ?? normalized;
-  return <span className={`status-badge status-badge-${label}`}>{label}</span>;
+  const entry = STATUS_LABELS[normalized];
+  const classKey = entry?.classKey ?? normalized;
+  const display = entry?.display ?? normalized;
+  return <span className={`status-badge status-badge-${classKey}`}>{display}</span>;
 }
 
 // ---- SectionHeader ----

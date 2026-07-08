@@ -16,7 +16,7 @@ init_db(db_path)
 engine = create_engine_from_path(db_path)
 Session = sessionmaker(bind=engine)
 
-START_DATE = date(2020, 1, 1)
+START_DATE = date(2024, 1, 1)  # 与基金净值数据起点对齐，避免拉取冗余历史
 BATCH_SIZE = 50
 REQUEST_INTERVAL = 0.25
 

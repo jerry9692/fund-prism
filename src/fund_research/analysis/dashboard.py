@@ -90,9 +90,11 @@ def gather_today_changes(
         "latest_date": None,
         "previous_date": None,
         "fund_count": 0,
+        "evaluated_count": 0,
         "gainers": 0,
         "losers": 0,
         "unchanged": 0,
+        "skipped_funds": [],
         "top_gainers": [],
         "top_losers": [],
     }
@@ -126,15 +128,22 @@ def gather_today_changes(
     losers = 0
     unchanged = 0
     changes: list[dict[str, Any]] = []
+    skipped_funds: list[dict[str, str]] = []
 
     for fund_code, navs in by_fund.items():
         latest_row = navs.get(latest_date)
         prev_row = navs.get(previous_date)
         if latest_row is None or prev_row is None:
+            skipped_funds.append(
+                {"fund_code": fund_code, "reason": "missing_nav_on_date"}
+            )
             continue
         latest_nav = nav_value(latest_row)
         prev_nav = nav_value(prev_row)
         if latest_nav is None or prev_nav is None or prev_nav == 0:
+            skipped_funds.append(
+                {"fund_code": fund_code, "reason": "null_or_zero_nav"}
+            )
             continue
         change_rate = (latest_nav - prev_nav) / prev_nav
         if change_rate > 0:
@@ -151,7 +160,11 @@ def gather_today_changes(
             }
         )
 
-    fund_count = gainers + losers + unchanged
+    # fund_count 反映"最近 2 个交易日有 nav 数据的基金"，
+    # 与 market_overview.total_funds（同源 = fund_main 30）口径分离，
+    # 前端展示差异时由 skipped_funds 解释
+    fund_count = len(by_fund)
+    evaluated_count = gainers + losers + unchanged
     top_gainers = sorted(
         [c for c in changes if c["change_rate"] > 0],
         key=lambda x: x["change_rate"],
@@ -166,9 +179,11 @@ def gather_today_changes(
         "latest_date": str(latest_date),
         "previous_date": str(previous_date),
         "fund_count": fund_count,
+        "evaluated_count": evaluated_count,
         "gainers": gainers,
         "losers": losers,
         "unchanged": unchanged,
+        "skipped_funds": skipped_funds,
         "top_gainers": top_gainers,
         "top_losers": top_losers,
     }
@@ -329,6 +344,15 @@ def generate_dashboard(
             db.rollback()
             panels[name] = {"error": str(exc)}
             warnings.append(f"面板 {name} 生成失败: {exc}")
+
+    # 把 today_changes 中的跳过基金汇总为可读 warning
+    tc_skipped = (panels.get("today_changes") or {}).get("skipped_funds") or []
+    if tc_skipped:
+        codes = [s.get("fund_code", "?") for s in tc_skipped[:5]]
+        more = "" if len(tc_skipped) <= 5 else f" 等 {len(tc_skipped)} 只"
+        warnings.append(
+            f"今日变动跳过 {len(tc_skipped)} 只基金（净值缺失/为零）:{','.join(codes)}{more}"
+        )
 
     return DashboardData(
         today_changes=panels.get("today_changes", {}),

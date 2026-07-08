@@ -132,6 +132,7 @@ export default function HomePage() {
   const [recents, setRecents] = useState<RecentFund[]>([]);
   const [dashboard, setDashboard] = useState<DashboardData | null>(null);
   const [dashboardFailed, setDashboardFailed] = useState(false);
+  const [tableCounts, setTableCounts] = useState<Record<string, number>>({});
   const [reviewItems, setReviewItems] = useState<ReviewItem[]>([]);
   const [reviewLoading, setReviewLoading] = useState(true);
 
@@ -164,6 +165,15 @@ export default function HomePage() {
       } catch {
         // 仪表盘不可用时回退到静态布局
         setDashboardFailed(true);
+        // 加载表行数统计作为回退数据
+        try {
+          const qr = await api.getQualityDashboard();
+          if (qr.data?.table_counts) {
+            setTableCounts(qr.data.table_counts);
+          }
+        } catch {
+          // 静默失败
+        }
       } finally {
         setLoading(false);
       }
@@ -251,7 +261,16 @@ export default function HomePage() {
             <DataStatusCard
               label="今日上涨"
               value={gainersCount}
-              sub="只基金"
+              sub={
+                gainersCount !== null &&
+                asCount(todayChanges.fund_count) !== null &&
+                asCount(todayChanges.fund_count) !==
+                  gainersCount +
+                    (losersCount ?? 0) +
+                    (asCount(todayChanges.unchanged) ?? 0)
+                  ? `只 / 应有 ${asCount(todayChanges.fund_count)}`
+                  : "只基金"
+              }
               positive
             />
             <DataStatusCard
@@ -264,21 +283,21 @@ export default function HomePage() {
             <DataStatusCard label="近期异常" value={anomalyTotal} sub="条" />
           </>
         ) : dashboardFailed ? (
-          // 仪表盘失败 → 回退到静态布局
+          // 仪表盘失败 → 回退到表行数统计
           <>
             <DataStatusCard
               label="基金主表"
-              value={loading ? null : "—"}
+              value={tableCounts["fund_main"] ?? (loading ? null : "—")}
               sub="条记录"
             />
             <DataStatusCard
               label="净值数据"
-              value={loading ? null : "—"}
+              value={tableCounts["fund_nav"] ?? (loading ? null : "—")}
               sub="条记录"
             />
             <DataStatusCard
               label="持仓数据"
-              value={loading ? null : "—"}
+              value={tableCounts["fund_disclosed_holdings"] ?? (loading ? null : "—")}
               sub="条记录"
             />
             <DataStatusCard
