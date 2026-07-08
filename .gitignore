@@ -34,8 +34,10 @@ env/
 *.duckdb.wal
 *.sqlite
 *.sqlite-wal
+*.sqlite-shm
 *.sqlite3
 *.sqlite3-wal
+*.sqlite3-shm
 data/cache/*
 !data/cache/.gitkeep
 

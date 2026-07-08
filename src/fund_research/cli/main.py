@@ -241,7 +241,7 @@ def version() -> None:
 @app.command()
 def init(
     db_path: str = typer.Option(
-        "./data/fund_research.duckdb", "--db-path", "-d", help="数据库文件路径"
+        "./data/fund_research.sqlite", "--db-path", "-d", help="数据库文件路径"
     ),
 ) -> None:
     """初始化数据库（创建所有表）。"""
@@ -388,7 +388,7 @@ def check_data(
         table.add_row(
             "数据库连接",
             "[green]OK[/]",
-            db_path or "默认 FUND_DB_PATH / ./data/fund_research.duckdb",
+            db_path or "默认 FUND_DB_PATH / ./data/fund_research.sqlite",
         )
 
         existing_tables = set(inspect(engine).get_table_names())

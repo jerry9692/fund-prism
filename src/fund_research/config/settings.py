@@ -21,7 +21,7 @@ class Settings(BaseSettings):
     )
 
     # --- 数据存储 ---
-    db_path: str = "./data/fund_research.duckdb"
+    db_path: str = "./data/fund_research.sqlite"
     cache_dir: str = "./data/cache"
     sample_funds_path: str = "./data/samples/sample_funds_v0.1.csv"
 

@@ -9,7 +9,7 @@ def test_settings_defaults_cover_phase1_runtime_config() -> None:
     """Settings should provide usable defaults without a local .env file."""
     settings = Settings(_env_file=None)
 
-    assert settings.db_path == "./data/fund_research.duckdb"
+    assert settings.db_path == "./data/fund_research.sqlite"
     assert settings.cache_dir == "./data/cache"
     assert settings.sample_funds_path == "./data/samples/sample_funds_v0.1.csv"
     assert settings.api_host == "127.0.0.1"
