@@ -79,3 +79,6 @@ temp/
 data/raw/
 data/external/
 data/local/
+
+# Frontend build output (dev 环境用 Vite dev server，dist 会导致后端 catch-all 覆盖 API 路由)
+frontend/dist/
