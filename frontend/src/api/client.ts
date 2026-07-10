@@ -536,6 +536,13 @@ export interface QualityDashboard {
   recent_tasks: QualityTask[];
 }
 
+export interface DataUpdateStatus {
+  state: "idle" | "updating" | "done" | "error";
+  message: string;
+  started_at: string | null;
+  finished_at: string | null;
+}
+
 // ---- Generic fetch wrapper ----
 
 async function request<T>(
@@ -558,6 +565,9 @@ async function request<T>(
 export const api = {
   health: () =>
     request<{ status: string; database: string; version: string }>("/api/v1/health"),
+
+  getUpdateStatus: () =>
+    request<DataUpdateStatus>("/api/v1/system/update-status"),
 
   getFundProfile: (code: string) =>
     request<FundProfile>(`/api/v1/funds/${code}/profile`),

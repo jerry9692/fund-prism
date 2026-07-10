@@ -225,6 +225,16 @@ export default function HomePage() {
   const unreadAlerts = asCount(poolMonitoring.total_unread);
   const anomalyTotal = asCount(algoAlerts.total);
 
+  const latestNavDate = typeof todayChanges.latest_date === "string" ? todayChanges.latest_date : null;
+  const navDateLabel = latestNavDate ? latestNavDate.slice(5).replace("-", "/") : "";
+  const isDataStale = (() => {
+    if (!latestNavDate) return false;
+    const latest = new Date(latestNavDate);
+    const now = new Date();
+    const diffDays = Math.floor((now.getTime() - latest.getTime()) / (1000 * 60 * 60 * 24));
+    return diffDays > 2;
+  })();
+
   const recentAlerts = asArray(poolMonitoring.recent).map((a) => asObject(a));
   const recentAnomalies = asArray(algoAlerts.recent).map((a) => asObject(a));
   const byCategory = asObject(marketOverview.by_category);
@@ -259,24 +269,26 @@ export default function HomePage() {
         {dashboard ? (
           <>
             <DataStatusCard
-              label="今日上涨"
+              label={navDateLabel ? `${navDateLabel} 上涨` : "上涨"}
               value={gainersCount}
               sub={
-                gainersCount !== null &&
-                asCount(todayChanges.fund_count) !== null &&
-                asCount(todayChanges.fund_count) !==
-                  gainersCount +
-                    (losersCount ?? 0) +
-                    (asCount(todayChanges.unchanged) ?? 0)
-                  ? `只 / 应有 ${asCount(todayChanges.fund_count)}`
-                  : "只基金"
+                isDataStale
+                  ? `数据截至 ${latestNavDate}，请更新`
+                  : gainersCount !== null &&
+                      asCount(todayChanges.fund_count) !== null &&
+                      asCount(todayChanges.fund_count) !==
+                        gainersCount +
+                          (losersCount ?? 0) +
+                          (asCount(todayChanges.unchanged) ?? 0)
+                    ? `只 / 应有 ${asCount(todayChanges.fund_count)}`
+                    : "只基金"
               }
               positive
             />
             <DataStatusCard
-              label="今日下跌"
+              label={navDateLabel ? `${navDateLabel} 下跌` : "下跌"}
               value={losersCount}
-              sub="只基金"
+              sub={isDataStale ? `数据截至 ${latestNavDate}` : "只基金"}
               negative
             />
             <DataStatusCard label="未读池提醒" value={unreadAlerts} sub="条" />
@@ -309,8 +321,8 @@ export default function HomePage() {
         ) : (
           // 仪表盘加载中
           <>
-            <DataStatusCard label="今日上涨" value={null} sub="只基金" />
-            <DataStatusCard label="今日下跌" value={null} sub="只基金" />
+            <DataStatusCard label="上涨" value={null} sub="只基金" />
+            <DataStatusCard label="下跌" value={null} sub="只基金" />
             <DataStatusCard label="未读池提醒" value={null} sub="条" />
             <DataStatusCard label="近期异常" value={null} sub="条" />
           </>

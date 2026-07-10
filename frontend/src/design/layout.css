@@ -39,16 +39,6 @@
   white-space: nowrap;
 }
 
-.topbar-brand-mark {
-  width: 20px;
-  height: 20px;
-  background: var(--accent);
-  border-radius: 2px;
-  display: inline-block;
-  transform: rotate(45deg);
-  flex-shrink: 0;
-}
-
 .topbar-search {
   flex: 0 1 420px;
   position: relative;
@@ -168,18 +158,25 @@
 }
 
 .sidenav-item-icon {
-  width: 18px;
-  height: 18px;
+  width: 20px;
+  height: 20px;
   flex-shrink: 0;
   display: flex;
   align-items: center;
   justify-content: center;
-  font-size: 0.9rem;
-  opacity: 0.7;
+  opacity: 0.65;
+  color: var(--ink-secondary);
+  transition: opacity var(--transition-fast), color var(--transition-fast);
+}
+
+.sidenav-item:hover .sidenav-item-icon {
+  opacity: 0.9;
+  color: var(--ink-primary);
 }
 
 .sidenav-item.active .sidenav-item-icon {
   opacity: 1;
+  color: var(--accent);
 }
 
 .sidenav.collapsed .sidenav-item {
@@ -403,6 +400,47 @@
 .topbar-status-checking .topbar-status-dot {
   background: var(--warning);
   animation: shimmer 1s infinite;
+}
+
+.topbar-status-dot-pulse {
+  animation: status-pulse 1.2s ease-in-out infinite;
+}
+
+@keyframes status-pulse {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.4; transform: scale(1.35); }
+}
+
+/* ---- 数据更新 Toast ---- */
+
+.update-toast {
+  position: fixed;
+  top: 72px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 1000;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 24px;
+  background: var(--positive);
+  color: #fff;
+  font-size: 0.875rem;
+  font-weight: 500;
+  border-radius: 8px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.18);
+  animation: toast-in 0.3s ease-out;
+  pointer-events: none;
+}
+
+.update-toast-icon {
+  font-size: 1rem;
+  font-weight: 700;
+}
+
+@keyframes toast-in {
+  from { opacity: 0; transform: translateX(-50%) translateY(-8px); }
+  to { opacity: 1; transform: translateX(-50%) translateY(0); }
 }
 
 /* ---- 通用组件样式 ---- */

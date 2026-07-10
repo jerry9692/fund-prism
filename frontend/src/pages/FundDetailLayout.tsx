@@ -115,8 +115,8 @@ export default function FundDetailLayout() {
           <span>
             管理{" "}
             <span className="mono">
-              {profile.scale_history?.[0]?.total_nav
-                ? (profile.scale_history[0].total_nav / 1e8).toFixed(2) + "亿"
+              {profile.scale_history?.[0]?.total_nav != null
+                ? Number(profile.scale_history[0].total_nav).toFixed(2) + "亿"
                 : "—"}
             </span>
           </span>
@@ -126,7 +126,7 @@ export default function FundDetailLayout() {
           {profile.managers?.[0] && (
             <span>
               经理 {profile.managers[0].name} · 任职{" "}
-              <span className="mono">{profile.managers[0].tenure_days}天</span>
+              <span className="mono">{profile.managers[0].tenure_days ?? "—"}天</span>
             </span>
           )}
         </div>

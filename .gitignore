@@ -76,6 +76,7 @@ logs/
 tmp/
 temp/
 *.tmp
+_verify.py
 
 # User data (never commit)
 data/raw/

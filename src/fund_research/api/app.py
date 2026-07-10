@@ -18,6 +18,7 @@ from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from fund_research import __version__
+from fund_research.api.background_update import start_background_update
 from fund_research.api.router import router
 from fund_research.api.v2_router import v2_router
 from fund_research.core.enums import ConclusionStatus
@@ -55,6 +56,10 @@ async def lifespan(app: FastAPI):
         logger.warning(f"数据库初始化跳过（可能已存在）: {e}")
 
     logger.info(f"Fund Research API v{__version__} 启动完成")
+
+    # 后台静默更新数据（不阻塞启动）
+    start_background_update()
+
     yield
 
     # 关闭时

@@ -1,20 +1,22 @@
-# AGENTS.md — Fund Research Platform
+# AGENTS.md — Fund Prism
 
 ## Project Overview
 
 AI-oriented open-source personal fund research platform for Chinese mutual funds. Built as a "trusted research base" first, with algorithms added incrementally after data validation.
 
-**Current phase:** Phase 0 and pre-Phase-1 readiness checks complete → entering Phase 1 MVP development. B-level AKShare data has been validated on 30 sample funds; style index symbols, dividend data, fee-detail fallback, and one A-level CNInfo PDF evidence loop have been verified.
+**Current phase:** Phase 1–3 complete. Phase 2 delivered simulated holdings experiments, dynamic attribution, and scoring backtest. Phase 3 added discovery capabilities (fingerprint, similar funds, anomaly detection) and a full React frontend workbench. B-level AKShare data validated on 30 sample funds.
 
 ## Key Architecture Decisions
 
 - **Python >= 3.11** with `pyproject.toml` (hatchling build)
-- **DuckDB** as default local database (SQLite alternative supported)
+- **SQLite** as default local database (DuckDB alternative supported)
 - **FastAPI + Pydantic v2** for API layer
 - **SQLAlchemy 2.0** ORM with Alembic migrations
-- **Data source priority**: Official disclosure (A-level) > local files (LOCAL) > AKShare open API (B-level) > web scraping (C-level). Phase 0 will validate coverage.
+- **React + TypeScript + Vite** frontend (Editorial Research Desk design system)
+- **SWR data update**: FastAPI lifespan triggers a background thread that checks data freshness before fetching from AKShare — service starts instantly with cached data
+- **Data source priority**: Official disclosure (A-level) > local files (LOCAL) > AKShare open API (B-level) > web scraping (C-level)
 - **No LLM dependency** in MVP — structured data and APIs come first
-- **Single-user local-first** — no auth, no multi-tenancy in Phase 1
+- **Single-user local-first** — no auth, no multi-tenancy
 
 ## Core Design Principles (from requirements v0.4)
 
@@ -33,14 +35,23 @@ AI-oriented open-source personal fund research platform for Chinese mutual funds
 ```
 src/fund_research/
 ├── core/          # Domain enums + Pydantic schemas (the "source of truth" for data contracts)
-├── db/            # SQLAlchemy ORM models (20 Phase 1 tables) + session management
+├── db/            # SQLAlchemy ORM models (Phase 1+ tables) + session management
 ├── config/        # pydantic-settings global config (reads from .env)
-├── data/          # Data adapters (base interface) + quality checks
-├── analysis/      # Algorithm modules (Phase 1: nav_metrics, holdings, exposure, attribution)
+├── data/          # Data adapters, update.py (AKShare upsert), quality checks
+├── analysis/      # Algorithm modules (nav_metrics, holdings, exposure, attribution, scoring)
 ├── research/      # Research Packet, Evidence, Confidence modules
-├── api/           # FastAPI app + router (5 Phase 1 endpoints)
+├── api/           # FastAPI app + router + background_update.py (SWR) + deps
 ├── cli/           # typer CLI (init, serve, check-data, update)
 └── utils/         # Logging (loguru)
+
+frontend/
+├── src/
+│   ├── components/shell/   # AppShell, NavIcon (SVG icon system), BrandMark
+│   ├── design/             # Design tokens, layout, typography (Editorial Research Desk)
+│   ├── pages/              # Page components (Home, FundDetail, Funds, etc.)
+│   └── api/                # API client (typed responses, SWR polling)
+├── public/                 # Static assets (logo.png)
+└── index.html
 ```
 
 ## Phase 1 Core Tables (20 tables, see `db/models.py`)
@@ -59,7 +70,16 @@ Operations: data_source_snapshot, task_log, tool_api_call_log
 fund-research init                    # Initialize database
 fund-research serve                   # Start API (default :8000)
 fund-research serve -p 9000           # Custom port
+fund-research check-data              # Validate Phase 0/1 data
+fund-research update fund-nav         # Fetch latest fund NAV via AKShare
+fund-research update index-daily      # Fetch latest index daily bars
 ```
+
+## Startup (Windows)
+
+`start.bat` — one-click launch: releases ports, starts API + frontend, opens browser.
+Uses SWR mode: service starts immediately with cached data, background thread
+checks freshness and fetches from AKShare only if data is stale.
 
 ## Running Tests
 

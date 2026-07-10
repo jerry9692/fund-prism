@@ -14,6 +14,7 @@ import pandas as pd
 from fastapi import APIRouter, Body, Depends, Query
 from pydantic import BaseModel
 from sqlalchemy import func, or_, select, text
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from fund_research import __version__
@@ -278,40 +279,60 @@ def _run_static_attribution_for_latest_holdings(
         ConfidenceLevel.LOW if result.is_sufficient else ConfidenceLevel.NEEDS_REVIEW
     ).value
 
-    existing = db.scalar(
-        select(StaticAttributionResult)
-        .where(StaticAttributionResult.fund_code == fund_code)
-        .where(StaticAttributionResult.report_date == report_date)
-        .where(StaticAttributionResult.algorithm_name == ATTRIBUTION_ALGORITHM_NAME)
-        .where(StaticAttributionResult.algorithm_version == ATTRIBUTION_ALGORITHM_VERSION)
+    existing = _upsert_record(
+        db,
+        StaticAttributionResult,
+        filters={
+            "fund_code": fund_code,
+            "report_date": report_date,
+            "algorithm_name": ATTRIBUTION_ALGORITHM_NAME,
+            "algorithm_version": ATTRIBUTION_ALGORITHM_VERSION,
+        },
+        defaults={
+            "benchmark": None,
+            "parameters": {
+                "end_date": str(end_date) if end_date else None,
+                "source": "latest_disclosed_holdings",
+                "method": "disclosed_weight_times_security_return",
+            },
+            "total_return": result.total_return,
+            "benchmark_return": None,
+            "allocation_effect": None,
+            "selection_effect": result.explained_return,
+            "interaction_effect": None,
+            "sector_rotation_effect": None,
+            "residual": result.residual,
+            "residual_pct": result.residual_pct,
+            "detail": result.to_data(),
+            "confidence": confidence,
+            "conclusion_status": conclusion_status.value,
+            "warnings": {"items": result.warnings},
+        },
     )
-    if existing is None:
-        existing = StaticAttributionResult(
-            fund_code=fund_code,
-            report_date=report_date,
-            benchmark=None,
-            algorithm_name=ATTRIBUTION_ALGORITHM_NAME,
-            algorithm_version=ATTRIBUTION_ALGORITHM_VERSION,
-        )
-        db.add(existing)
-    existing.parameters = {
-        "end_date": str(end_date) if end_date else None,
-        "source": "latest_disclosed_holdings",
-        "method": "disclosed_weight_times_security_return",
-    }
-    existing.total_return = result.total_return
-    existing.benchmark_return = None
-    existing.allocation_effect = None
-    existing.selection_effect = result.explained_return
-    existing.interaction_effect = None
-    existing.sector_rotation_effect = None
-    existing.residual = result.residual
-    existing.residual_pct = result.residual_pct
-    existing.detail = result.to_data()
-    existing.confidence = confidence
-    existing.conclusion_status = conclusion_status.value
-    existing.warnings = {"items": result.warnings}
     return result.to_data(), result.warnings, conclusion_status
+
+
+def _upsert_record(db: Session, model: Any, filters: dict, defaults: dict) -> Any:
+    obj = db.scalar(select(model).filter_by(**filters))
+    if obj is not None:
+        for k, v in defaults.items():
+            setattr(obj, k, v)
+        return obj
+    sp = db.begin_nested()
+    try:
+        new_obj = model(**filters, **defaults)
+        db.add(new_obj)
+        db.flush()
+        sp.commit()
+        return new_obj
+    except IntegrityError:
+        sp.rollback()
+        obj = db.scalar(select(model).filter_by(**filters))
+        if obj is None:
+            raise
+        for k, v in defaults.items():
+            setattr(obj, k, v)
+        return obj
 
 
 def _fund_managers(db: Session, fund_code: str) -> list[dict]:
@@ -323,11 +344,16 @@ def _fund_managers(db: Session, fund_code: str) -> list[dict]:
             FundManagerTenure.start_date.desc(),
         )
     ).all()
+    today = date.today()
     managers = []
     for tenure in tenures:
         manager = db.scalar(
             select(FundManager).where(FundManager.manager_id == tenure.manager_id)
         )
+        tenure_days = tenure.tenure_days
+        if tenure_days is None and tenure.start_date is not None:
+            end = tenure.end_date if tenure.end_date else today
+            tenure_days = (end - tenure.start_date).days
         managers.append(
             {
                 "manager_id": tenure.manager_id,
@@ -335,7 +361,7 @@ def _fund_managers(db: Session, fund_code: str) -> list[dict]:
                 "start_date": str(tenure.start_date) if tenure.start_date else None,
                 "end_date": str(tenure.end_date) if tenure.end_date else None,
                 "is_current": tenure.is_current,
-                "tenure_days": tenure.tenure_days,
+                "tenure_days": tenure_days,
                 "tenure_return": tenure.tenure_return,
                 "experience_years": manager.experience_years if manager else None,
                 "education": manager.education if manager else None,
@@ -419,6 +445,25 @@ def health_check(db: SessionDep) -> APIResponse[dict]:
         },
         metadata={"tool": "health_check", "platform_version": __version__},
         conclusion_status=ConclusionStatus.FACT if db_ok else ConclusionStatus.NEEDS_REVIEW,
+    )
+
+
+@router.get("/system/update-status")
+def system_update_status() -> APIResponse[dict]:
+    """查询后台数据更新状态。
+
+    前端启动后轮询此接口：
+    - state=updating：显示"数据更新中"提示
+    - state=done：更新完成，前端自动刷新数据
+    - state=error：更新失败，仍使用旧数据
+    - state=idle：尚未启动更新
+    """
+    from fund_research.api.background_update import update_status
+
+    return APIResponse(
+        data=update_status.to_dict(),
+        metadata={"tool": "system_update_status", "platform_version": __version__},
+        conclusion_status=ConclusionStatus.FACT,
     )
 
 
@@ -1669,33 +1714,27 @@ def run_exposure_analysis(
     if conclusion_status == ConclusionStatus.NEEDS_REVIEW:
         result.warnings.append("风格回归解释度偏低，暴露结果需复核")
 
-    existing = db.scalar(
-        select(StyleExposureResult)
-        .where(StyleExposureResult.fund_code == fund_code)
-        .where(StyleExposureResult.calc_date == result.end_date)
-        .where(StyleExposureResult.algorithm_name == EXPOSURE_ALGORITHM_NAME)
-        .where(StyleExposureResult.algorithm_version == EXPOSURE_ALGORITHM_VERSION)
+    existing = _upsert_record(
+        db,
+        StyleExposureResult,
+        filters={
+            "fund_code": fund_code,
+            "calc_date": result.end_date,
+            "algorithm_name": EXPOSURE_ALGORITHM_NAME,
+            "algorithm_version": EXPOSURE_ALGORITHM_VERSION,
+        },
+        defaults={
+            "parameters": {"window": window, "factor_symbols": result.factor_symbols, "indexes": indexes},
+            "exposure_type": "style",
+            "exposure_values": result.exposure_values,
+            "residual": result.residual,
+            "r_squared": result.r_squared,
+            "confidence": confidence.value,
+            "conclusion_status": conclusion_status.value,
+            "warnings": {"items": result.warnings},
+            "input_coverage": result.input_coverage,
+        },
     )
-    if existing is None:
-        existing = StyleExposureResult(
-            fund_code=fund_code,
-            calc_date=result.end_date,
-            algorithm_name=EXPOSURE_ALGORITHM_NAME,
-            algorithm_version=EXPOSURE_ALGORITHM_VERSION,
-            parameters={"window": window, "factor_symbols": result.factor_symbols, "indexes": indexes},
-            exposure_type="style",
-            exposure_values=result.exposure_values,
-        )
-        db.add(existing)
-    existing.parameters = {"window": window, "factor_symbols": result.factor_symbols, "indexes": indexes}
-    existing.exposure_type = "style"
-    existing.exposure_values = result.exposure_values
-    existing.residual = result.residual
-    existing.r_squared = result.r_squared
-    existing.confidence = confidence.value
-    existing.conclusion_status = conclusion_status.value
-    existing.warnings = {"items": result.warnings}
-    existing.input_coverage = result.input_coverage
     attribution_data, attribution_warnings, attribution_status = (
         _run_static_attribution_for_latest_holdings(db, fund_code, result.end_date)
     )

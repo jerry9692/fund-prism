@@ -1,13 +1,15 @@
 import { useState, useEffect, useRef, type ReactNode } from "react";
 import { NavLink, useLocation, useNavigate } from "react-router-dom";
-import { api } from "../../api/client";
+import { api, type DataUpdateStatus } from "../../api/client";
+import { NavIcon, type NavIconName } from "./NavIcon";
+import { BrandMark } from "./BrandMark";
 
 // ---- 导航配置 ----
 
 interface NavItem {
   to: string;
   label: string;
-  icon: string;
+  icon: NavIconName;
 }
 
 interface NavGroup {
@@ -19,54 +21,54 @@ const NAV_GROUPS: NavGroup[] = [
   {
     label: "工作台",
     items: [
-      { to: "/", label: "研究工作台", icon: "◈" },
+      { to: "/", label: "研究工作台", icon: "radar" },
     ],
   },
   {
     label: "基金研究",
     items: [
-      { to: "/funds", label: "基金筛选", icon: "◇" },
-      { to: "/fund-pool", label: "基金池", icon: "◫" },
-      { to: "/fingerprint", label: "指纹管理", icon: "❖" },
-      { to: "/similar-funds", label: "相似搜索", icon: "⬡" },
-      { to: "/fund-compare", label: "基金对比", icon: "⬢" },
+      { to: "/funds", label: "基金筛选", icon: "filter" },
+      { to: "/fund-pool", label: "基金池", icon: "bookmark" },
+      { to: "/fingerprint", label: "指纹管理", icon: "fingerprint" },
+      { to: "/similar-funds", label: "相似搜索", icon: "similar" },
+      { to: "/fund-compare", label: "基金对比", icon: "compare" },
     ],
   },
   {
     label: "发现与反选",
     items: [
-      { to: "/anomalies", label: "异常发现", icon: "⚠" },
-      { to: "/reverse-lookup", label: "股票反选", icon: "⇄" },
-      { to: "/templates", label: "研究模板", icon: "▦" },
-      { to: "/research-packets", label: "研究包归档", icon: "▤" },
+      { to: "/anomalies", label: "异常发现", icon: "alert" },
+      { to: "/reverse-lookup", label: "股票反选", icon: "reverse" },
+      { to: "/templates", label: "研究模板", icon: "grid" },
+      { to: "/research-packets", label: "研究包归档", icon: "archive" },
     ],
   },
   {
     label: "算法实验",
     items: [
-      { to: "/experiments", label: "实验管理", icon: "△" },
-      { to: "/experiments/p2b-report", label: "验收报告", icon: "▽" },
-      { to: "/scoring/backtest", label: "评分回测", icon: "◁" },
+      { to: "/experiments", label: "实验管理", icon: "flask" },
+      { to: "/experiments/p2b-report", label: "验收报告", icon: "certificate" },
+      { to: "/scoring/backtest", label: "评分回测", icon: "backtest" },
     ],
   },
   {
     label: "系统",
     items: [
-      { to: "/data-quality", label: "数据质量", icon: "◯" },
-      { to: "/evidence", label: "证据链浏览", icon: "⊕" },
-      { to: "/api-debug", label: "API 调试", icon: "⚙" },
+      { to: "/data-quality", label: "数据质量", icon: "shieldCheck" },
+      { to: "/evidence", label: "证据链浏览", icon: "link" },
+      { to: "/api-debug", label: "API 调试", icon: "terminal" },
     ],
   },
 ];
 
 // 基金详情页子导航
 const FUND_CONTEXT_ITEMS: NavItem[] = [
-  { to: "", label: "概览", icon: "·" },
-  { to: "/holdings", label: "持仓分析", icon: "·" },
-  { to: "/exposure", label: "风格与归因", icon: "·" },
-  { to: "/scoring", label: "评分与实验", icon: "·" },
-  { to: "/packet", label: "研究输出", icon: "·" },
-  { to: "/review", label: "校验", icon: "·" },
+  { to: "", label: "概览", icon: "info" },
+  { to: "/holdings", label: "持仓分析", icon: "pie" },
+  { to: "/exposure", label: "风格与归因", icon: "waterfall" },
+  { to: "/scoring", label: "评分与实验", icon: "star" },
+  { to: "/packet", label: "研究输出", icon: "fileText" },
+  { to: "/review", label: "校验", icon: "checkSquare" },
 ];
 
 // ---- AppShell ----
@@ -79,9 +81,70 @@ export default function AppShell({ children }: { children: ReactNode }) {
   const fundMatch = location.pathname.match(/^\/funds\/(\d+)/);
   const currentFundCode = fundMatch?.[1] ?? null;
 
+  // 后台数据更新状态轮询（SWR：先展示旧数据，后台静默更新，完成后自动刷新）
+  const [updateInfo, setUpdateInfo] = useState<DataUpdateStatus | null>(null);
+  const [refreshNonce, setRefreshNonce] = useState(0);
+  const [showRefreshToast, setShowRefreshToast] = useState(false);
+  const sawUpdatingRef = useRef(false);
+  const refreshTimerRef = useRef<ReturnType<typeof setTimeout>>();
+
+  useEffect(() => {
+    let cancelled = false;
+    let pollTimer: ReturnType<typeof setInterval> | undefined;
+
+    const poll = async () => {
+      try {
+        const res = await api.getUpdateStatus();
+        if (cancelled) return;
+        const info = res.data;
+        setUpdateInfo(info);
+
+        if (info?.state === "updating") {
+          sawUpdatingRef.current = true;
+        }
+
+        // 只有在"亲眼见过 updating 状态"后，done/error 才触发刷新
+        // （避免页面在更新已完成后打开时触发无意义的 remount）
+        if (
+          sawUpdatingRef.current &&
+          (info?.state === "done" || info?.state === "error")
+        ) {
+          sawUpdatingRef.current = false;
+          if (pollTimer) clearInterval(pollTimer);
+          pollTimer = undefined;
+
+          if (info.state === "done") {
+            // 先显示"数据已更新"提示，短暂延迟后刷新页面数据
+            setShowRefreshToast(true);
+            refreshTimerRef.current = setTimeout(() => {
+              setShowRefreshToast(false);
+              setRefreshNonce((n) => n + 1);
+            }, 1200);
+          }
+        }
+      } catch {
+        // 静默失败，不影响界面
+      }
+    };
+
+    poll();
+    pollTimer = setInterval(poll, 4000);
+    return () => {
+      cancelled = true;
+      if (pollTimer) clearInterval(pollTimer);
+      if (refreshTimerRef.current) clearTimeout(refreshTimerRef.current);
+    };
+  }, []);
+
   return (
     <div className="app-shell">
-      <TopBar />
+      <TopBar updateInfo={updateInfo} />
+      {showRefreshToast && (
+        <div className="update-toast">
+          <span className="update-toast-icon">✓</span>
+          数据已更新
+        </div>
+      )}
       <div className="app-body">
         <SideNav
           collapsed={collapsed}
@@ -90,7 +153,7 @@ export default function AppShell({ children }: { children: ReactNode }) {
           currentPath={location.pathname}
         />
         <div className="app-content">
-          <div className="app-content-inner page-enter" key={location.pathname}>
+          <div className="app-content-inner page-enter" key={`${location.pathname}-${refreshNonce}`}>
             {children}
           </div>
           <Footer />
@@ -102,7 +165,7 @@ export default function AppShell({ children }: { children: ReactNode }) {
 
 // ---- 顶栏 ----
 
-function TopBar() {
+function TopBar({ updateInfo }: { updateInfo: DataUpdateStatus | null }) {
   const [query, setQuery] = useState("");
   const [results, setResults] = useState<
     Array<{ fund_code: string; short_name: string; fund_type: string }>
@@ -166,7 +229,7 @@ function TopBar() {
   return (
     <header className="topbar">
       <div className="topbar-brand">
-        <span className="topbar-brand-mark" />
+        <BrandMark size={32} />
         Fund Prism
       </div>
       <div className="topbar-search" ref={searchRef}>
@@ -204,9 +267,42 @@ function TopBar() {
       </div>
       <div className="topbar-spacer" />
       <div className="topbar-actions">
+        <DataUpdateIndicator info={updateInfo} />
         <BackendStatus />
       </div>
     </header>
+  );
+}
+
+// ---- 数据更新指示器 ----
+// updating: 顶栏常驻脉冲提示，hover 显示进度详情
+// done:     不显示（由 AppShell 中央 toast 提示"数据已更新"）
+// error:    显示 6 秒后自动消失
+
+function DataUpdateIndicator({ info }: { info: DataUpdateStatus | null }) {
+  const [showError, setShowError] = useState(() => info?.state === "error");
+
+  useEffect(() => {
+    if (info?.state === "error") {
+      setShowError(true);
+      const t = setTimeout(() => setShowError(false), 6000);
+      return () => clearTimeout(t);
+    }
+  }, [info?.state]);
+
+  if (!info) return null;
+  if (info.state === "idle" || info.state === "done") return null;
+  if (info.state === "error" && !showError) return null;
+
+  const isUpdating = info.state === "updating";
+  return (
+    <div
+      className={`topbar-status topbar-status-${isUpdating ? "checking" : "down"}`}
+      title={info.message || undefined}
+    >
+      <span className={`topbar-status-dot ${isUpdating ? "topbar-status-dot-pulse" : ""}`} />
+      {isUpdating ? "数据更新中…" : "更新失败"}
+    </div>
   );
 }
 
@@ -268,7 +364,9 @@ function SideNav({
                 }
                 title={collapsed ? item.label : undefined}
               >
-                <span className="sidenav-item-icon">{item.icon}</span>
+                <span className="sidenav-item-icon">
+                  <NavIcon name={item.icon} />
+                </span>
                 <span className="sidenav-item-label">{item.label}</span>
               </NavLink>
             ))}
@@ -296,7 +394,9 @@ function SideNav({
                   className={`sidenav-item ${isActive ? "active" : ""}`}
                   title={collapsed ? item.label : undefined}
                 >
-                  <span className="sidenav-item-icon">{item.icon}</span>
+                  <span className="sidenav-item-icon">
+                    <NavIcon name={item.icon} size={16} />
+                  </span>
                   <span className="sidenav-item-label">{item.label}</span>
                 </NavLink>
               );

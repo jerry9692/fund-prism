@@ -19,6 +19,7 @@
 ### 环境要求
 
 - Python >= 3.11, < 3.13（推荐 3.12）
+- Node.js >= 18（前端开发）
 - Git
 
 ### 安装
@@ -45,6 +46,24 @@ fund-research serve
 # 访问 API 文档
 # http://127.0.0.1:8000/docs
 ```
+
+### 前端
+
+```bash
+cd frontend
+npm install
+npm run dev    # 开发服务器 http://localhost:3000
+npm run build  # 生产构建
+```
+
+### Windows 一键启动
+
+双击 `start.bat` 即可同时启动后端 API（:8000）和前端开发服务器（:3000），并自动打开浏览器。
+
+启动流程采用 **SWR（Stale-While-Revalidate）模式**：
+1. 服务立即启动，先用数据库中已有数据响应请求
+2. 后台线程静默检查数据新鲜度——如果数据已是最新（>= 预期最新交易日）则跳过网络请求
+3. 数据落后时后台拉取最新净值和指数行情，完成后前端自动刷新
 
 ### CLI 命令
 
@@ -86,21 +105,32 @@ fund-research/
 │   │   └── settings.py              # pydantic-settings 全局配置
 │   ├── data/                        # 数据层
 │   │   ├── adapters/                # 数据源适配器（基类接口）
+│   │   ├── update.py                # AKShare 数据拉取与 upsert
 │   │   └── quality.py               # 数据质量检查
-│   ├── analysis/                    # 分析算法（见分期计划）
-│   ├── research/                    # 研究包、证据链（见分期计划）
+│   ├── analysis/                    # 分析算法（nav_metrics, holdings, exposure, attribution）
+│   ├── research/                    # 研究包、证据链
 │   ├── api/                         # FastAPI Tool API
-│   │   ├── app.py                   # 应用入口
-│   │   ├── router.py                # 路由定义（一期 5 个接口）
+│   │   ├── app.py                   # 应用入口（lifespan 中启动后台数据更新）
+│   │   ├── router.py                # 路由定义
+│   │   ├── background_update.py     # SWR 后台数据更新（新鲜度检查 + 线程安全状态）
 │   │   └── deps.py                  # 依赖注入
 │   ├── cli/                         # CLI 入口
 │   │   └── main.py                  # typer CLI
 │   └── utils/                       # 工具函数
 │       └── logging.py               # loguru 日志配置
+├── frontend/                        # React + TypeScript 前端
+│   ├── src/
+│   │   ├── components/shell/        # AppShell, NavIcon, BrandMark
+│   │   ├── design/                  # Design tokens, layout, typography
+│   │   ├── pages/                   # 页面组件
+│   │   └── api/                     # API 客户端
+│   ├── public/                      # 静态资源（logo.png）
+│   └── index.html
 ├── tests/                           # 测试
 ├── notebooks/examples/              # Notebook 示例
 ├── docs/                            # 文档
 ├── data/                            # 本地数据（gitignored）
+├── start.bat                        # Windows 一键启动脚本
 ├── pyproject.toml                   # 项目元数据和依赖
 ├── .env.example                     # 环境变量模板
 └── .gitignore
@@ -127,8 +157,8 @@ fund-research/
 | 框架搭建 | 项目结构、依赖、数据模型、API 骨架 | ✅ 完成 |
 | 第零阶段 | 数据可得性与口径试验 | ✅ 完成 |
 | 一期 | 可信 AI-ready MVP（单基金体检 + 研究包 + 证据链） | ✅ 完成 |
-| 二期 | 算法验证与受控估计（模拟持仓实验、综合评分基础版） | 📋 计划中 |
-| 三期 | 发现能力与研究工作台（基金画像指纹、相似基金、异常发现） | 📋 计划中 |
+| 二期 | 算法验证与受控估计（模拟持仓实验、动态归因、综合评分基础版） | ✅ 完成 |
+| 三期 | 发现能力与研究工作台（基金画像指纹、相似基金、异常发现、前端工作台） | ✅ 完成 |
 | 四期 | ETF/指数、组合与更多资产类型 | 📋 计划中 |
 | 五期 | Agent 化研究与开源生态 | 📋 计划中 |
 

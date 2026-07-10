@@ -236,8 +236,8 @@ export default function FundOverviewPage() {
                 <div className="text-sm text-tertiary">
                   <span className="mono">{m.start_date ?? "—"}</span>
                   {" → "}
-                  {m.is_current ? "至今" : "—"}
-                  <span className="mono ml-3">{m.tenure_days}天</span>
+                  <span className="mono">{m.is_current ? "至今" : (m.end_date ?? "—")}</span>
+                  <span className="mono ml-3">{m.tenure_days ?? "—"}天</span>
                 </div>
               </div>
             ))}
