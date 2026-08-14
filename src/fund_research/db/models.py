@@ -815,3 +815,11 @@ from fund_research.db.models_phase3 import (  # noqa: E402,F401
     ReverseLookupResult,
     TemplateRunRecord,
 )
+from fund_research.db.models_phase4 import (  # noqa: E402,F401
+    BondDaily,
+    BondMain,
+    IndexConstituent,
+    IndexDaily,
+    IndexMain,
+    YieldCurveDaily,
+)

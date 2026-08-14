@@ -8,7 +8,7 @@ import sqlite3
 import sys
 import uuid
 from dataclasses import dataclass
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from pathlib import Path
 from time import sleep
 from typing import Any, TypeVar
@@ -17,12 +17,21 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from fund_research.core.enums import DataSourceLevel, DataSourceType, TaskStatus, TaskType
-from fund_research.data.adapters.akshare import AkshareAdapter, benchmark_symbol_to_index_code
+from fund_research.data.adapters.akshare import (
+    AkshareAdapter,
+    benchmark_symbol_to_index_code,
+    canonical_cb_code,
+    canonical_sw_index_code,
+    is_cb_code,
+    is_sw_index_symbol,
+)
 from fund_research.data.adapters.base import FetchResult
 from fund_research.data.quality import QualityReport, check_holdings_integrity, check_nav_continuity
 from fund_research.db.models import (
     BenchmarkIndexMember,
     BenchmarkIndustryWeight,
+    BondDaily,
+    BondMain,
     DataSourceSnapshot,
     FundCompany,
     FundDisclosedHoldings,
@@ -33,10 +42,14 @@ from fund_research.db.models import (
     FundNAV,
     FundScale,
     HolderStructure,
+    IndexConstituent,
+    IndexDaily,
+    IndexMain,
     StockDaily,
     StockIndustryMembership,
     StyleExposureResult,
     TaskLog,
+    YieldCurveDaily,
 )
 from fund_research.db.models import (
     EvidenceRecord as DBEvidenceRecord,
@@ -248,6 +261,11 @@ def _apply_sample_row(session: Session, row: dict[str, str], dry_run: bool) -> s
     short_name = row.get("short_name", "").strip()
     company_name = row.get("company", "").strip()
     expected_style = row.get("expected_style", "").strip()
+    # P4.1-1: 支持从 CSV 读取基金分类，不再硬编码"混合型/主动权益"。
+    # 向后兼容：旧 CSV 无此列时回退到默认值。
+    category = row.get("category", "").strip() or "混合型"
+    sub_category = row.get("sub_category", "").strip() or "主动权益"
+    expected_bond_profile = row.get("expected_bond_profile", "").strip()
 
     if not fund_code or not short_name:
         return "skipped"
@@ -271,9 +289,14 @@ def _apply_sample_row(session: Session, row: dict[str, str], dry_run: bool) -> s
     fund.short_name = short_name
     fund.full_name = fund.full_name or short_name
     fund.fund_company_id = company.id if company else None
-    fund.category = "混合型"
-    fund.sub_category = "主动权益"
-    fund.investment_type = expected_style or None
+    fund.category = category
+    fund.sub_category = sub_category
+    # expected_style 用于权益基金风格标注；债基用 expected_bond_profile
+    fund.investment_type = expected_style or expected_bond_profile or None
+    # 根据 sub_category 设置类型标志位
+    fund.is_etf = sub_category == "ETF"
+    fund.is_etf_feeder = sub_category == "ETF联接"
+    fund.is_index_enhanced = sub_category == "指数增强"
     fund.data_source = "sample_funds_v0.1.csv"
     fund.data_source_level = DataSourceLevel.LOCAL.value
     fund.updated_at = datetime.now()
@@ -1630,6 +1653,810 @@ def upsert_akshare_benchmark_index_members(
         _log_update_task(session, "benchmark_index_member", summary)
         session.commit()
     return summary
+
+
+# ============================================================
+# P4.1-2: 指数数据域（index_main / index_daily / index_constituent）
+# ============================================================
+
+
+def _apply_index_main_row(
+    session: Session,
+    row: dict,
+    source_name: str,
+    source_level: DataSourceLevel,
+    dry_run: bool,
+) -> str:
+    index_code = str(row.get("index_code") or "").strip()
+    index_name = str(row.get("index_name") or "").strip()
+    if not index_code or not index_name:
+        return "skipped"
+
+    existing = session.scalar(select(IndexMain).where(IndexMain.index_code == index_code))
+    if dry_run:
+        return "updated" if existing else "inserted"
+    if existing is None:
+        existing = IndexMain(index_code=index_code, index_name=index_name)
+        session.add(existing)
+        action = "inserted"
+    else:
+        action = "updated"
+
+    existing.index_name = index_name
+    existing.index_type = str(row.get("index_type") or "industry").strip()
+    existing.classification_system = str(row.get("classification_system") or "SW").strip()
+    existing.classification_version = row.get("classification_version")
+    level = _parse_float(row.get("level"))
+    existing.level = int(level) if level is not None else None
+    member_count = _parse_float(row.get("member_count"))
+    existing.member_count = int(member_count) if member_count is not None else None
+    existing.source_name = source_name
+    existing.source_level = source_level.value
+    extra = row.get("extra")
+    existing.extra = extra if isinstance(extra, dict) and extra else None
+    return action
+
+
+def _ensure_index_main_entries(
+    session: Session,
+    adapter: AkshareAdapter,
+    index_codes: set[str],
+    *,
+    dry_run: bool,
+) -> list[str]:
+    """Ensure index_main rows exist for the given SW index codes (best effort)."""
+    warnings: list[str] = []
+    canonical_codes = {canonical_sw_index_code(code) for code in index_codes}
+    missing = {
+        code
+        for code in canonical_codes
+        if session.scalar(select(IndexMain).where(IndexMain.index_code == code)) is None
+    }
+    if not missing:
+        return warnings
+
+    name_by_code: dict[str, str] = {}
+    list_result = adapter.fetch_sw_index_list(level=1)
+    if list_result.is_success and list_result.data is not None and not list_result.data.empty:
+        for row in list_result.data.to_dict(orient="records"):
+            code = str(row.get("index_code") or "").strip()
+            name = str(row.get("index_name") or "").strip()
+            if code and name:
+                name_by_code[code] = name
+    else:
+        warnings.append(
+            f"申万行业列表拉取失败，index_main 骨架缺名称: {list_result.error_message}"
+        )
+
+    for code in sorted(missing):
+        _apply_index_main_row(
+            session,
+            {
+                "index_code": code,
+                "index_name": name_by_code.get(code, code),
+                "index_type": "industry",
+                "classification_system": "SW",
+            },
+            "akshare.sw_index_first_info",
+            DataSourceLevel.B,
+            dry_run,
+        )
+    if not name_by_code and not dry_run:
+        warnings.append("index_main 骨架已写入但指数名称缺失（列表源不可用）")
+    return warnings
+
+
+def _apply_index_daily_row(
+    session: Session,
+    row: dict,
+    index_code: str,
+    source_name: str,
+    source_level: DataSourceLevel,
+    dry_run: bool,
+) -> str:
+    trade_date = _parse_date(row.get("trade_date"))
+    code = str(row.get("index_code") or index_code).strip()
+    if trade_date is None or not code:
+        return "skipped"
+
+    existing = session.scalar(
+        select(IndexDaily)
+        .where(IndexDaily.index_code == code)
+        .where(IndexDaily.trade_date == trade_date)
+    )
+    if dry_run:
+        return "updated" if existing else "inserted"
+    if existing is None:
+        existing = IndexDaily(index_code=code, trade_date=trade_date)
+        session.add(existing)
+        action = "inserted"
+    else:
+        action = "updated"
+
+    existing.open_price = _parse_float(row.get("open_price"))
+    existing.high_price = _parse_float(row.get("high_price"))
+    existing.low_price = _parse_float(row.get("low_price"))
+    existing.close_price = _parse_float(row.get("close_price"))
+    existing.volume = _parse_float(row.get("volume"))
+    existing.amount = _parse_float(row.get("amount"))
+    existing.daily_return = _parse_float(row.get("daily_return"))
+    existing.source_name = source_name
+    existing.source_level = source_level.value
+    return action
+
+
+def _apply_index_constituent_row(
+    session: Session,
+    row: dict,
+    index_code: str,
+    source_name: str,
+    source_level: DataSourceLevel,
+    dry_run: bool,
+) -> str:
+    effective_date = _parse_date(row.get("effective_date"))
+    stock_code = str(row.get("stock_code") or "").strip().split(".")[0].zfill(6)
+    code = str(row.get("index_code") or index_code).strip()
+    if effective_date is None or not stock_code or not code:
+        return "skipped"
+
+    existing = session.scalar(
+        select(IndexConstituent)
+        .where(IndexConstituent.index_code == code)
+        .where(IndexConstituent.effective_date == effective_date)
+        .where(IndexConstituent.stock_code == stock_code)
+    )
+    if dry_run:
+        return "updated" if existing else "inserted"
+    if existing is None:
+        existing = IndexConstituent(
+            index_code=code,
+            effective_date=effective_date,
+            stock_code=stock_code,
+        )
+        session.add(existing)
+        action = "inserted"
+    else:
+        action = "updated"
+
+    existing.stock_name = row.get("stock_name")
+    existing.weight_pct = _parse_float(row.get("weight_pct"))
+    existing.source_name = source_name
+    existing.source_level = source_level.value
+    return action
+
+
+def upsert_akshare_index_main(
+    session: Session,
+    *,
+    adapter: AkshareAdapter | None = None,
+    level: int = 1,
+    dry_run: bool = False,
+) -> UpdateSummary:
+    """Fetch and upsert SW industry index list into index_main (P4.1-2)."""
+    adapter = adapter or AkshareAdapter()
+    summary = UpdateSummary(
+        entity="index_main",
+        source="akshare",
+        dry_run=dry_run,
+        warnings=[],
+    )
+    result = adapter.fetch_sw_index_list(level=level)
+    if not dry_run:
+        _snapshot_from_fetch(session, result)
+    if not result.is_success or result.data is None or result.data.empty:
+        summary.skipped = 1
+        summary.warnings.append(result.error_message or f"申万 {level} 级行业列表为空")
+        return summary
+
+    summary.requested = len(result.data)
+    for row in result.data.to_dict(orient="records"):
+        action = _apply_index_main_row(
+            session,
+            row,
+            "akshare.sw_index_first_info" if level == 1 else "akshare.sw_index_second_info",
+            DataSourceLevel.B,
+            dry_run,
+        )
+        if action == "inserted":
+            summary.inserted += 1
+        elif action == "updated":
+            summary.updated += 1
+        else:
+            summary.skipped += 1
+
+    if not dry_run:
+        _log_update_task(session, "index_main", summary)
+        session.commit()
+    return summary
+
+
+def upsert_akshare_industry_index_daily(
+    session: Session,
+    index_symbols: set[str],
+    *,
+    adapter: AkshareAdapter | None = None,
+    start_date: date | None = None,
+    end_date: date | None = None,
+    dry_run: bool = False,
+) -> UpdateSummary:
+    """Fetch SW industry index daily bars into index_daily (P4.1-2)."""
+    adapter = adapter or AkshareAdapter()
+    summary = UpdateSummary(
+        entity="index_daily",
+        source="akshare",
+        requested=len(index_symbols),
+        dry_run=dry_run,
+        warnings=[],
+    )
+    invalid = sorted(symbol for symbol in index_symbols if not is_sw_index_symbol(symbol))
+    if invalid:
+        summary.warnings.append(f"非申万指数代码已跳过: {', '.join(invalid)}")
+    valid_symbols = sorted(
+        symbol for symbol in index_symbols if is_sw_index_symbol(symbol)
+    )
+    if not valid_symbols:
+        summary.skipped += len(index_symbols)
+        return summary
+
+    summary.warnings.extend(
+        _ensure_index_main_entries(
+            session,
+            adapter,
+            set(valid_symbols),
+            dry_run=dry_run,
+        )
+    )
+    for symbol in _progress_iter(valid_symbols, "更新 申万行业指数行情"):
+        result = adapter.fetch_sw_index_daily(
+            symbol, start_date=start_date, end_date=end_date
+        )
+        if not dry_run:
+            _snapshot_from_fetch(session, result)
+        if not result.is_success or result.data is None or result.data.empty:
+            summary.skipped += 1
+            summary.warnings.append(result.error_message or f"申万指数行情为空: {symbol}")
+            continue
+        for row in result.data.to_dict(orient="records"):
+            action = _apply_index_daily_row(
+                session,
+                row,
+                canonical_sw_index_code(symbol),
+                "akshare.index_hist_sw",
+                result.source_level,
+                dry_run,
+            )
+            if action == "inserted":
+                summary.inserted += 1
+            elif action == "updated":
+                summary.updated += 1
+            else:
+                summary.skipped += 1
+
+    if not dry_run:
+        _log_update_task(session, "index_daily", summary)
+        session.commit()
+    return summary
+
+
+def upsert_akshare_index_constituents(
+    session: Session,
+    index_symbols: set[str],
+    *,
+    adapter: AkshareAdapter | None = None,
+    dry_run: bool = False,
+) -> UpdateSummary:
+    """Fetch SW industry index constituent weights into index_constituent (P4.1-2)."""
+    adapter = adapter or AkshareAdapter()
+    summary = UpdateSummary(
+        entity="index_constituent",
+        source="akshare",
+        requested=len(index_symbols),
+        dry_run=dry_run,
+        warnings=[],
+    )
+    invalid = sorted(symbol for symbol in index_symbols if not is_sw_index_symbol(symbol))
+    if invalid:
+        summary.warnings.append(f"非申万指数代码已跳过: {', '.join(invalid)}")
+    valid_symbols = sorted(
+        symbol for symbol in index_symbols if is_sw_index_symbol(symbol)
+    )
+    if not valid_symbols:
+        summary.skipped += len(index_symbols)
+        return summary
+
+    summary.warnings.extend(
+        _ensure_index_main_entries(
+            session,
+            adapter,
+            set(valid_symbols),
+            dry_run=dry_run,
+        )
+    )
+    for symbol in _progress_iter(valid_symbols, "更新 申万行业指数成分"):
+        result = adapter.fetch_sw_index_constituents(symbol)
+        if not dry_run:
+            _snapshot_from_fetch(session, result)
+        if not result.is_success or result.data is None or result.data.empty:
+            summary.skipped += 1
+            summary.warnings.append(result.error_message or f"申万指数成分为空: {symbol}")
+            continue
+        for row in result.data.to_dict(orient="records"):
+            action = _apply_index_constituent_row(
+                session,
+                row,
+                canonical_sw_index_code(symbol),
+                "akshare.index_component_sw",
+                result.source_level,
+                dry_run,
+            )
+            if action == "inserted":
+                summary.inserted += 1
+            elif action == "updated":
+                summary.updated += 1
+            else:
+                summary.skipped += 1
+
+    if not dry_run:
+        _log_update_task(session, "index_constituent", summary)
+        session.commit()
+    return summary
+
+
+def resolve_sw_industry_index_symbols(
+    session: Session,
+    *,
+    adapter: AkshareAdapter | None = None,
+    level: int = 1,
+) -> set[str]:
+    """Resolve the full SW industry index code list (level 1 by default)."""
+    adapter = adapter or AkshareAdapter()
+    result = adapter.fetch_sw_index_list(level=level)
+    if result.is_success and result.data is not None and not result.data.empty:
+        return {
+            str(row.get("index_code") or "").strip()
+            for row in result.data.to_dict(orient="records")
+            if str(row.get("index_code") or "").strip()
+        }
+    # 回退：从已入库的 index_main 解析
+    rows = session.scalars(
+        select(IndexMain).where(IndexMain.classification_system == "SW")
+    ).all()
+    return {row.index_code for row in rows}
+
+
+# ============================================================
+# P4.1-3: 债券数据域（bond_main / bond_daily / yield_curve_daily）
+# ============================================================
+
+
+def _apply_bond_main_row(
+    session: Session,
+    row: dict,
+    source_name: str,
+    source_level: DataSourceLevel,
+    dry_run: bool,
+) -> str:
+    bond_code = str(row.get("bond_code") or "").strip()
+    bond_name = str(row.get("bond_name") or "").strip()
+    if not bond_code or not bond_name:
+        return "skipped"
+
+    existing = session.scalar(select(BondMain).where(BondMain.bond_code == bond_code))
+    if dry_run:
+        return "updated" if existing else "inserted"
+    if existing is None:
+        existing = BondMain(bond_code=bond_code, bond_name=bond_name)
+        session.add(existing)
+        action = "inserted"
+    else:
+        action = "updated"
+
+    existing.bond_name = bond_name
+    existing.bond_type = str(row.get("bond_type") or "other").strip()
+    rating = row.get("rating")
+    existing.rating = str(rating).strip() if rating else None
+    existing.coupon_rate = _parse_float(row.get("coupon_rate"))
+    existing.maturity_date = _parse_date(row.get("maturity_date"))
+    existing.underlying_stock_code = row.get("underlying_stock_code") or None
+    existing.underlying_stock_name = row.get("underlying_stock_name") or None
+    existing.conversion_price = _parse_float(row.get("conversion_price"))
+    existing.listing_date = _parse_date(row.get("listing_date"))
+    existing.issue_size = _parse_float(row.get("issue_size"))
+    existing.source_name = source_name
+    existing.source_level = source_level.value
+    extra = row.get("extra")
+    existing.extra = extra if isinstance(extra, dict) and extra else None
+    return action
+
+
+def upsert_akshare_cb_list(
+    session: Session,
+    *,
+    adapter: AkshareAdapter | None = None,
+    dry_run: bool = False,
+) -> UpdateSummary:
+    """Fetch convertible-bond list (bond_zh_cov) into bond_main (P4.1-3)."""
+    adapter = adapter or AkshareAdapter()
+    summary = UpdateSummary(
+        entity="bond_main",
+        source="akshare",
+        dry_run=dry_run,
+        warnings=[],
+    )
+    result = adapter.fetch_cb_list()
+    if not dry_run:
+        _snapshot_from_fetch(session, result)
+    if not result.is_success or result.data is None or result.data.empty:
+        summary.skipped = 1
+        summary.warnings.append(result.error_message or "可转债列表为空")
+        return summary
+
+    summary.requested = len(result.data)
+    for row in result.data.to_dict(orient="records"):
+        action = _apply_bond_main_row(
+            session,
+            row,
+            "akshare.bond_zh_cov",
+            DataSourceLevel.B,
+            dry_run,
+        )
+        if action == "inserted":
+            summary.inserted += 1
+        elif action == "updated":
+            summary.updated += 1
+        else:
+            summary.skipped += 1
+
+    if not dry_run:
+        _log_update_task(session, "bond_main", summary)
+        session.commit()
+    return summary
+
+
+def _apply_bond_daily_row(
+    session: Session,
+    row: dict,
+    bond_code: str,
+    source_name: str,
+    source_level: DataSourceLevel,
+    dry_run: bool,
+) -> str:
+    trade_date = _parse_date(row.get("trade_date"))
+    code = str(row.get("bond_code") or bond_code).strip()
+    if trade_date is None or not code:
+        return "skipped"
+
+    existing = session.scalar(
+        select(BondDaily)
+        .where(BondDaily.bond_code == code)
+        .where(BondDaily.trade_date == trade_date)
+    )
+    if dry_run:
+        return "updated" if existing else "inserted"
+    if existing is None:
+        existing = BondDaily(bond_code=code, trade_date=trade_date)
+        session.add(existing)
+        action = "inserted"
+    else:
+        action = "updated"
+
+    existing.open_price = _parse_float(row.get("open_price"))
+    existing.high_price = _parse_float(row.get("high_price"))
+    existing.low_price = _parse_float(row.get("low_price"))
+    existing.close_price = _parse_float(row.get("close_price"))
+    existing.volume = _parse_float(row.get("volume"))
+    existing.amount = _parse_float(row.get("amount"))
+    existing.daily_return = _parse_float(row.get("daily_return"))
+    existing.source_name = source_name
+    existing.source_level = source_level.value
+    return action
+
+
+def upsert_akshare_cb_daily(
+    session: Session,
+    bond_codes: set[str],
+    *,
+    adapter: AkshareAdapter | None = None,
+    start_date: date | None = None,
+    end_date: date | None = None,
+    dry_run: bool = False,
+) -> UpdateSummary:
+    """Fetch convertible-bond daily quotes into bond_daily (P4.1-3)."""
+    adapter = adapter or AkshareAdapter()
+    summary = UpdateSummary(
+        entity="bond_daily",
+        source="akshare",
+        requested=len(bond_codes),
+        dry_run=dry_run,
+        warnings=[],
+    )
+    invalid = sorted(code for code in bond_codes if not is_cb_code(code))
+    if invalid:
+        summary.warnings.append(f"非可转债代码已跳过: {', '.join(invalid[:10])}")
+    valid_codes = sorted(canonical_cb_code(code) for code in bond_codes if is_cb_code(code))
+    if not valid_codes:
+        summary.skipped += len(bond_codes)
+        return summary
+
+    for code in _progress_iter(valid_codes, "更新 可转债日行情"):
+        result = adapter.fetch_cb_daily(code, start_date=start_date, end_date=end_date)
+        if not dry_run:
+            _snapshot_from_fetch(session, result)
+        if not result.is_success or result.data is None or result.data.empty:
+            summary.skipped += 1
+            summary.warnings.append(result.error_message or f"可转债行情为空: {code}")
+            continue
+        for row in result.data.to_dict(orient="records"):
+            action = _apply_bond_daily_row(
+                session,
+                row,
+                code,
+                "akshare.bond_zh_hs_cov_daily",
+                result.source_level,
+                dry_run,
+            )
+            if action == "inserted":
+                summary.inserted += 1
+            elif action == "updated":
+                summary.updated += 1
+            else:
+                summary.skipped += 1
+
+    if not dry_run:
+        _log_update_task(session, "bond_daily", summary)
+        session.commit()
+    return summary
+
+
+def _apply_yield_curve_row(
+    session: Session,
+    row: dict,
+    source_name: str,
+    source_level: DataSourceLevel,
+    dry_run: bool,
+) -> str:
+    curve_name = str(row.get("curve_name") or "").strip()
+    trade_date = _parse_date(row.get("trade_date"))
+    tenor_years = _parse_float(row.get("tenor_years"))
+    if not curve_name or trade_date is None or tenor_years is None:
+        return "skipped"
+
+    existing = session.scalar(
+        select(YieldCurveDaily)
+        .where(YieldCurveDaily.curve_name == curve_name)
+        .where(YieldCurveDaily.trade_date == trade_date)
+        .where(YieldCurveDaily.tenor_years == tenor_years)
+    )
+    if dry_run:
+        return "updated" if existing else "inserted"
+    if existing is None:
+        existing = YieldCurveDaily(
+            curve_name=curve_name,
+            trade_date=trade_date,
+            tenor_years=tenor_years,
+        )
+        session.add(existing)
+        action = "inserted"
+    else:
+        action = "updated"
+
+    existing.yield_pct = _parse_float(row.get("yield_pct"))
+    existing.source_name = source_name
+    existing.source_level = source_level.value
+    return action
+
+
+def _default_yield_curve_window(
+    start_date: date | None, end_date: date | None
+) -> tuple[date, date]:
+    """收益率曲线默认窗口：近 3 年（P4.1-3 验收标准）。"""
+    end = end_date or date.today()
+    if start_date is not None:
+        return start_date, end
+    try:
+        start = date(end.year - 3, end.month, end.day)
+    except ValueError:
+        start = date(end.year - 3, end.month, 28)
+    return start, end
+
+
+def _yearly_windows(start_date: date, end_date: date) -> list[tuple[date, date]]:
+    """按约一年分窗（中债收益率曲线接口单次窗口不超过一年）。"""
+    windows: list[tuple[date, date]] = []
+    window_start = start_date
+    while window_start <= end_date:
+        try:
+            window_end = date(window_start.year + 1, window_start.month, window_start.day)
+        except ValueError:
+            window_end = date(window_start.year + 1, window_start.month, 28)
+        window_end = min(window_end - timedelta(days=1), end_date)
+        windows.append((window_start, window_end))
+        window_start = window_end + timedelta(days=1)
+    return windows
+
+
+def upsert_akshare_china_yield_curve(
+    session: Session,
+    *,
+    adapter: AkshareAdapter | None = None,
+    start_date: date | None = None,
+    end_date: date | None = None,
+    dry_run: bool = False,
+) -> UpdateSummary:
+    """Fetch ChinaBond yield curves (treasury/MTN-AAA/bank-bond-AAA), P4.1-3."""
+    adapter = adapter or AkshareAdapter()
+    start, end = _default_yield_curve_window(start_date, end_date)
+    windows = _yearly_windows(start, end)
+    summary = UpdateSummary(
+        entity="yield_curve_daily",
+        source="akshare",
+        requested=len(windows),
+        dry_run=dry_run,
+        warnings=[],
+    )
+    for window_start, window_end in _progress_iter(windows, "更新 中债收益率曲线"):
+        result = adapter.fetch_china_yield_curve(window_start, window_end)
+        if not dry_run:
+            _snapshot_from_fetch(session, result)
+        if not result.is_success or result.data is None or result.data.empty:
+            summary.skipped += 1
+            summary.warnings.append(
+                result.error_message or f"收益率曲线为空: {window_start}~{window_end}"
+            )
+            continue
+        for row in result.data.to_dict(orient="records"):
+            action = _apply_yield_curve_row(
+                session,
+                row,
+                "akshare.bond_china_yield",
+                result.source_level,
+                dry_run,
+            )
+            if action == "inserted":
+                summary.inserted += 1
+            elif action == "updated":
+                summary.updated += 1
+            else:
+                summary.skipped += 1
+
+    if not dry_run:
+        _log_update_task(session, "yield_curve_daily", summary)
+        session.commit()
+    return summary
+
+
+def upsert_akshare_credit_yield_curve(
+    session: Session,
+    *,
+    adapter: AkshareAdapter | None = None,
+    symbol: str = "中短期票据(AA)",
+    curve_name: str = "medium_term_note_aa",
+    start_date: date | None = None,
+    end_date: date | None = None,
+    request_interval_seconds: float = 0.3,
+    dry_run: bool = False,
+) -> UpdateSummary:
+    """Fetch chinamoney credit yield curve (MTN-AA by default), P4.1-3.
+
+    与 treasury 曲线差分即得 AAA/AA 信用利差序列（见 load_credit_spread_series）。
+    """
+    adapter = adapter or AkshareAdapter()
+    start, end = _default_yield_curve_window(start_date, end_date)
+    summary = UpdateSummary(
+        entity="yield_curve_daily",
+        source="akshare",
+        requested=1,
+        dry_run=dry_run,
+        warnings=[],
+    )
+    result = adapter.fetch_china_credit_yield_curve(
+        symbol,
+        start,
+        end,
+        curve_name=curve_name,
+        request_interval_seconds=request_interval_seconds,
+    )
+    summary.warnings.extend(result.warnings)
+    if not dry_run:
+        _snapshot_from_fetch(session, result)
+    if not result.is_success or result.data is None or result.data.empty:
+        summary.skipped = 1
+        summary.warnings.append(result.error_message or f"信用债收益率曲线为空: {symbol}")
+        return summary
+    for row in result.data.to_dict(orient="records"):
+        action = _apply_yield_curve_row(
+            session,
+            row,
+            "akshare.bond_china_close_return",
+            result.source_level,
+            dry_run,
+        )
+        if action == "inserted":
+            summary.inserted += 1
+        elif action == "updated":
+            summary.updated += 1
+        else:
+            summary.skipped += 1
+
+    if not dry_run:
+        _log_update_task(session, "yield_curve_daily", summary)
+        session.commit()
+    return summary
+
+
+def disclosed_convertible_bond_codes(
+    session: Session, fund_codes: set[str] | None = None
+) -> set[str]:
+    """解析样本基金披露持仓中的可转债代码（bond-daily 默认更新范围）。"""
+    query = select(FundDisclosedHoldings.security_code).where(
+        FundDisclosedHoldings.asset_type == "可转债"
+    )
+    if fund_codes:
+        query = query.where(FundDisclosedHoldings.fund_code.in_(fund_codes))
+    codes = {str(code or "").strip() for code in session.scalars(query).all()}
+    return {canonical_cb_code(code) for code in codes if code and is_cb_code(code)}
+
+
+def load_credit_spread_series(
+    session: Session,
+    tenor_years: float = 3.0,
+    *,
+    start_date: date | None = None,
+    end_date: date | None = None,
+):
+    """从 yield_curve_daily 派生 AAA/AA 信用利差序列（信用曲线 - 国债，P4.1-3）。
+
+    返回 DataFrame: trade_date / treasury_yield_pct / medium_term_note_aaa_yield_pct /
+    medium_term_note_aa_yield_pct / aaa_spread_pct / aa_spread_pct（单位：百分点）。
+    """
+    import pandas as pd
+
+    query = select(YieldCurveDaily).where(
+        YieldCurveDaily.tenor_years == float(tenor_years),
+        YieldCurveDaily.curve_name.in_(
+            ("treasury", "medium_term_note_aaa", "medium_term_note_aa")
+        ),
+    )
+    if start_date is not None:
+        query = query.where(YieldCurveDaily.trade_date >= start_date)
+    if end_date is not None:
+        query = query.where(YieldCurveDaily.trade_date <= end_date)
+    rows = [
+        {
+            "trade_date": row.trade_date,
+            "curve_name": row.curve_name,
+            "yield_pct": row.yield_pct,
+        }
+        for row in session.scalars(query).all()
+        if row.yield_pct is not None
+    ]
+    if not rows:
+        return pd.DataFrame(
+            columns=[
+                "trade_date",
+                "treasury_yield_pct",
+                "medium_term_note_aaa_yield_pct",
+                "medium_term_note_aa_yield_pct",
+                "aaa_spread_pct",
+                "aa_spread_pct",
+            ]
+        )
+    frame = pd.DataFrame(rows).pivot(
+        index="trade_date", columns="curve_name", values="yield_pct"
+    )
+    for curve in ("treasury", "medium_term_note_aaa", "medium_term_note_aa"):
+        if curve not in frame.columns:
+            frame[curve] = None
+    frame = frame.sort_index().reset_index()
+    frame["aaa_spread_pct"] = frame["medium_term_note_aaa"] - frame["treasury"]
+    frame["aa_spread_pct"] = frame["medium_term_note_aa"] - frame["treasury"]
+    return frame.rename(
+        columns={
+            "treasury": "treasury_yield_pct",
+            "medium_term_note_aaa": "medium_term_note_aaa_yield_pct",
+            "medium_term_note_aa": "medium_term_note_aa_yield_pct",
+        }
+    )
 
 
 def _apply_stock_industry_membership_row(

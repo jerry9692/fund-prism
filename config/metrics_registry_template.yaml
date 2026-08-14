@@ -118,6 +118,49 @@ metrics:
     metric_group: holder
     version: "1.0.0"
 
+  # --- P4.0-2 补强指标（需求书 §6.1.4） ---
+  - field_name: win_rate
+    name_zh: 月度胜率
+    name_en: Monthly Win Rate
+    entity_type: fund
+    data_type: float
+    unit: "%"
+    formula: "count(monthly_return > 0) / count(months)"
+    input_fields: ["daily_return"]
+    applicable_fund_types: ["all"]
+    update_frequency: daily
+    metric_group: return
+    version: "1.0.0"
+    missing_handling: "无可用净值时返回 None；月末不完整月份按整月计"
+
+  - field_name: recovery_days
+    name_zh: 回撤修复天数
+    name_en: Max Drawdown Recovery Days
+    entity_type: fund
+    data_type: int
+    unit: "天"
+    formula: "recovery_date - trough_date（首次收复回撤前峰值）"
+    input_fields: ["adjusted_nav"]
+    applicable_fund_types: ["all"]
+    update_frequency: daily
+    metric_group: risk
+    version: "1.0.0"
+    missing_handling: "区间内未修复返回 None；无回撤返回 0"
+
+  - field_name: rank_in_category
+    name_zh: 同类排名
+    name_en: Rank Within Category
+    entity_type: fund
+    data_type: string
+    unit: ""
+    formula: "k/N（二级分类内按指标降序/升序排名，并列取最小名次）"
+    input_fields: ["sub_category", "metric_value"]
+    applicable_fund_types: ["all"]
+    update_frequency: daily
+    metric_group: return
+    version: "1.0.0"
+    limitations: "仅在同一二级分类内可比；单只基金组无分位数"
+
 # ============================================================
 # 数据源等级映射
 # ============================================================

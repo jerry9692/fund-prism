@@ -7,7 +7,7 @@
 # ---- 路径配置 ----
 PROJECT_DIR="/Users/jerry/Documents/vibe/fund-prism"
 BACKEND_PORT=8000
-FRONTEND_PORT=5173
+FRONTEND_PORT=3000
 FRONTEND_URL="http://localhost:${FRONTEND_PORT}"
 BACKEND_URL="http://localhost:${BACKEND_PORT}"
 export FUND_PRISM_API_URL="${BACKEND_URL}"
@@ -33,6 +33,26 @@ if [ ! -d "$PROJECT_DIR" ]; then
 fi
 
 cd "$PROJECT_DIR"
+
+# ---- 环境检查（与 start.bat 逻辑一致）----
+if [ ! -x ".venv/bin/python" ]; then
+  echo -e "${RED}[ERROR] .venv not found. Run: python -m venv .venv${NC}"
+  echo -e "${RED}        Then run: .venv/bin/pip install -e \".[dev]\"${NC}"
+  read -n 1 -s -r -p "按任意键退出..."
+  exit 1
+fi
+
+if [ ! -f "data/fund_research.sqlite" ]; then
+  echo -e "${YELLOW}[WARNING] data/fund_research.sqlite not found!${NC}"
+  echo -e "${YELLOW}[WARNING] Please copy it or run: fund-research init${NC}"
+  echo ""
+fi
+
+if [ ! -d "frontend/node_modules" ]; then
+  echo "[INFO] Installing frontend dependencies..."
+  (cd frontend && npm install)
+  echo ""
+fi
 
 # ---- 清理函数：退出时杀掉后台进程 ----
 cleanup() {
@@ -61,16 +81,17 @@ check_port() {
   fi
 }
 
-echo -e "${YELLOW}[1/4] 检查端口...${NC}"
+echo -e "${YELLOW}[0/2] 释放端口 8000 和 3000...${NC}"
 check_port $BACKEND_PORT
 check_port $FRONTEND_PORT
 echo -e "${GREEN}  端口可用${NC}"
 echo ""
 
 # ---- 启动后端 ----
-echo -e "${YELLOW}[2/4] 启动后端 (FastAPI @ :${BACKEND_PORT})...${NC}"
+echo -e "${YELLOW}[1/2] 启动后端 (FastAPI @ http://127.0.0.1:${BACKEND_PORT})...${NC}"
 export FUND_DB_PATH="${PROJECT_DIR}/data/fund_research.sqlite"
-uv run uvicorn fund_research.api.app:create_app \
+export FUND_PRISM_API_URL="http://127.0.0.1:${BACKEND_PORT}"
+.venv/bin/python -m uvicorn fund_research.api.app:create_app \
   --host 127.0.0.1 \
   --port $BACKEND_PORT \
   --factory \
@@ -80,15 +101,15 @@ echo -e "${GREEN}  后端 PID: ${BACKEND_PID}${NC}"
 echo ""
 
 # ---- 启动前端 ----
-echo -e "${YELLOW}[3/4] 启动前端 (Vite dev @ :${FRONTEND_PORT})...${NC}"
+echo -e "${YELLOW}[2/2] 启动前端 (Vite dev @ http://localhost:${FRONTEND_PORT})...${NC}"
 cd "${PROJECT_DIR}/frontend"
-npm run dev -- --port $FRONTEND_PORT > /tmp/fund_prism_frontend.log 2>&1 &
+npm run dev > /tmp/fund_prism_frontend.log 2>&1 &
 FRONTEND_PID=$!
 echo -e "${GREEN}  前端 PID: ${FRONTEND_PID}${NC}"
 echo ""
 
 # ---- 等待服务就绪 ----
-echo -e "${YELLOW}[4/4] 等待服务就绪...${NC}"
+echo -e "${YELLOW}等待服务启动...${NC}"
 
 wait_for_url() {
   local url=$1
@@ -114,7 +135,7 @@ wait_for_url() {
   return 0
 }
 
-wait_for_url "${BACKEND_URL}/api/v2/health" "后端" "$BACKEND_PID" "/tmp/fund_prism_backend.log"
+wait_for_url "${BACKEND_URL}/api/v1/health" "后端" "$BACKEND_PID" "/tmp/fund_prism_backend.log"
 wait_for_url "$FRONTEND_URL" "前端" "$FRONTEND_PID" "/tmp/fund_prism_frontend.log"
 
 echo ""
@@ -122,11 +143,15 @@ echo -e "${GREEN}═════════════════════
 echo -e "${GREEN}  Fund Prism 已启动！${NC}"
 echo -e "${GREEN}═══════════════════════════════════════════════${NC}"
 echo ""
-echo -e "  前端：  ${CYAN}${FRONTEND_URL}${NC}"
-echo -e "  后端：  ${CYAN}${BACKEND_URL}/api/v2/health${NC}"
+echo -e "  API:      ${CYAN}${BACKEND_URL}/docs${NC}"
+echo -e "  Frontend: ${CYAN}${FRONTEND_URL}${NC}"
 echo ""
 echo -e "  后端日志：  ${YELLOW}/tmp/fund_prism_backend.log${NC}"
 echo -e "  前端日志：  ${YELLOW}/tmp/fund_prism_frontend.log${NC}"
+echo ""
+echo -e "${YELLOW}  提示：数据启动后在后台静默更新，"
+echo -e "      可观察顶栏的 \"updating\" 指示器。${NC}"
+echo -e "${YELLOW}  如果后端日志报错，请复制错误信息。${NC}"
 echo ""
 echo -e "${YELLOW}  关闭此窗口将停止所有服务${NC}"
 echo ""

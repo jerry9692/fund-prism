@@ -222,6 +222,7 @@ export default function HomePage() {
 
   const gainersCount = asCount(todayChanges.gainers);
   const losersCount = asCount(todayChanges.losers);
+  const unchangedCount = asCount(todayChanges.unchanged);
   const unreadAlerts = asCount(poolMonitoring.total_unread);
   const anomalyTotal = asCount(algoAlerts.total);
 
@@ -264,8 +265,8 @@ export default function HomePage() {
         </div>
       </div>
 
-      {/* 四宫格数据状态 */}
-      <div className="grid grid-4 fade-up fade-up-2 mb-6">
+      {/* 数据状态 */}
+      <div className="grid grid-5 fade-up fade-up-2 mb-6">
         {dashboard ? (
           <>
             <DataStatusCard
@@ -279,11 +280,16 @@ export default function HomePage() {
                       asCount(todayChanges.fund_count) !==
                         gainersCount +
                           (losersCount ?? 0) +
-                          (asCount(todayChanges.unchanged) ?? 0)
+                          (unchangedCount ?? 0)
                     ? `只 / 应有 ${asCount(todayChanges.fund_count)}`
                     : "只基金"
               }
               positive
+            />
+            <DataStatusCard
+              label={navDateLabel ? `${navDateLabel} 持平` : "持平"}
+              value={unchangedCount}
+              sub={isDataStale ? `数据截至 ${latestNavDate}` : "只基金"}
             />
             <DataStatusCard
               label={navDateLabel ? `${navDateLabel} 下跌` : "下跌"}
@@ -322,6 +328,7 @@ export default function HomePage() {
           // 仪表盘加载中
           <>
             <DataStatusCard label="上涨" value={null} sub="只基金" />
+            <DataStatusCard label="持平" value={null} sub="只基金" />
             <DataStatusCard label="下跌" value={null} sub="只基金" />
             <DataStatusCard label="未读池提醒" value={null} sub="条" />
             <DataStatusCard label="近期异常" value={null} sub="条" />

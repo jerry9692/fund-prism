@@ -263,6 +263,218 @@ class TestDynamicAttribution:
         api = result.to_api_data()
         assert api["conclusion_status"] == "needs_review"
 
+    # ------------------------------------------------------------
+    # P4.0-1: 收益拆解补"打新/转债" (requirements v0.4 §6.2.3 dim 5/6/7)
+    # ------------------------------------------------------------
+
+    def test_run_attribution_peels_convertible_bond_return_when_market_data_provided(self):
+        """CB holdings + CB daily returns → real CB contribution computed (§6.2.3 dim 5).
+
+        The CB return is computed as Σ(weight × period_return) and exposed as
+        an independent decomposition item. When CB market data is supplied,
+        ``total_convertible_bond_return`` becomes a real value and the per-period
+        ``convertible_bond_return`` is populated.
+        """
+        from fund_research.analysis.dynamic_attribution import run_attribution
+
+        holdings = pd.DataFrame([
+            {"report_date": "2026-01-01", "sector": "A",
+             "port_weight": 1.0, "bench_weight": 1.0},
+        ])
+        returns = pd.DataFrame([
+            {"report_date": "2026-01-01", "sector": "A",
+             "port_return": 0.10, "bench_return": 0.05,
+             "period_start": "2026-01-01", "period_end": "2026-03-31"},
+        ])
+        cb_holdings = pd.DataFrame([
+            {"report_date": "2026-01-01", "security_code": "113001",
+             "weight_pct": 10.0},
+        ])
+        # Single-day CB return of 20% within the attribution period.
+        cb_returns = pd.DataFrame([
+            {"security_code": "113001", "trade_date": "2026-01-15",
+             "daily_return": 0.20},
+        ])
+
+        result = run_attribution(
+            "000001", holdings, returns,
+            convertible_bond_holdings=cb_holdings,
+            convertible_bond_returns=cb_returns,
+        )
+
+        # CB contribution = 10% weight × 20% period return = 0.02
+        assert result.total_convertible_bond_return == pytest.approx(0.02, abs=1e-6)
+        assert result.convertible_bond_coverage == pytest.approx(1.0)
+        assert result.convertible_bond_total_weight_pct == pytest.approx(10.0)
+        # Per-period CB return is populated
+        assert result.periods[0].convertible_bond_return == pytest.approx(0.02, abs=1e-6)
+        # IPO stays 0.0 (unobservable, §6.2.3 dim 6/7)
+        assert result.total_ipo_return == 0.0
+        assert result.periods[0].ipo_return == 0.0
+        # Peeling warning surfaced
+        assert any("已剥离转债收益" in w for w in result.warnings)
+        # invisible = residual - ipo - cb (formula holds)
+        assert result.total_invisible_return == pytest.approx(
+            result.total_residual - result.total_ipo_return - result.total_convertible_bond_return,
+            abs=1e-6,
+        )
+
+    def test_run_attribution_cb_holdings_without_returns_surfaces_warning(self):
+        """CB holdings but no CB market data → explicit warning + CB weight surfaced (§6.2.3 dim 5).
+
+        When CB daily quotes are unavailable (pre_phase4_plan P4.1-3 not yet
+        landed), ``total_convertible_bond_return`` stays 0.0 but the disclosed
+        CB weight is still surfaced with an explicit warning so consumers never
+        read 0.0 as "no CB exposure".
+        """
+        from fund_research.analysis.dynamic_attribution import run_attribution
+
+        holdings = pd.DataFrame([
+            {"report_date": "2026-01-01", "sector": "A",
+             "port_weight": 1.0, "bench_weight": 1.0},
+        ])
+        returns = pd.DataFrame([
+            {"report_date": "2026-01-01", "sector": "A",
+             "port_return": 0.10, "bench_return": 0.05,
+             "period_start": "2026-01-01", "period_end": "2026-03-31"},
+        ])
+        cb_holdings = pd.DataFrame([
+            {"report_date": "2026-01-01", "security_code": "113001",
+             "weight_pct": 10.0},
+        ])
+
+        result = run_attribution(
+            "000001", holdings, returns,
+            convertible_bond_holdings=cb_holdings,
+            convertible_bond_returns=None,
+        )
+
+        # CB return stays 0.0 (no market data), but CB weight is surfaced
+        assert result.total_convertible_bond_return == 0.0
+        assert result.convertible_bond_coverage == 0.0
+        assert result.convertible_bond_total_weight_pct == pytest.approx(10.0)
+        # Explicit warning references P4.1-3 so the gap is discoverable
+        assert any("转债收益未从残差剥离" in w for w in result.warnings)
+        assert any("P4.1-3" in w for w in result.warnings)
+
+    def test_run_attribution_without_cb_holdings_has_no_cb_warning(self):
+        """No CB holdings → no CB-specific warning, coverage 0."""
+        from fund_research.analysis.dynamic_attribution import run_attribution
+
+        holdings = pd.DataFrame([
+            {"report_date": "2026-01-01", "sector": "A",
+             "port_weight": 1.0, "bench_weight": 1.0},
+        ])
+        returns = pd.DataFrame([
+            {"report_date": "2026-01-01", "sector": "A",
+             "port_return": 0.10, "bench_return": 0.05,
+             "period_start": "2026-01-01", "period_end": "2026-03-31"},
+        ])
+
+        result = run_attribution("000001", holdings, returns)
+
+        assert result.total_convertible_bond_return == 0.0
+        assert result.convertible_bond_coverage == 0.0
+        assert result.convertible_bond_total_weight_pct == 0.0
+        # No CB-related warning (pure equity fund)
+        assert not any("转债" in w for w in result.warnings)
+
+    def test_run_attribution_ipo_return_note_present_in_api_data(self):
+        """to_api_data exposes ipo_return_note + per-period cb/ipo/invisible (§6.2.3 dim 6/7).
+
+        IPO return must be explicitly marked as unobservable rather than
+        silently dropped to 0.0.
+        """
+        from fund_research.analysis.dynamic_attribution import run_attribution
+
+        holdings = pd.DataFrame([
+            {"report_date": "2026-01-01", "sector": "A",
+             "port_weight": 1.0, "bench_weight": 1.0},
+        ])
+        returns = pd.DataFrame([
+            {"report_date": "2026-01-01", "sector": "A",
+             "port_return": 0.10, "bench_return": 0.05,
+             "period_start": "2026-01-01", "period_end": "2026-03-31"},
+        ])
+
+        result = run_attribution("000001", holdings, returns)
+        api = result.to_api_data()
+
+        # IPO explicit annotation
+        assert "ipo_return_note" in api
+        assert "打新收益不可直接观测" in api["ipo_return_note"]
+        # CB coverage context exposed
+        assert "estimated_convertible_bond_coverage" in api
+        assert "convertible_bond_total_weight_pct" in api
+        # Per-period cb / ipo / invisible fields
+        period = api["periods"][0]
+        assert "estimated_convertible_bond_return" in period
+        assert "estimated_ipo_return" in period
+        assert "estimated_invisible_return" in period
+
+    def test_compute_period_convertible_bond_return_helper_handles_partial_coverage(self):
+        """Helper computes weighted CB contribution with partial return coverage."""
+        from fund_research.analysis.dynamic_attribution import (
+            _compute_period_convertible_bond_return,
+        )
+
+        cb_holdings = pd.DataFrame([
+            {"report_date": "2026-01-01", "security_code": "113001",
+             "weight_pct": 10.0},
+            {"report_date": "2026-01-01", "security_code": "113002",
+             "weight_pct": 5.0},
+        ])
+        # Only 113001 has return data (20%); 113002 missing
+        cb_returns = pd.DataFrame([
+            {"security_code": "113001", "trade_date": "2026-01-15",
+             "daily_return": 0.20},
+        ])
+
+        cb_ret, covered_pct, total_pct, missing = (
+            _compute_period_convertible_bond_return(
+                cb_holdings, cb_returns,
+                date(2026, 1, 1), date(2026, 3, 31),
+            )
+        )
+
+        # Only 113001 contributes: 10% × 20% = 0.02
+        assert cb_ret == pytest.approx(0.02)
+        assert covered_pct == pytest.approx(10.0)  # only 113001 covered
+        assert total_pct == pytest.approx(15.0)  # 10 + 5
+        assert missing == 1  # 113002 has no return
+
+    def test_normalize_convertible_bond_holdings_converts_decimal_weights(self):
+        """Decimal-weight input is converted to percent; percent input untouched."""
+        from fund_research.analysis.dynamic_attribution import (
+            _normalize_convertible_bond_holdings,
+        )
+
+        # Decimal weights (0.10, 0.05) → converted to percent (10.0, 5.0)
+        decimal_df = pd.DataFrame([
+            {"report_date": "2026-01-01", "security_code": "113001", "weight_pct": 0.10},
+            {"report_date": "2026-01-01", "security_code": "113002", "weight_pct": 0.05},
+        ])
+        norm_decimal = _normalize_convertible_bond_holdings(decimal_df)
+        assert norm_decimal["weight_pct"].tolist() == pytest.approx([10.0, 5.0])
+
+        # Percent weights (10.0, 5.0) → left untouched
+        percent_df = pd.DataFrame([
+            {"report_date": "2026-01-01", "security_code": "113001", "weight_pct": 10.0},
+            {"report_date": "2026-01-01", "security_code": "113002", "weight_pct": 5.0},
+        ])
+        norm_percent = _normalize_convertible_bond_holdings(percent_df)
+        assert norm_percent["weight_pct"].tolist() == pytest.approx([10.0, 5.0])
+
+        # A small percent holding (0.5%) inside an otherwise percent portfolio
+        # (8.0%) is preserved — a genuine 0.5% holding must NOT become 50%.
+        # The batch is identified as percent because max (8.0) > 1.5.
+        mixed_percent_df = pd.DataFrame([
+            {"report_date": "2026-01-01", "security_code": "113001", "weight_pct": 0.5},
+            {"report_date": "2026-01-01", "security_code": "113002", "weight_pct": 8.0},
+        ])
+        norm_mixed = _normalize_convertible_bond_holdings(mixed_percent_df)
+        assert norm_mixed["weight_pct"].tolist() == pytest.approx([0.5, 8.0])
+
 
 class TestScoring:
     """Smoke tests for composite scoring."""

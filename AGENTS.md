@@ -72,7 +72,8 @@ fund-research serve                   # Start API (default :8000)
 fund-research serve -p 9000           # Custom port
 fund-research check-data              # Validate Phase 0/1 data
 fund-research update fund-nav         # Fetch latest fund NAV via AKShare
-fund-research update index-daily      # Fetch latest index daily bars
+fund-research update index-daily      # Fetch latest index daily bars (SW industry symbols like 801010.SI supported)
+fund-research update industry-index   # P4.1-2: one-shot SW industry index domain (index_main + index_daily + index_constituent)
 ```
 
 ## Startup (Windows)

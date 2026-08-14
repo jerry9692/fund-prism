@@ -50,6 +50,7 @@ from fund_research.data.quality import (
 from fund_research.db.models import (
     AlgorithmExperiment,
     BenchmarkIndustryWeight,
+    BondDaily,
     FundDisclosedHoldings,
     FundMain,
     FundNAV,
@@ -1597,6 +1598,41 @@ def _run_dynamic_attribution_batch(
                     "port_weight": (holding.weight_pct or 0.0) / 100.0,
                 })
 
+            # Collect disclosed convertible-bond holdings (requirements v0.4
+            # §6.2.3 dim 5) so run_attribution can peel CB return out of the
+            # residual. CB daily quotes come from the P4.1-3 bond data domain
+            # (bond_daily); when quotes are missing for the held codes,
+            # convertible_bond_returns stays None and the algorithm surfaces
+            # an explicit "CB not peeled" warning rather than a silent 0.0.
+            cb_holding_rows = [
+                {
+                    "report_date": holding.report_date,
+                    "security_code": str(holding.security_code),
+                    "weight_pct": holding.weight_pct or 0.0,
+                }
+                for holding in holdings_rows
+                if holding.asset_type == "可转债" and holding.security_code
+            ]
+            cb_holdings_df = pd.DataFrame(cb_holding_rows)
+            cb_returns_df: pd.DataFrame | None = None
+            if not cb_holdings_df.empty:
+                from fund_research.data.adapters.akshare import (
+                    canonical_cb_code,
+                    is_cb_code,
+                )
+
+                # Canonicalize holding codes to the bond_daily storage form
+                # (128039.SZ) so the security-level join inside
+                # run_attribution matches.
+                cb_holdings_df["security_code"] = cb_holdings_df[
+                    "security_code"
+                ].map(
+                    lambda code: canonical_cb_code(code) if is_cb_code(code) else code
+                )
+                cb_returns_df = _load_cb_return_df(
+                    db, set(cb_holdings_df["security_code"].astype(str))
+                )
+
             holding_stock_df = pd.DataFrame(holding_stock_rows)
             report_totals = holding_stock_df.groupby("report_date")["port_weight"].transform("sum")
             holding_stock_df["port_weight"] = (
@@ -1713,6 +1749,12 @@ def _run_dynamic_attribution_batch(
                 method="BHB",
                 benchmark_symbol=benchmark_symbol,
                 uses_simulated_holdings=uses_sim,
+                convertible_bond_holdings=cb_holdings_df,
+                # CB daily quotes from the P4.1-3 bond data domain; None when
+                # bond_daily has no rows for the held codes, in which case
+                # run_attribution surfaces the disclosed CB weight and an
+                # explicit "未从残差剥离" warning instead of a silent 0.0.
+                convertible_bond_returns=cb_returns_df,
             )
 
             metrics = {
@@ -1723,6 +1765,11 @@ def _run_dynamic_attribution_batch(
                 "estimated_total_interaction_effect": attr_result.total_interaction_effect,
                 "estimated_total_residual": attr_result.total_residual,
                 "estimated_residual_ratio": attr_result.residual_ratio,
+                "estimated_total_ipo_return": attr_result.total_ipo_return,
+                "estimated_total_convertible_bond_return": attr_result.total_convertible_bond_return,
+                "estimated_total_invisible_return": attr_result.total_invisible_return,
+                "estimated_convertible_bond_coverage": attr_result.convertible_bond_coverage,
+                "convertible_bond_total_weight_pct": attr_result.convertible_bond_total_weight_pct,
                 "period_count": len(attr_result.periods),
                 "method": "BHB",
                 "benchmark_symbol": benchmark_symbol,
@@ -2017,6 +2064,37 @@ def _report_date_filter_metadata(
         "min_report_date": str(min_report_date) if min_report_date else None,
         "max_report_date": str(max_report_date) if max_report_date else None,
     }
+
+
+def _load_cb_return_df(db: Session, security_codes: set[str]) -> pd.DataFrame | None:
+    """从 bond_daily 加载可转债日收益序列（P4.1-3 数据域，§6.2.3 dim 5）。
+
+    返回 ``[security_code, trade_date, daily_return]``（security_code 统一为
+    ``128039.SZ`` 存库口径）；无可用行情时返回 None，由 run_attribution
+    显式标注"转债收益未剥离"而非静默 0.0。
+    """
+    from fund_research.data.adapters.akshare import canonical_cb_code, is_cb_code
+
+    canonical_codes = {
+        canonical_cb_code(code) for code in security_codes if code and is_cb_code(code)
+    }
+    if not canonical_codes:
+        return None
+    rows = db.scalars(
+        sa_select(BondDaily).where(BondDaily.bond_code.in_(sorted(canonical_codes)))
+    ).all()
+    data = pd.DataFrame([
+        {
+            "security_code": row.bond_code,
+            "trade_date": row.trade_date,
+            "daily_return": row.daily_return,
+        }
+        for row in rows
+        if row.daily_return is not None
+    ])
+    if data.empty:
+        return None
+    return data
 
 
 def _market_rows_to_return_df(rows: list[StockDaily]) -> pd.DataFrame:
@@ -2947,6 +3025,9 @@ def _persist_dynamic_attribution_result(
             if abs(active_return) > 1e-12
             else None
         )
+        # Per-period invisible = residual - ipo - cb (consistent with
+        # to_api_data / waterfall_data so DB rows match API output).
+        period_invisible = period.residual - period.ipo_return - period.convertible_bond_return
         db.add(DbDynamicAttributionResult(
             fund_code=fund_code,
             calc_date=calc_dt,
@@ -2964,9 +3045,9 @@ def _persist_dynamic_attribution_result(
             interaction_return=period.interaction_effect,
             bond_return=0.0,
             cash_return=0.0,
-            convertible_bond_return=0.0,
-            ipo_return=0.0,
-            invisible_return=period.residual,
+            convertible_bond_return=period.convertible_bond_return,
+            ipo_return=period.ipo_return,
+            invisible_return=period_invisible,
             residual=period.residual,
             residual_pct=round(residual_pct, 6) if residual_pct is not None else None,
             uses_simulated_holdings=period.uses_simulated_holdings or uses_sim,

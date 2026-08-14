@@ -188,7 +188,10 @@ def _compute_concentration(
     if not holdings:
         return None, None
 
-    weights = [abs(float(h.weight_pct)) for h in holdings if h.weight_pct is not None]
+    weights = sorted(
+        (abs(float(h.weight_pct)) for h in holdings if h.weight_pct is not None),
+        reverse=True,
+    )
     if not weights:
         return None, None
 

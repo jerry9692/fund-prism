@@ -72,12 +72,46 @@ def _prepare_returns(nav_df: pd.DataFrame) -> tuple[pd.DataFrame, list[str]]:
     return data, warnings
 
 
+def _recovery_days(
+    wealth: pd.Series,
+    drawdown: pd.Series,
+    dates: pd.Series,
+) -> int | None:
+    """Calendar days from max-drawdown trough until wealth reclaims its peak.
+
+    Requirements v0.4 §6.1.4.5. Returns:
+    - ``0`` when there is no drawdown (``max_drawdown == 0``).
+    - ``None`` when the drawdown never recovered within the sample.
+    - Otherwise the number of calendar days from the trough date to the
+      first subsequent date where ``wealth >= pre_trough_peak``.
+    """
+    if drawdown.empty:
+        return None
+    if drawdown.min() >= 0:
+        return 0
+
+    trough_idx = drawdown.idxmin()
+    peak_value = float(wealth.cummax().loc[trough_idx])
+    # Search for recovery strictly AFTER the trough.
+    post_trough_wealth = wealth.loc[trough_idx:].iloc[1:]
+    recovery_mask = post_trough_wealth >= peak_value
+    if not recovery_mask.any():
+        return None
+    recovery_pos = recovery_mask.values.argmax()
+    recovery_idx = post_trough_wealth.index[recovery_pos]
+    trough_date = dates.loc[trough_idx]
+    recovery_date = dates.loc[recovery_idx]
+    return int((recovery_date - trough_date).days)
+
+
 def calculate_nav_metrics(
     nav_df: pd.DataFrame,
-    risk_free_rate: float = 0.0,
+    risk_free_rate: float | None = None,
     benchmark_nav: pd.DataFrame | None = None,
 ) -> NavMetricsResult:
     """Calculate common return and risk metrics from NAV observations."""
+    if risk_free_rate is None:
+        risk_free_rate = _settings.risk_free_rate
     data, warnings = _prepare_returns(nav_df)
     if data.empty:
         return NavMetricsResult(
@@ -116,6 +150,25 @@ def calculate_nav_metrics(
     )
     drawdown = wealth / wealth.cummax() - 1
     max_drawdown = drawdown.min()
+
+    # Win rate = fraction of months with positive return (requirements §6.1.4.5).
+    # Compound daily returns within each calendar month, then count positive
+    # months over total months. None when there is no full month of data.
+    # ``returns`` had NaN rows dropped, so align dates by returns.index.
+    returns_dates = pd.to_datetime(data.loc[returns.index, "trade_date"])
+    monthly_groups = (1 + returns).groupby(returns_dates.dt.to_period("M"))
+    monthly_returns = monthly_groups.prod() - 1
+    win_rate = (
+        float((monthly_returns > 0).sum()) / float(len(monthly_returns))
+        if len(monthly_returns) > 0
+        else None
+    )
+
+    # Recovery days = calendar days from max-drawdown trough until wealth
+    # first reclaims its pre-drawdown peak (requirements §6.1.4.5). None when
+    # the drawdown never recovered within the sample. 0 when there is no
+    # drawdown (max_drawdown == 0).
+    recovery_days = _recovery_days(wealth, drawdown, returns_dates)
 
     sharpe_ratio = (
         (annualized_return - risk_free_rate) / annualized_volatility
@@ -198,6 +251,8 @@ def calculate_nav_metrics(
             "sortino_ratio": _clean_float(sortino_ratio),
             "information_ratio": _clean_float(information_ratio),
             "benchmark_comparison": benchmark_comparison,
+            "win_rate": _clean_float(win_rate),
+            "recovery_days": recovery_days,
             "trading_days_per_year": TRADING_DAYS_PER_YEAR,
         },
         observations=observations,

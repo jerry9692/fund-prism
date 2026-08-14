@@ -50,6 +50,16 @@ class AttributionPeriod:
     # real disclosed holdings; controls field-name prefix in to_api_data().
     # [{sector, port_weight, bench_weight, port_return, bench_return,
     #   allocation, selection, interaction}]
+    convertible_bond_return: float = 0.0
+    # Per-period convertible-bond contribution (estimated). Computed from
+    # disclosed CB holdings × CB period return when CB market data is
+    # available (requirements v0.4 §6.2.3 dim 5); otherwise 0.0 and the
+    # contribution remains inside ``residual`` / ``invisible_return``.
+    ipo_return: float = 0.0
+    # Per-period IPO return contribution. Always 0.0 in the current
+    # implementation: single-fund offline IPO allotment records are not
+    # publicly available, so IPO return is unobservable and stays inside
+    # ``invisible_return`` (requirements v0.4 §6.2.3 dim 6/7).
 
 
 @dataclass
@@ -64,8 +74,8 @@ class AttributionResult:
     total_selection_effect: float
     total_interaction_effect: float
     total_residual: float
-    total_ipo_return: float = 0.0  # reserved for future IPO return estimation
-    total_convertible_bond_return: float = 0.0  # reserved for future CB return estimation
+    total_ipo_return: float = 0.0  # IPO contribution (unobservable, stays 0.0)
+    total_convertible_bond_return: float = 0.0  # CB contribution (real when CB market data available)
     total_invisible_return: float = 0.0  # residual - ipo - cb (truly unexplained)
     residual_ratio: float = 0.0  # |residual| / |active_return|
     method: str = "BHB"
@@ -77,23 +87,37 @@ class AttributionResult:
     # data, so base return / attribution-effect fields are "computed" level
     # and do NOT carry the estimated_ prefix. Residual fields are always
     # estimated regardless.
+    convertible_bond_coverage: float = 0.0
+    # Fraction (0-1) of disclosed CB weight for which a period return could
+    # be computed. 0.0 means CB return was not peeled from residual (e.g.
+    # CB daily quotes not yet integrated — see pre_phase4_plan P4.1-3).
+    convertible_bond_total_weight_pct: float = 0.0
+    # Total disclosed CB weight (% of NAV) across periods, for context.
+    ipo_return_note: str = (
+        "打新收益不可直接观测（单基金网下打新中签记录非公开），"
+        "未单独拆解，包含于隐形收益"
+    )
+    # Explicit annotation per requirements v0.4 §6.2.3 dim 6/7: IPO return
+    # must be marked as unobservable rather than silently dropped.
 
     @property
     def waterfall_data(self) -> list[dict]:
         """Period-by-period return decomposition suitable for waterfall charts.
 
         Each entry contains the full set of return components for one
-        attribution period, including equity Brinson effects (stock selection,
-        asset allocation, interaction) plus placeholders for bond/cash/IPO/
-        convertible-bond returns that are not yet decomposed at the period
-        level. ``estimated_invisible_return`` carries the per-period residual
-        that cannot be attributed to known sources.
+        attribution period: equity Brinson effects (stock selection, asset
+        allocation, interaction) plus convertible-bond / IPO / invisible
+        decompositions. ``estimated_invisible_return`` carries the per-period
+        residual that cannot be attributed to known sources.
 
-        Warnings:
-            - ``estimated_ipo_return`` and ``estimated_convertible_bond_return``
-              are initialized to 0.0 as estimated placeholders; full IPO/CB
-              return decomposition is reserved for future work.
-            - ``bond_return`` and ``cash_return`` are also 0.0 in the current
+        Notes:
+            - ``estimated_convertible_bond_return`` is the real per-period CB
+              contribution when CB market data was supplied to
+              :func:`run_attribution`; otherwise 0.0 and the contribution
+              remains inside ``estimated_invisible_return``.
+            - ``estimated_ipo_return`` is always 0.0 (unobservable); see
+              ``ipo_return_note`` on the parent result.
+            - ``bond_return`` and ``cash_return`` are 0.0 in the current
               equity-only Brinson implementation.
         """
         waterfall: list[dict] = []
@@ -107,11 +131,12 @@ class AttributionResult:
             # Fixed-income / cash not yet decomposed per-period (equity-only Brinson)
             bond_return = 0.0
             cash_return = 0.0
-            # IPO and convertible-bond returns are estimated placeholders (0.0)
-            estimated_ipo_return = 0.0
-            estimated_convertible_bond_return = 0.0
-            # Invisible (unexplained) return = per-period residual
-            estimated_invisible_return = p.residual
+            # IPO return is unobservable (always 0.0); CB return is real when
+            # CB market data was supplied, otherwise 0.0.
+            estimated_ipo_return = p.ipo_return
+            estimated_convertible_bond_return = p.convertible_bond_return
+            # Invisible (unexplained) return = residual - ipo - cb
+            estimated_invisible_return = p.residual - p.ipo_return - p.convertible_bond_return
             waterfall.append({
                 "period_label": period_label,
                 "stock_selection": round(stock_selection, 6),
@@ -149,6 +174,14 @@ class AttributionResult:
             "estimated_total_ipo_return": round(self.total_ipo_return, 6),
             "estimated_total_convertible_bond_return": round(self.total_convertible_bond_return, 6),
             "estimated_total_invisible_return": round(self.total_invisible_return, 6),
+            # CB decomposition context (requirements v0.4 §6.2.3 dim 5):
+            # coverage reveals whether CB return was actually peeled from the
+            # residual (1.0) or left inside invisible_return (0.0).
+            "estimated_convertible_bond_coverage": round(self.convertible_bond_coverage, 4),
+            "convertible_bond_total_weight_pct": round(self.convertible_bond_total_weight_pct, 4),
+            # IPO explicit annotation (requirements v0.4 §6.2.3 dim 6/7):
+            # IPO return must be marked as unobservable, not silently zero.
+            "ipo_return_note": self.ipo_return_note,
             "period_count": len(self.periods),
             "confidence": self.confidence,
             "warnings": self.warnings,
@@ -161,7 +194,8 @@ class AttributionResult:
         # - Otherwise → computed
         result["conclusion_status"] = self.get_conclusion_status()
 
-        # Per-period output uses the same prefix logic.
+        # Per-period output uses the same prefix logic. CB / IPO / invisible
+        # are always estimated regardless of holdings source.
         result["periods"] = [
             {
                 "period_start": str(p.period_start),
@@ -172,6 +206,11 @@ class AttributionResult:
                 f"{prefix}selection_effect": round(p.selection_effect, 6),
                 f"{prefix}interaction_effect": round(p.interaction_effect, 6),
                 "estimated_residual": round(p.residual, 6),
+                "estimated_convertible_bond_return": round(p.convertible_bond_return, 6),
+                "estimated_ipo_return": round(p.ipo_return, 6),
+                "estimated_invisible_return": round(
+                    p.residual - p.ipo_return - p.convertible_bond_return, 6
+                ),
             }
             for p in self.periods
         ]
@@ -361,6 +400,11 @@ def carino_linking(
             selection_effect=p.selection_effect * factor,
             interaction_effect=p.interaction_effect * factor,
             residual=p.residual * factor,
+            # CB / IPO returns are decomposed from the residual using the
+            # same Carino factor so the linked decomposition stays additive:
+            # linked_residual == linked_cb + linked_ipo + linked_invisible.
+            convertible_bond_return=p.convertible_bond_return * factor,
+            ipo_return=p.ipo_return * factor,
         ))
 
     return linked
@@ -371,6 +415,110 @@ def _compound_returns(returns) -> float:
     for value in returns:
         total *= 1.0 + value
     return total - 1.0
+
+
+# ============================================================
+# Convertible-bond return decomposition (requirements v0.4 §6.2.3 dim 5)
+# ============================================================
+
+
+def _normalize_convertible_bond_holdings(
+    cb_holdings: pd.DataFrame | None,
+) -> pd.DataFrame:
+    """Normalize disclosed CB holdings to ``[report_date, security_code, weight_pct]``.
+
+    ``weight_pct`` is normalized to percent form (e.g. 5.0 for 5% of NAV),
+    matching the ``FundDisclosedHoldings.weight_pct`` convention. Rows missing
+    a security code or weight are dropped. Returns an empty frame when input
+    is None/empty.
+
+    Decimal-weight inputs (e.g. 0.05) are converted to percent when the whole
+    batch is clearly decimal (all non-zero weights <= 1.5); genuine small
+    percent holdings within a percent portfolio are left untouched.
+    """
+    if cb_holdings is None or cb_holdings.empty:
+        return pd.DataFrame(columns=["report_date", "security_code", "weight_pct"])
+    data = cb_holdings.copy()
+    if "report_date" not in data.columns or "security_code" not in data.columns:
+        return pd.DataFrame(columns=["report_date", "security_code", "weight_pct"])
+    data["report_date"] = pd.to_datetime(data["report_date"]).dt.date
+    data["security_code"] = data["security_code"].astype(str)
+    data["weight_pct"] = pd.to_numeric(data["weight_pct"], errors="coerce")
+    data = data.dropna(subset=["security_code", "weight_pct"])
+    data = data[data["security_code"] != ""]
+    # Normalize to a single percent口径. The stored convention is percent
+    # (e.g. 5.0 for 5%), but callers may pass decimal weights (e.g. 0.05).
+    # Convert only when ALL non-zero weights are <= 1.5 (clearly decimal), so
+    # genuine small percent holdings (e.g. 0.5%) inside an otherwise percent
+    # portfolio are preserved. This mirrors the dual-tolerance intent of
+    # attribution.py:101-103 without its per-value small-weight misread.
+    weights = data["weight_pct"]
+    if not weights.empty and weights.max() <= 1.5:
+        data["weight_pct"] = weights * 100.0
+    return data[["report_date", "security_code", "weight_pct"]]
+
+
+def _compute_period_convertible_bond_return(
+    cb_holdings_period: pd.DataFrame,
+    cb_returns: pd.DataFrame | None,
+    period_start: date,
+    period_end: date,
+) -> tuple[float, float, float, int]:
+    """Compute the convertible-bond contribution for one attribution period.
+
+    Mirrors the static equity attribution logic (requirements v0.4 §6.2.3
+    dim 5): ``cb_return = Σ(weight_decimal × security_period_return)`` where
+    the period return of each CB is compounded from daily returns over
+    ``[period_start, period_end]``.
+
+    Returns
+    -------
+    (cb_return, covered_weight_pct, total_weight_pct, missing_count)
+        - ``cb_return``: weighted CB contribution for this period (decimal)
+        - ``covered_weight_pct``: sum of CB weight (%) with a usable return
+        - ``total_weight_pct``: total disclosed CB weight (%) for the period
+        - ``missing_count``: number of CB securities without a period return
+    """
+    if cb_holdings_period.empty:
+        return 0.0, 0.0, 0.0, 0
+
+    total_weight_pct = float(cb_holdings_period["weight_pct"].sum())
+    if cb_returns is None or cb_returns.empty or total_weight_pct <= 0:
+        return 0.0, 0.0, total_weight_pct, int(len(cb_holdings_period))
+
+    cr = cb_returns.copy()
+    cr["security_code"] = cr["security_code"].astype(str)
+    cr["trade_date"] = pd.to_datetime(cr["trade_date"]).dt.date
+    cr["daily_return"] = pd.to_numeric(cr["daily_return"], errors="coerce")
+    cr = cr.dropna(subset=["daily_return"])
+    cr = cr[(cr["trade_date"] >= period_start) & (cr["trade_date"] <= period_end)]
+    if cr.empty:
+        return 0.0, 0.0, total_weight_pct, int(len(cb_holdings_period))
+
+    # Per-security compounded period return
+    period_returns = (
+        cr.sort_values(["security_code", "trade_date"])
+        .groupby("security_code")["daily_return"]
+        .apply(lambda s: float((1.0 + s).prod() - 1.0) if not s.empty else None)
+        .dropna()
+    )
+
+    merged = cb_holdings_period.merge(
+        period_returns.rename("period_return"),
+        left_on="security_code",
+        right_index=True,
+        how="left",
+    )
+    usable = merged.dropna(subset=["period_return"]).copy()
+    if usable.empty:
+        return 0.0, 0.0, total_weight_pct, int(len(cb_holdings_period))
+
+    usable["weight_decimal"] = usable["weight_pct"] / 100.0
+    usable["contribution"] = usable["weight_decimal"] * usable["period_return"]
+    cb_return = float(usable["contribution"].sum())
+    covered_weight_pct = float(usable["weight_pct"].sum())
+    missing_count = int(len(cb_holdings_period) - len(usable))
+    return cb_return, covered_weight_pct, total_weight_pct, missing_count
 
 
 # ============================================================
@@ -389,6 +537,15 @@ def run_attribution(
     method: str = "BHB",
     benchmark_symbol: str | None = None,
     uses_simulated_holdings: bool = False,
+    convertible_bond_holdings: pd.DataFrame | None = None,
+    # Disclosed CB holdings: [report_date, security_code, weight_pct]
+    # (weight_pct in % of NAV). Used to peel CB return out of the residual
+    # per requirements v0.4 §6.2.3 dim 5.
+    convertible_bond_returns: pd.DataFrame | None = None,
+    # CB daily quotes: [security_code, trade_date, daily_return]. When None
+    # (e.g. CB market data not yet integrated — see pre_phase4_plan P4.1-3),
+    # CB return stays 0.0 and the contribution remains inside the residual /
+    # invisible_return, with an explicit warning.
 ) -> AttributionResult:
     """
     Run full multi-period Brinson attribution with Carino smoothing.
@@ -402,6 +559,12 @@ def run_attribution(
         the simulated-holdings algorithm (estimated) rather than real
         disclosed holdings. This controls the estimated_ prefix and
         conclusion_status in to_api_data().
+    convertible_bond_holdings / convertible_bond_returns: optional inputs
+        for the §6.2.3 dim-5 CB return decomposition. When both are
+        provided, ``estimated_convertible_bond_return`` becomes a real
+        computed value and is peeled out of the residual; otherwise CB
+        return stays 0.0 with an explicit warning so consumers never
+        mistake "0.0" for "no CB exposure".
 
     Residual ratio gate (requirements §5.2.3): if |residual| / |active_return| > 50%,
     the result is marked confidence="needs_review" with a warning.
@@ -439,10 +602,22 @@ def run_attribution(
     if "period_end" in sr.columns:
         sr["period_end"] = pd.to_datetime(sr["period_end"]).dt.date
 
+    # Normalize CB holdings once (requirements v0.4 §6.2.3 dim 5). Even
+    # when CB daily returns are unavailable we still surface the disclosed
+    # CB weight so consumers can see "fund has CB exposure, return not yet
+    # decomposed" rather than a silent 0.0.
+    cb_holdings = _normalize_convertible_bond_holdings(convertible_bond_holdings)
+    cb_returns = convertible_bond_returns
+
     # Sort report dates to compute period windows
     report_dates = sorted(hw["report_date"].unique())
 
     periods: list[AttributionPeriod] = []
+    # Track aggregate CB weight across periods for the coverage metric.
+    cb_covered_weight_pct_sum = 0.0
+    cb_total_weight_pct_sum = 0.0
+    cb_missing_count_total = 0
+    cb_period_count = 0
     for i, rp_date in enumerate(report_dates):
         hw_p = hw[hw["report_date"] == rp_date]
         sr_p = sr[sr["report_date"] == rp_date]
@@ -471,6 +646,25 @@ def run_attribution(
             period_start=p_start, period_end=p_end,
         )
         sp.uses_simulated_holdings = uses_simulated_holdings
+
+        # Peel convertible-bond return out of the residual for this period
+        # (§6.2.3 dim 5). cb_holdings for the current report date only.
+        cb_period_holdings = cb_holdings[cb_holdings["report_date"] == rp_date]
+        if not cb_period_holdings.empty:
+            cb_period_count += 1
+            cb_ret, covered_pct, total_pct, missing = (
+                _compute_period_convertible_bond_return(
+                    cb_period_holdings, cb_returns, p_start, p_end,
+                )
+            )
+            sp.convertible_bond_return = cb_ret
+            cb_covered_weight_pct_sum += covered_pct
+            cb_total_weight_pct_sum += total_pct
+            cb_missing_count_total += missing
+        # IPO return is unobservable (§6.2.3 dim 6/7): stays 0.0, see
+        # AttributionResult.ipo_return_note for the explicit annotation.
+        sp.ipo_return = 0.0
+
         periods.append(sp)
 
     if not periods:
@@ -502,11 +696,49 @@ def run_attribution(
 
     active_return = total_port - total_bench
 
-    # IPO and convertible-bond returns are reserved for future implementation.
-    # Invisible return = residual that cannot be attributed to known sources.
-    total_ipo = 0.0
-    total_cb = 0.0
+    # Convertible-bond return is now a real decomposition when CB market
+    # data was supplied; otherwise it stays 0.0 and the contribution
+    # remains inside the residual. IPO return is always 0.0 (unobservable).
+    total_cb = sum(p.convertible_bond_return for p in periods)
+    total_ipo = sum(p.ipo_return for p in periods)  # always 0.0
     total_invisible = total_res - total_ipo - total_cb
+
+    # CB coverage = fraction of disclosed CB weight for which a period
+    # return could be computed. 0.0 means CB return was not peeled.
+    cb_coverage = (
+        cb_covered_weight_pct_sum / cb_total_weight_pct_sum
+        if cb_total_weight_pct_sum > 0
+        else 0.0
+    )
+
+    # Explicit CB / IPO warnings per §6.2.3 (avoid silent 0.0).
+    if cb_period_count > 0:
+        if cb_coverage > 0:
+            warnings.append(
+                f"已剥离转债收益 {total_cb:+.4f}（覆盖披露转债权重 "
+                f"{cb_coverage:.1%}），从残差转入独立拆解项"
+            )
+            if cb_missing_count_total > 0:
+                warnings.append(
+                    f"披露转债中 {cb_missing_count_total} 条无区间行情，"
+                    f"对应贡献仍计入隐形收益"
+                )
+        else:
+            # CB holdings exist but no CB market data → must surface this
+            # so consumers don't read total_cb=0.0 as "no CB exposure".
+            warnings.append(
+                f"基金披露转债权重合计 {cb_total_weight_pct_sum:.2f}%，"
+                f"但缺少可转债日行情（见 pre_phase4_plan P4.1-3），"
+                f"转债收益未从残差剥离，包含于隐形收益"
+            )
+
+    # IPO return annotation warning — only when there's a meaningful
+    # invisible return to attribute the unobservable IPO contribution to.
+    if abs(total_invisible) > 1e-6:
+        warnings.append(
+            "打新收益不可直接观测（单基金网下打新中签记录非公开），"
+            "未单独拆解，包含于隐形收益"
+        )
 
     # Residual ratio gate (requirements §5.2.3)
     if abs(active_return) > 1e-8:
@@ -544,4 +776,6 @@ def run_attribution(
         confidence=confidence,
         warnings=warnings,
         uses_simulated_holdings=uses_simulated_holdings,
+        convertible_bond_coverage=round(cb_coverage, 6),
+        convertible_bond_total_weight_pct=round(cb_total_weight_pct_sum, 6),
     )

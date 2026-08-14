@@ -78,6 +78,9 @@ temp/
 *.tmp
 _verify.py
 
+# IDE/Agent local state
+.qoder/
+
 # User data (never commit)
 data/raw/
 data/external/

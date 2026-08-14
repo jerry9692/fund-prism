@@ -3,7 +3,7 @@
 import hashlib
 import re
 from collections.abc import Callable
-from datetime import date
+from datetime import date, timedelta
 from io import StringIO
 from time import perf_counter, sleep
 from types import ModuleType
@@ -191,6 +191,75 @@ def index_code_to_benchmark_symbol(index_code: str) -> str:
         return code.lower()
     code = code.zfill(6) if code.isdigit() else code
     return f"sz{code}" if code.startswith("399") else f"sh{code}"
+
+
+SW_INDEX_CODE_RE = re.compile(r"^(80\d{4})(\.SI)?$", re.IGNORECASE)
+
+
+def is_sw_index_symbol(symbol: str) -> bool:
+    """判断是否申万指数代码（如 801010 / 801010.SI，申万体系 80 开头）。"""
+    return bool(SW_INDEX_CODE_RE.match(str(symbol).strip()))
+
+
+def normalize_sw_index_code(symbol: str) -> str:
+    """归一化为 6 位裸代码（801010），供 AKShare 申万接口使用。"""
+    match = SW_INDEX_CODE_RE.match(str(symbol).strip())
+    if match is None:
+        raise ValueError(f"非法申万指数代码: {symbol}")
+    return match.group(1)
+
+
+def canonical_sw_index_code(symbol: str) -> str:
+    """归一化为带 .SI 后缀的存库代码（801010.SI），与申万官方代码体系一致。"""
+    return f"{normalize_sw_index_code(symbol)}.SI"
+
+
+CB_CODE_RE = re.compile(r"^(1[12]\d{4})(?:\.(SZ|SH))?$", re.IGNORECASE)
+
+
+def is_cb_code(symbol: str) -> bool:
+    """判断是否可转债代码（沪深交易所 11/12 开头 6 位，如 128039 / 110080）。"""
+    return bool(CB_CODE_RE.match(str(symbol).strip()))
+
+
+def normalize_cb_code(symbol: str) -> str:
+    """归一化为 6 位裸代码（128039），供行情接口拼接交易所前缀。"""
+    match = CB_CODE_RE.match(str(symbol).strip())
+    if match is None:
+        raise ValueError(f"非法可转债代码: {symbol}")
+    return match.group(1)
+
+
+def canonical_cb_code(symbol: str) -> str:
+    """归一化为带交易所后缀的存库代码（128039.SZ / 110080.SH）。"""
+    code = normalize_cb_code(symbol)
+    exchange = "SZ" if code.startswith("12") else "SH"
+    return f"{code}.{exchange}"
+
+
+def cb_sina_symbol(symbol: str) -> str:
+    """转换为新浪可转债行情 symbol（sz128039 / sh110080）。"""
+    code = normalize_cb_code(symbol)
+    return f"sz{code}" if code.startswith("12") else f"sh{code}"
+
+
+def _add_months(day: date, months: int) -> date:
+    """日期按月偏移（日序收敛到目标月最后一天）。"""
+    month_index = day.month - 1 + months
+    year = day.year + month_index // 12
+    month = month_index % 12 + 1
+    next_month_first = date(year + (month // 12), month % 12 + 1, 1)
+    last_day = (next_month_first - pd.Timedelta(days=1)).day
+    return date(year, month, min(day.day, last_day))
+
+
+def _json_safe_value(value: Any) -> Any:
+    """将 extra 字段值转为 JSON 可序列化原语（date→ISO 字符串、NaN→None）。"""
+    if value is None or (not isinstance(value, str) and pd.isna(value)):
+        return None
+    if isinstance(value, (date, pd.Timestamp)):
+        return value.isoformat()
+    return value
 
 
 def _manager_id_from_identity(name: str, company_name: str | None = None) -> str:
@@ -1044,6 +1113,452 @@ class AkshareAdapter(BaseDataAdapter):
     def fetch_index_members(self, symbol: str) -> FetchResult:
         """拉取中证指数最新成分目录快照。"""
         return self._fetch_index_members(symbol, include_weight=False)
+
+    def fetch_sw_index_list(self, level: int = 1) -> FetchResult:
+        """拉取申万一/二级行业指数列表，标准化为 index_main 记录。"""
+        started_at = perf_counter()
+        try:
+            if level not in (1, 2):
+                raise ValueError(f"level 仅支持 1/2，收到: {level}")
+            func = self.ak.sw_index_first_info if level == 1 else self.ak.sw_index_second_info
+            raw = pd.DataFrame(func()).rename(
+                columns={
+                    "行业代码": "index_code",
+                    "行业名称": "index_name",
+                    "上级行业": "parent_industry_name",
+                    "成份个数": "member_count",
+                    "静态市盈率": "pe_static",
+                    "TTM(滚动)市盈率": "pe_ttm",
+                    "市净率": "pb",
+                    "静态股息率": "dividend_yield",
+                }
+            )
+            data = pd.DataFrame()
+            data["index_code"] = (
+                raw["index_code"].astype(str).map(canonical_sw_index_code)
+            )
+            data["index_name"] = raw["index_name"]
+            data["index_type"] = "industry"
+            data["classification_system"] = "SW"
+            data["level"] = level
+            data["member_count"] = pd.to_numeric(raw.get("member_count"), errors="coerce")
+            valuation_columns = ["pe_static", "pe_ttm", "pb", "dividend_yield"]
+            extra_frame = raw.reindex(columns=valuation_columns).apply(pd.to_numeric, errors="coerce")
+            extras = extra_frame.to_dict(orient="records")
+            data["extra"] = [
+                {key: value for key, value in extra.items() if pd.notna(value)}
+                for extra in extras
+            ]
+            if "parent_industry_name" in raw.columns:
+                data["extra"] = [
+                    {**(extra or {}), "parent_industry_name": parent}
+                    for extra, parent in zip(
+                        data["extra"],
+                        raw.get("parent_industry_name"),
+                        strict=False,
+                    )
+                ]
+            data["parent_industry_name"] = (
+                raw["parent_industry_name"] if "parent_industry_name" in raw.columns else None
+            )
+            columns = [
+                "index_code",
+                "index_name",
+                "index_type",
+                "classification_system",
+                "level",
+                "member_count",
+                "extra",
+                "parent_industry_name",
+            ]
+            return self._success_result_from_canonical(
+                "index_main",
+                data[columns],
+                started_at,
+                source_level=DataSourceLevel.B,
+            )
+        except Exception as exc:
+            return self._error_result("index_main", started_at, exc)
+
+    def fetch_sw_index_daily(
+        self, symbol: str, start_date: date | None = None, end_date: date | None = None
+    ) -> FetchResult:
+        """拉取申万指数日行情（全量历史 + 本地日期窗口过滤 + 计算 daily_return）。"""
+        started_at = perf_counter()
+        try:
+            code = normalize_sw_index_code(symbol)
+            raw = pd.DataFrame(self.ak.index_hist_sw(symbol=code, period="day")).rename(
+                columns={
+                    "代码": "index_code",
+                    "日期": "trade_date",
+                    "开盘": "open_price",
+                    "最高": "high_price",
+                    "最低": "low_price",
+                    "收盘": "close_price",
+                    "成交量": "volume",
+                    "成交额": "amount",
+                }
+            )
+            data = pd.DataFrame(index=raw.index)
+            data["index_code"] = canonical_sw_index_code(symbol)
+            data["trade_date"] = pd.to_datetime(raw["trade_date"], errors="coerce")
+            for column in ("open_price", "high_price", "low_price", "close_price", "volume", "amount"):
+                data[column] = pd.to_numeric(raw.get(column), errors="coerce")
+            data = data.dropna(subset=["trade_date"]).sort_values("trade_date")
+            data["daily_return"] = data["close_price"].pct_change()
+            mask = pd.Series(True, index=data.index)
+            if start_date is not None:
+                mask &= data["trade_date"] >= pd.Timestamp(start_date)
+            if end_date is not None:
+                mask &= data["trade_date"] <= pd.Timestamp(end_date)
+            data = data.loc[mask]
+            data["trade_date"] = data["trade_date"].dt.strftime("%Y-%m-%d")
+            columns = [
+                "index_code",
+                "trade_date",
+                "open_price",
+                "high_price",
+                "low_price",
+                "close_price",
+                "volume",
+                "amount",
+                "daily_return",
+            ]
+            return self._success_result_from_canonical(
+                "index_daily",
+                data[columns],
+                started_at,
+                source_level=DataSourceLevel.B,
+            )
+        except Exception as exc:
+            return self._error_result("index_daily", started_at, exc)
+
+    def fetch_sw_index_constituents(self, symbol: str) -> FetchResult:
+        """拉取申万指数最新成分权重快照（含计入日期与权重%）。"""
+        started_at = perf_counter()
+        try:
+            raw = pd.DataFrame(self.ak.index_component_sw(symbol=normalize_sw_index_code(symbol))).rename(
+                columns={
+                    "证券代码": "stock_code",
+                    "证券名称": "stock_name",
+                    "最新权重": "weight_pct",
+                    "计入日期": "effective_date",
+                }
+            )
+            data = pd.DataFrame(index=raw.index)
+            data["index_code"] = canonical_sw_index_code(symbol)
+            data["effective_date"] = raw["effective_date"]
+            data["stock_code"] = raw["stock_code"].astype(str).str.zfill(6)
+            data["stock_name"] = raw.get("stock_name")
+            data["weight_pct"] = pd.to_numeric(raw.get("weight_pct"), errors="coerce")
+            columns = [
+                "index_code",
+                "effective_date",
+                "stock_code",
+                "stock_name",
+                "weight_pct",
+            ]
+            return self._success_result_from_canonical(
+                "index_constituent",
+                data[columns],
+                started_at,
+                source_level=DataSourceLevel.B,
+            )
+        except Exception as exc:
+            return self._error_result("index_constituent", started_at, exc)
+
+    # ============================================================
+    # P4.1-3 债券数据域（bond_main / bond_daily / yield_curve_daily）
+    # ============================================================
+
+    def fetch_cb_list(self) -> FetchResult:
+        """拉取可转债全量列表（东财），标准化为 bond_main 记录。"""
+        started_at = perf_counter()
+        try:
+            raw = pd.DataFrame(self.ak.bond_zh_cov()).rename(
+                columns={
+                    "债券代码": "bond_code",
+                    "债券简称": "bond_name",
+                    "申购日期": "subscription_date",
+                    "正股代码": "underlying_stock_code",
+                    "正股简称": "underlying_stock_name",
+                    "正股价": "underlying_price",
+                    "转股价": "conversion_price",
+                    "转股价值": "conversion_value",
+                    "债现价": "cb_price",
+                    "转股溢价率": "conversion_premium_rate",
+                    "发行规模": "issue_size",
+                    "中签率": "win_rate",
+                    "上市时间": "listing_date",
+                    "信用评级": "rating",
+                }
+            )
+            data = pd.DataFrame(index=raw.index)
+            data["bond_code"] = raw["bond_code"].astype(str).str.strip().map(
+                lambda code: canonical_cb_code(code) if is_cb_code(code) else None
+            )
+            data = data.dropna(subset=["bond_code"])
+            raw = raw.loc[data.index]
+            data["bond_name"] = raw.get("bond_name")
+            data["bond_type"] = "convertible"
+            data["rating"] = (
+                raw["rating"].where(raw["rating"] != "-", None)
+                if "rating" in raw.columns
+                else None
+            )
+            data["conversion_price"] = pd.to_numeric(raw.get("conversion_price"), errors="coerce")
+            data["underlying_stock_code"] = (
+                raw["underlying_stock_code"].astype(str).str.strip().str.zfill(6)
+                if "underlying_stock_code" in raw.columns
+                else None
+            )
+            data["underlying_stock_name"] = raw.get("underlying_stock_name")
+            data["listing_date"] = (
+                raw["listing_date"].where(raw["listing_date"] != "-", None)
+                if "listing_date" in raw.columns
+                else None
+            )
+            data["issue_size"] = pd.to_numeric(raw.get("issue_size"), errors="coerce")
+            extra_columns = [
+                "conversion_value",
+                "cb_price",
+                "conversion_premium_rate",
+                "underlying_price",
+                "subscription_date",
+                "win_rate",
+            ]
+            extra_frame = raw.reindex(columns=extra_columns)
+            extras = extra_frame.to_dict(orient="records")
+            data["extra"] = [
+                {
+                    key: _json_safe_value(value)
+                    for key, value in extra.items()
+                    if value != "-"
+                }
+                for extra in extras
+            ]
+            columns = [
+                "bond_code",
+                "bond_name",
+                "bond_type",
+                "rating",
+                "conversion_price",
+                "underlying_stock_code",
+                "underlying_stock_name",
+                "listing_date",
+                "issue_size",
+                "extra",
+            ]
+            return self._success_result_from_canonical(
+                "bond_main",
+                data[columns],
+                started_at,
+                source_level=DataSourceLevel.B,
+            )
+        except Exception as exc:
+            return self._error_result("bond_main", started_at, exc)
+
+    def fetch_cb_daily(
+        self, symbol: str, start_date: date | None = None, end_date: date | None = None
+    ) -> FetchResult:
+        """拉取单只可转债日行情（新浪源，全量历史 + 本地窗口过滤 + daily_return）。"""
+        started_at = perf_counter()
+        try:
+            code = canonical_cb_code(symbol)
+            raw = pd.DataFrame(
+                self.ak.bond_zh_hs_cov_daily(symbol=cb_sina_symbol(symbol))
+            ).rename(
+                columns={
+                    "date": "trade_date",
+                    "open": "open_price",
+                    "high": "high_price",
+                    "low": "low_price",
+                    "close": "close_price",
+                    "volume": "volume",
+                }
+            )
+            data = pd.DataFrame(index=raw.index)
+            data["bond_code"] = code
+            data["trade_date"] = pd.to_datetime(raw["trade_date"], errors="coerce")
+            for column in ("open_price", "high_price", "low_price", "close_price", "volume"):
+                data[column] = pd.to_numeric(raw.get(column), errors="coerce")
+            data = data.dropna(subset=["trade_date"]).sort_values("trade_date")
+            data["daily_return"] = data["close_price"].pct_change()
+            mask = pd.Series(True, index=data.index)
+            if start_date is not None:
+                mask &= data["trade_date"] >= pd.Timestamp(start_date)
+            if end_date is not None:
+                mask &= data["trade_date"] <= pd.Timestamp(end_date)
+            data = data.loc[mask]
+            data["trade_date"] = data["trade_date"].dt.strftime("%Y-%m-%d")
+            columns = [
+                "bond_code",
+                "trade_date",
+                "open_price",
+                "high_price",
+                "low_price",
+                "close_price",
+                "volume",
+                "daily_return",
+            ]
+            return self._success_result_from_canonical(
+                "bond_daily",
+                data[columns],
+                started_at,
+                source_level=DataSourceLevel.B,
+            )
+        except Exception as exc:
+            return self._error_result("bond_daily", started_at, exc)
+
+    def fetch_china_yield_curve(
+        self, start_date: date, end_date: date
+    ) -> FetchResult:
+        """拉取中债收益率曲线（国债/中短票AAA/商业银行普通债AAA），展平为长表。
+
+        数据源为中国债券信息网（yield.chinabond.com.cn），单次窗口不超过一年，
+        超窗口由调用方（update.py）分片。
+        """
+        started_at = perf_counter()
+        try:
+            raw = pd.DataFrame(
+                self.ak.bond_china_yield(
+                    start_date=start_date.strftime("%Y%m%d"),
+                    end_date=end_date.strftime("%Y%m%d"),
+                )
+            )
+            curve_map = {
+                "中债国债收益率曲线": "treasury",
+                "中债中短期票据收益率曲线(AAA)": "medium_term_note_aaa",
+                "中债商业银行普通债收益率曲线(AAA)": "commercial_bank_bond_aaa",
+            }
+            tenor_map = {
+                "3月": 0.25,
+                "6月": 0.5,
+                "1年": 1.0,
+                "3年": 3.0,
+                "5年": 5.0,
+                "7年": 7.0,
+                "10年": 10.0,
+                "30年": 30.0,
+            }
+            rows: list[dict[str, Any]] = []
+            for record in raw.to_dict(orient="records"):
+                curve_name = curve_map.get(str(record.get("曲线名称") or "").strip())
+                trade_date = record.get("日期")
+                if curve_name is None or trade_date is None:
+                    continue
+                for tenor_label, tenor_years in tenor_map.items():
+                    value = pd.to_numeric(record.get(tenor_label), errors="coerce")
+                    if pd.isna(value):
+                        continue
+                    rows.append(
+                        {
+                            "curve_name": curve_name,
+                            "trade_date": str(trade_date)[:10],
+                            "tenor_years": tenor_years,
+                            "yield_pct": float(value),
+                        }
+                    )
+            data = pd.DataFrame(
+                rows, columns=["curve_name", "trade_date", "tenor_years", "yield_pct"]
+            )
+            return self._success_result_from_canonical(
+                "yield_curve_daily",
+                data,
+                started_at,
+                source_level=DataSourceLevel.B,
+            )
+        except Exception as exc:
+            return self._error_result("yield_curve_daily", started_at, exc)
+
+    def fetch_china_credit_yield_curve(
+        self,
+        symbol: str,
+        start_date: date,
+        end_date: date,
+        *,
+        curve_name: str = "medium_term_note_aa",
+        request_interval_seconds: float = 0.3,
+    ) -> FetchResult:
+        """拉取中债收盘收益率曲线（银行间口径，如中短期票据(AA)），按月分窗。
+
+        数据源为中国货币网（chinamoney.com.cn），单次窗口不超过一个月，
+        此处按月自动分窗并汇总；用于 AAA/AA 信用利差序列构造（P4.1-3）。
+        """
+        started_at = perf_counter()
+        try:
+            frames: list[pd.DataFrame] = []
+            failed_windows: list[str] = []
+            first_error: str | None = None
+            window_start = start_date
+            first = True
+            while window_start <= end_date:
+                window_end = min(_add_months(window_start, 1), end_date)
+                if not first and request_interval_seconds > 0:
+                    sleep(request_interval_seconds)
+                first = False
+                try:
+                    frames.append(
+                        pd.DataFrame(
+                            self.ak.bond_china_close_return(
+                                symbol=symbol,
+                                period="1",
+                                start_date=window_start.strftime("%Y%m%d"),
+                                end_date=window_end.strftime("%Y%m%d"),
+                            )
+                        )
+                    )
+                except Exception as exc:
+                    failed_windows.append(f"{window_start}~{window_end}")
+                    if first_error is None:
+                        first_error = str(exc)
+                window_start = window_end + timedelta(days=1)
+            warnings: list[str] = []
+            if failed_windows:
+                # 中国货币网历史深度有限（近约 3 个月），超深窗口批量失败时聚合告警
+                warnings.append(
+                    f"{symbol} 共 {len(failed_windows)} 个窗口拉取失败"
+                    f"（{failed_windows[0]} ~ {failed_windows[-1]}）"
+                    f"，错误示例: {first_error}"
+                )
+
+            rows: list[dict[str, Any]] = []
+            if frames:
+                raw = pd.concat(frames, ignore_index=True)
+                raw = raw.drop_duplicates(subset=["日期", "期限"])
+                for record in raw.to_dict(orient="records"):
+                    trade_date = record.get("日期")
+                    tenor = pd.to_numeric(record.get("期限"), errors="coerce")
+                    value = pd.to_numeric(record.get("到期收益率"), errors="coerce")
+                    if trade_date is None or pd.isna(tenor) or pd.isna(value):
+                        continue
+                    rows.append(
+                        {
+                            "curve_name": curve_name,
+                            "trade_date": str(trade_date)[:10],
+                            "tenor_years": float(tenor),
+                            "yield_pct": float(value),
+                        }
+                    )
+            if not rows and warnings:
+                result = self._error_result(
+                    "yield_curve_daily", started_at, RuntimeError("; ".join(warnings[:5]))
+                )
+                result.warnings = warnings
+                return result
+            data = pd.DataFrame(
+                rows, columns=["curve_name", "trade_date", "tenor_years", "yield_pct"]
+            )
+            result = self._success_result_from_canonical(
+                "yield_curve_daily",
+                data,
+                started_at,
+                source_level=DataSourceLevel.B,
+            )
+            result.warnings = warnings
+            return result
+        except Exception as exc:
+            return self._error_result("yield_curve_daily", started_at, exc)
 
     def fetch_sw_industry_membership(
         self,

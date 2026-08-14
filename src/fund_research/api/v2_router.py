@@ -3670,6 +3670,11 @@ def run_trading_ability(body: TradingAbilityRequest, db: SessionDep):
                 "start_date": str(body.start_date) if body.start_date else None,
                 "end_date": str(body.end_date) if body.end_date else None,
                 "evaluation_window_days": body.evaluation_window_days,
+                # 三种假设交易收益（§6.2.4 第 3 点）存入 parameters JSON
+                "estimated_trading_return_conservative": output.estimated_trading_return_conservative,
+                "estimated_trading_return_neutral": output.estimated_trading_return_neutral,
+                "estimated_trading_return_optimistic": output.estimated_trading_return_optimistic,
+                "estimated_trading_return_range": output.estimated_trading_return_range,
             },
             confidence=output.confidence,
             conclusion_status=output.conclusion_status,

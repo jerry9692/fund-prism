@@ -47,6 +47,11 @@ UPDATE_ENTITY_ORDER = [
     "holder-structure",
     "stock-daily",
     "index-daily",
+    "industry-index",
+    "bond-main",
+    "bond-daily",
+    "yield-curve",
+    "bond-domain",
     "benchmark-members",
     "stock-industry",
     "benchmark-industry",
@@ -93,6 +98,22 @@ UPDATE_DOMAIN_ALIASES = {
     "stock-daily": "stock-daily",
     "index": "index-daily",
     "index-daily": "index-daily",
+    "industry-index": "industry-index",
+    "industry_index": "industry-index",
+    "sw-index": "industry-index",
+    "sw-industry-index": "industry-index",
+    "bond": "bond-domain",
+    "bonds": "bond-domain",
+    "bond-domain": "bond-domain",
+    "bond-main": "bond-main",
+    "cb-list": "bond-main",
+    "convertible-bond-list": "bond-main",
+    "bond-daily": "bond-daily",
+    "cb-daily": "bond-daily",
+    "convertible-bond-daily": "bond-daily",
+    "yield": "yield-curve",
+    "yield-curve": "yield-curve",
+    "bond-yield": "yield-curve",
     "benchmark": "benchmark-members",
     "benchmark-members": "benchmark-members",
     "benchmark-index-member": "benchmark-members",
@@ -120,7 +141,8 @@ UpdateEntityArg = Annotated[
             "要更新的数据类型 "
             "(sample-funds/fund-info/fund-managers/fund-manager-history/fund-scale/fund-scale-history/fund-fees/fund-nav/"
             "fund-dividends/fund-holdings/fund-industry-allocation/"
-            "fund-portfolio-change/holder-structure/stock-daily/index-daily/"
+            "fund-portfolio-change/holder-structure/stock-daily/index-daily/industry-index/"
+            "bond-main/bond-daily/yield-curve/bond-domain/"
             "benchmark-members/stock-industry/benchmark-industry/official-pdf/all)"
         )
     ),
@@ -135,7 +157,18 @@ StockCodeOption = Annotated[
 ]
 IndexSymbolOption = Annotated[
     list[str] | None,
-    typer.Option("--index-symbol", help="只更新指定指数 symbol，可重复传入"),
+    typer.Option("--index-symbol", help="只更新指定指数 symbol，可重复传入；申万行业指数支持 801010.SI / 801010"),
+]
+BondCodeOption = Annotated[
+    list[str] | None,
+    typer.Option(
+        "--bond-code",
+        help="只更新指定可转债代码，可重复传入，如 128039 / 128039.SZ；bond-daily 不传则取样本基金披露转债持仓",
+    ),
+]
+SwLevelOption = Annotated[
+    int,
+    typer.Option("--sw-level", help="industry-index 申万行业层级 1/2，默认 1（31 个一级行业）"),
 ]
 BenchmarkMembersFileOption = Annotated[
     Path | None,
@@ -331,12 +364,12 @@ def check_data(
     if sample_path.exists():
         with sample_path.open(encoding="utf-8", newline="") as f:
             sample_count = sum(1 for _ in csv.DictReader(f))
-        sample_ok = sample_count == 30
+        sample_ok = sample_count >= 30
         ok = ok and sample_ok
         table.add_row(
             "样本数量",
             "[green]OK[/]" if sample_ok else "[red]异常[/]",
-            f"{sample_count}/30",
+            f"{sample_count}/≥30",
         )
 
     quality_path = project_root / "docs" / "phase0" / "quality_baseline_summary.json"
@@ -943,6 +976,8 @@ def update(
     fund_code: FundCodeOption = None,
     stock_code: StockCodeOption = None,
     index_symbol: IndexSymbolOption = None,
+    bond_code: BondCodeOption = None,
+    sw_level: SwLevelOption = 1,
     benchmark_members_file: BenchmarkMembersFileOption = None,
     industry_symbol: IndustrySymbolOption = None,
     industry_file: IndustryFileOption = None,
@@ -964,13 +999,20 @@ def update(
     from sqlalchemy.orm import sessionmaker
 
     from fund_research.config.settings import get_settings
+    from fund_research.data.adapters.akshare import is_sw_index_symbol
     from fund_research.data.update import (
         UpdateSummary,
         backfill_fund_holding_industries,
+        disclosed_convertible_bond_codes,
         import_benchmark_validation_database,
         latest_holding_stock_codes,
         load_sample_funds,
+        resolve_sw_industry_index_symbols,
         upsert_akshare_benchmark_index_members,
+        upsert_akshare_cb_daily,
+        upsert_akshare_cb_list,
+        upsert_akshare_china_yield_curve,
+        upsert_akshare_credit_yield_curve,
         upsert_akshare_fund_dividends,
         upsert_akshare_fund_fees,
         upsert_akshare_fund_holdings,
@@ -981,7 +1023,10 @@ def update(
         upsert_akshare_fund_portfolio_changes,
         upsert_akshare_fund_scale,
         upsert_akshare_holder_structure,
+        upsert_akshare_index_constituents,
         upsert_akshare_index_daily,
+        upsert_akshare_index_main,
+        upsert_akshare_industry_index_daily,
         upsert_akshare_official_pdf_evidence,
         upsert_akshare_stock_daily,
         upsert_akshare_stock_industry_membership,
@@ -1140,41 +1185,158 @@ def update(
             selected_index_symbols = set(index_symbol) if index_symbol else set(
                 DEFAULT_STYLE_FACTORS.values()
             )
+            sw_symbols = {
+                symbol for symbol in selected_index_symbols if is_sw_index_symbol(symbol)
+            }
+            market_symbols = selected_index_symbols - sw_symbols
+            if sw_symbols:
+                # P4.1-2: 申万行业指数（801010.SI 等）走指数数据域 index_daily 表
+                summaries.append(
+                    upsert_akshare_industry_index_daily(
+                        session,
+                        sw_symbols,
+                        start_date=start_date,
+                        end_date=end_date,
+                        dry_run=dry_run,
+                    )
+                )
+            if market_symbols:
+                summaries.append(
+                    upsert_akshare_index_daily(
+                        session,
+                        market_symbols,
+                        start_date=start_date,
+                        end_date=end_date,
+                        dry_run=dry_run,
+                    )
+                )
+        if "industry-index" in selected_entities:
+            # P4.1-2: 申万行业指数数据域一键更新（主表 + 行情 + 成分权重）
+            if sw_level not in (1, 2):
+                console.print(f"[red]--sw-level 仅支持 1/2:[/] {sw_level}")
+                raise typer.Exit(code=1)
             summaries.append(
-                upsert_akshare_index_daily(
+                upsert_akshare_index_main(
                     session,
-                    selected_index_symbols,
+                    level=sw_level,
+                    dry_run=dry_run,
+                )
+            )
+            target_symbols = (
+                {symbol for symbol in set(index_symbol or []) if is_sw_index_symbol(symbol)}
+                if index_symbol
+                else None
+            )
+            if target_symbols is None:
+                target_symbols = resolve_sw_industry_index_symbols(
+                    session, level=sw_level
+                )
+            summaries.append(
+                upsert_akshare_industry_index_daily(
+                    session,
+                    target_symbols,
                     start_date=start_date,
                     end_date=end_date,
                     dry_run=dry_run,
                 )
             )
-        if "benchmark-members" in selected_entities:
-            selected_index_symbols = set(index_symbol) if index_symbol else {
-                "sh000300",
-                "sh000905",
-                "sh000852",
-            }
-            if benchmark_members_file is not None:
-                if len(selected_index_symbols) != 1:
-                    console.print("[red]--benchmark-members-file 需要配合且只配合一个 --index-symbol[/]")
-                    raise typer.Exit(code=1)
+            summaries.append(
+                upsert_akshare_index_constituents(
+                    session,
+                    target_symbols,
+                    dry_run=dry_run,
+                )
+            )
+        if "bond-main" in selected_entities:
+            summaries.append(upsert_akshare_cb_list(session, dry_run=dry_run))
+        if "bond-daily" in selected_entities or "bond-domain" in selected_entities:
+            # P4.1-3: 默认范围为样本基金披露的可转债持仓，可用 --bond-code 指定
+            selected_bond_codes = (
+                set(bond_code)
+                if bond_code
+                else disclosed_convertible_bond_codes(session, selected_codes)
+            )
+            if "bond-domain" in selected_entities:
+                summaries.append(upsert_akshare_cb_list(session, dry_run=dry_run))
+            if selected_bond_codes:
                 summaries.append(
-                    upsert_local_benchmark_index_members(
+                    upsert_akshare_cb_daily(
                         session,
-                        next(iter(selected_index_symbols)),
-                        benchmark_members_file,
+                        selected_bond_codes,
+                        start_date=start_date,
+                        end_date=end_date,
                         dry_run=dry_run,
                     )
                 )
             else:
                 summaries.append(
-                    upsert_akshare_benchmark_index_members(
+                    UpdateSummary(
+                        entity="bond_daily",
+                        source="akshare",
+                        requested=0,
+                        dry_run=dry_run,
+                        warnings=["未指定可转债代码，且样本基金无披露转债持仓"],
+                    )
+                )
+        if "yield-curve" in selected_entities or "bond-domain" in selected_entities:
+            # P4.1-3: 中债收益率曲线（国债/中短票AAA）+ 中短票AA（银行间口径），默认近 3 年
+            summaries.append(
+                upsert_akshare_china_yield_curve(
+                    session,
+                    start_date=start_date,
+                    end_date=end_date,
+                    dry_run=dry_run,
+                )
+            )
+            summaries.append(
+                upsert_akshare_credit_yield_curve(
+                    session,
+                    start_date=start_date,
+                    end_date=end_date,
+                    request_interval_seconds=max(request_interval, 0.3),
+                    dry_run=dry_run,
+                )
+            )
+        if "benchmark-members" in selected_entities:
+            requested_symbols = set(index_symbol) if index_symbol else {
+                "sh000300",
+                "sh000905",
+                "sh000852",
+            }
+            sw_symbols = {
+                symbol for symbol in requested_symbols if is_sw_index_symbol(symbol)
+            }
+            market_symbols = requested_symbols - sw_symbols
+            if benchmark_members_file is not None:
+                if len(requested_symbols) != 1:
+                    console.print("[red]--benchmark-members-file 需要配合且只配合一个 --index-symbol[/]")
+                    raise typer.Exit(code=1)
+                summaries.append(
+                    upsert_local_benchmark_index_members(
                         session,
-                        selected_index_symbols,
+                        next(iter(requested_symbols)),
+                        benchmark_members_file,
                         dry_run=dry_run,
                     )
                 )
+            else:
+                if sw_symbols:
+                    # P4.1-2: 申万行业指数成分权重走指数数据域 index_constituent 表
+                    summaries.append(
+                        upsert_akshare_index_constituents(
+                            session,
+                            sw_symbols,
+                            dry_run=dry_run,
+                        )
+                    )
+                if market_symbols:
+                    summaries.append(
+                        upsert_akshare_benchmark_index_members(
+                            session,
+                            market_symbols,
+                            dry_run=dry_run,
+                        )
+                    )
         if "stock-industry" in selected_entities:
             if industry_file is not None:
                 summaries.append(

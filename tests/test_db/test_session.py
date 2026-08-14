@@ -3,7 +3,9 @@
 from datetime import date
 from pathlib import Path
 
+import pytest
 from sqlalchemy import inspect, select, text
+from sqlalchemy.exc import IntegrityError
 
 from fund_research.db.models import (
     AlgorithmExperiment,
@@ -45,7 +47,79 @@ def test_init_db_creates_core_tables_in_sqlite(tmp_path: Path) -> None:
     assert "alembic_version" in table_names
     with engine.connect() as connection:
         version = connection.execute(text("SELECT version_num FROM alembic_version")).scalar_one()
-    assert version == "20260706_0002"
+    assert version == "20260814_0002"
+
+
+def test_init_db_creates_phase4_index_domain_tables(tmp_path: Path) -> None:
+    """P4.1-2 指数数据域三张表应随迁移创建并可 round-trip。"""
+    db_path = tmp_path / "fund_research.sqlite"
+    init_db(str(db_path))
+    engine = create_engine_from_path(str(db_path))
+
+    table_names = inspect(engine).get_table_names()
+    assert {"index_main", "index_daily", "index_constituent"} <= set(table_names)
+
+    from fund_research.db.models import IndexConstituent, IndexDaily, IndexMain
+
+    with engine.begin() as conn:
+        conn.execute(
+            IndexMain.__table__.insert().values(
+                index_code="801010.SI",
+                index_name="农林牧渔",
+                index_type="industry",
+                classification_system="SW",
+                level=1,
+                member_count=104,
+                source_name="akshare.sw_index_first_info",
+                source_level="B",
+                extra={"pe_static": 22.5},
+            )
+        )
+        conn.execute(
+            IndexDaily.__table__.insert().values(
+                index_code="801010.SI",
+                trade_date=date(2024, 1, 2),
+                close_price=1000.0,
+                daily_return=0.001,
+                source_name="akshare.index_hist_sw",
+                source_level="B",
+            )
+        )
+        conn.execute(
+            IndexConstituent.__table__.insert().values(
+                index_code="801010.SI",
+                effective_date=date(2021, 12, 13),
+                stock_code="000505",
+                stock_name="京粮控股",
+                weight_pct=0.3014,
+                source_name="akshare.index_component_sw",
+                source_level="B",
+            )
+        )
+        row = conn.execute(
+            select(IndexMain.index_name, IndexDaily.close_price, IndexConstituent.weight_pct)
+            .select_from(IndexMain)
+            .join(IndexDaily, IndexDaily.index_code == IndexMain.index_code)
+            .join(
+                IndexConstituent,
+                IndexConstituent.index_code == IndexMain.index_code,
+            )
+        ).one()
+
+    assert row.index_name == "农林牧渔"
+    assert row.close_price == 1000.0
+    assert row.weight_pct == 0.3014
+
+    # 唯一约束生效：同代码同日期重复插入应报错
+    with pytest.raises(IntegrityError), engine.begin() as conn:
+        conn.execute(
+            IndexDaily.__table__.insert().values(
+                index_code="801010.SI",
+                trade_date=date(2024, 1, 2),
+                source_name="akshare.index_hist_sw",
+                source_level="B",
+            )
+        )
 
 
 def test_init_db_creates_core_tables_in_duckdb(tmp_path: Path) -> None:

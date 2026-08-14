@@ -566,6 +566,95 @@ def test_upsert_sample_funds_can_filter_by_fund_code(
     assert funds == ["000001"]
 
 
+def _write_multi_type_sample(path: Path) -> None:
+    """Write a sample CSV with category/sub_category/expected_bond_profile columns."""
+    path.write_text(
+        "\n".join(
+            [
+                (
+                    "fund_code,short_name,company,expected_style,expected_turnover,"
+                    "added_reason,confirmed_turnover,confirmed_turnover_source,"
+                    "num_reports_available,category,sub_category,expected_bond_profile"
+                ),
+                "000001,华夏成长混合,华夏基金,均衡,低,测试,pending,pending,8,混合型,主动权益,",
+                "510300,华泰柏瑞沪深300ETF,华泰柏瑞,大盘价值,低,测试,pending,pending,0,股票型,ETF,",
+                "110020,易方达沪深300ETF联接A,易方达基金,大盘价值,低,测试,pending,pending,0,指数型,ETF联接,",
+                "100032,富国中证红利指数增强,富国基金,价值,低,测试,pending,pending,0,指数型,指数增强,",
+                "040022,华安可转债债券A,华安基金,,高,测试,pending,pending,0,债券型,可转债,可转债",
+                "000024,大摩双利增强A,摩根士丹利基金,,中,测试,pending,pending,0,债券型,二级债基,二级债基",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+
+def test_upsert_sample_funds_multi_type_sets_category_and_flags(
+    tmp_path: Path, test_session: Session
+) -> None:
+    """P4.1-1: CSV with category/sub_category columns should populate FundMain correctly."""
+    sample_path = tmp_path / "sample.csv"
+    _write_multi_type_sample(sample_path)
+
+    upsert_sample_funds(test_session, sample_path)
+
+    # Active equity: default behavior preserved
+    fund_eq = test_session.scalar(select(FundMain).where(FundMain.fund_code == "000001"))
+    assert fund_eq is not None
+    assert fund_eq.category == "混合型"
+    assert fund_eq.sub_category == "主动权益"
+    assert fund_eq.is_etf is False
+    assert fund_eq.investment_type == "均衡"
+
+    # ETF: is_etf flag set
+    fund_etf = test_session.scalar(select(FundMain).where(FundMain.fund_code == "510300"))
+    assert fund_etf is not None
+    assert fund_etf.category == "股票型"
+    assert fund_etf.sub_category == "ETF"
+    assert fund_etf.is_etf is True
+
+    # ETF联接: is_etf_feeder flag set
+    fund_conn = test_session.scalar(select(FundMain).where(FundMain.fund_code == "110020"))
+    assert fund_conn is not None
+    assert fund_conn.sub_category == "ETF联接"
+    assert fund_conn.is_etf_feeder is True
+
+    # 指数增强: is_index_enhanced flag set
+    fund_idx = test_session.scalar(select(FundMain).where(FundMain.fund_code == "100032"))
+    assert fund_idx is not None
+    assert fund_idx.sub_category == "指数增强"
+    assert fund_idx.is_index_enhanced is True
+
+    # 可转债: expected_bond_profile → investment_type
+    fund_cb = test_session.scalar(select(FundMain).where(FundMain.fund_code == "040022"))
+    assert fund_cb is not None
+    assert fund_cb.category == "债券型"
+    assert fund_cb.sub_category == "可转债"
+    assert fund_cb.investment_type == "可转债"
+
+    # 二级债基: expected_bond_profile → investment_type
+    fund_b2 = test_session.scalar(select(FundMain).where(FundMain.fund_code == "000024"))
+    assert fund_b2 is not None
+    assert fund_b2.category == "债券型"
+    assert fund_b2.sub_category == "二级债基"
+    assert fund_b2.investment_type == "二级债基"
+
+
+def test_upsert_sample_funds_backward_compatible_without_category_columns(
+    tmp_path: Path, test_session: Session
+) -> None:
+    """Old CSV without category/sub_category columns should fall back to defaults."""
+    sample_path = tmp_path / "sample.csv"
+    _write_sample(sample_path)  # old format, no category columns
+
+    upsert_sample_funds(test_session, sample_path)
+
+    fund = test_session.scalar(select(FundMain).where(FundMain.fund_code == "000001"))
+    assert fund is not None
+    assert fund.category == "混合型"
+    assert fund.sub_category == "主动权益"
+    assert fund.is_etf is False
+
+
 def test_upsert_akshare_fund_info_writes_profile_company_and_snapshot(
     test_session: Session,
 ) -> None:

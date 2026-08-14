@@ -19,6 +19,7 @@ import pandas as pd
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from fund_research.config.settings import get_settings
 from fund_research.db.models import (
     FundDisclosedHoldings,
     FundManagerTenure,
@@ -100,7 +101,7 @@ def compute_alpha(db: Session, fund_code: str, as_of_date: date | None = None) -
                 # Align dates
                 aligned = pd.DataFrame({"fund": fund_returns, "bench": bench_returns}).dropna()
                 if len(aligned) >= 20:
-                    risk_free_daily = 0.02 / 252  # 2% annualized
+                    risk_free_daily = get_settings().risk_free_rate / 252
                     excess_fund = aligned["fund"] - risk_free_daily
                     excess_bench = aligned["bench"] - risk_free_daily
 
