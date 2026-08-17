@@ -1513,31 +1513,84 @@ def screen_funds(
 @router.get("/funds/search")
 def search_funds(
     db: SessionDep,
-    q: str = Query(..., min_length=1, max_length=50, description="搜索关键词（基金代码或名称）"),
+    q: str = Query(..., min_length=1, max_length=50, description="搜索关键词（基金代码/名称/经理/公司/重仓股）"),
     limit: int = Query(10, ge=1, le=50),
 ) -> APIResponse[dict]:
-    """按基金代码或名称模糊搜索，返回匹配列表（用于搜索框自动补全）。"""
+    """基金检索（P4.3-4，§6.3.1）：代码/简称/全称模糊匹配，另支持
+    基金经理、基金公司、重仓股（名称或代码）关键词检索，返回匹配列表。"""
     started_at = perf_counter()
     try:
         pattern = f"%{q}%"
-        stmt = (
-            select(FundMain)
-            .where(
-                or_(
-                    FundMain.fund_code.ilike(pattern),
-                    FundMain.short_name.ilike(pattern),
-                    FundMain.full_name.ilike(pattern),
+
+        # P4.3-4：扩展维度先解析为 fund_code / company_id 集合
+        manager_codes = set(
+            db.scalars(
+                select(FundManagerTenure.fund_code)
+                .join(
+                    FundManager,
+                    FundManagerTenure.manager_id == FundManager.manager_id,
                 )
-            )
-            .limit(limit)
+                .where(FundManager.name.ilike(pattern))
+            ).all()
         )
+        company_ids = set(
+            db.scalars(
+                select(FundCompany.id).where(
+                    or_(
+                        FundCompany.name.ilike(pattern),
+                        FundCompany.short_name.ilike(pattern),
+                    )
+                )
+            ).all()
+        )
+        # P4.3 审计优化：重仓股匹配限定最近两期披露（避免全表双 ILIKE 扫描），
+        # 证券代码用前缀匹配（代码从头输入）
+        recent_report_dates = db.scalars(
+            select(FundDisclosedHoldings.report_date)
+            .distinct()
+            .order_by(FundDisclosedHoldings.report_date.desc())
+            .limit(2)
+        ).all()
+        holding_stmt = select(FundDisclosedHoldings.fund_code).where(
+            or_(
+                FundDisclosedHoldings.security_name.ilike(pattern),
+                FundDisclosedHoldings.security_code.ilike(f"{q}%"),
+            )
+        )
+        if recent_report_dates:
+            holding_stmt = holding_stmt.where(
+                FundDisclosedHoldings.report_date.in_(recent_report_dates)
+            )
+        holding_codes = set(db.scalars(holding_stmt.distinct()).all())
+
+        conditions = [
+            FundMain.fund_code.ilike(pattern),
+            FundMain.short_name.ilike(pattern),
+            FundMain.full_name.ilike(pattern),
+        ]
+        if company_ids:
+            conditions.append(FundMain.fund_company_id.in_(company_ids))
+        extended_codes = manager_codes | holding_codes
+        if extended_codes:
+            conditions.append(FundMain.fund_code.in_(extended_codes))
+
+        stmt = select(FundMain).where(or_(*conditions)).limit(limit)
         rows = db.scalars(stmt).all()
+
+        def _match_source(code: str) -> str:
+            if code in manager_codes:
+                return "manager"
+            if code in holding_codes:
+                return "holding"
+            return "fund"
+
         results = [
             {
                 "fund_code": r.fund_code,
                 "short_name": r.short_name,
                 "full_name": r.full_name,
                 "fund_type": r.category,
+                "match_source": _match_source(r.fund_code),
             }
             for r in rows
         ]
@@ -1558,7 +1611,7 @@ def search_funds(
                     source="fund_main",
                     source_level=DataSourceLevel.LOCAL,
                     data_summary=(
-                        f"按关键词 '{q}' 模糊搜索基金主表，匹配 {len(results)} 条"
+                        f"按关键词 '{q}' 检索基金/经理/公司/重仓股，匹配 {len(results)} 条"
                     ),
                     confidence=ConfidenceLevel.MEDIUM,
                     conclusion_status=ConclusionStatus.FACT,

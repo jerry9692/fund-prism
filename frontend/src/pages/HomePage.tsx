@@ -240,6 +240,9 @@ export default function HomePage() {
   const recentAnomalies = asArray(algoAlerts.recent).map((a) => asObject(a));
   const byCategory = asObject(marketOverview.by_category);
   const totalFunds = asCount(marketOverview.total_funds);
+  // P4.3-3：市场环境 — 宽基指数涨跌 + 因子趋势（§6.3.8）
+  const indexPerformance = asArray(marketOverview.index_performance).map((p) => asObject(p));
+  const factorTrends = asArray(marketOverview.factor_trends).map((t) => asObject(t));
 
   const today = new Date().toLocaleDateString("zh-CN", {
     year: "numeric",
@@ -375,6 +378,84 @@ export default function HomePage() {
               ))
             )}
           </div>
+
+          {/* P4.3-3：市场环境 — 指数行情 + 因子趋势 */}
+          {(indexPerformance.length > 0 || factorTrends.length > 0) && (
+            <div className="grid grid-2" style={{ marginTop: "var(--space-4)" }}>
+              <div>
+                <div className="text-sm font-semibold mb-2">宽基指数</div>
+                {indexPerformance.length === 0 ? (
+                  <div className="text-sm text-tertiary">暂无指数行情，请先 update index-daily</div>
+                ) : (
+                  <div className="flex flex-col gap-2">
+                    {indexPerformance.map((p) => {
+                      const c1m = typeof p.change_1m_pct === "number" ? p.change_1m_pct : null;
+                      const c3m = typeof p.change_3m_pct === "number" ? p.change_3m_pct : null;
+                      return (
+                        <div
+                          key={asString(p.symbol)}
+                          className="flex items-center justify-between"
+                          style={{
+                            padding: "var(--space-2) var(--space-3)",
+                            background: "var(--surface-raised)",
+                            border: "1px solid var(--border-hairline)",
+                            borderRadius: "var(--radius-sm)",
+                          }}
+                        >
+                          <div>
+                            <div className="text-sm">{asString(p.name)}</div>
+                            <div className="text-xs text-tertiary mono">
+                              截至 {asString(p.last_trade_date)}
+                            </div>
+                          </div>
+                          <div className="flex gap-4 mono text-sm">
+                            <span style={{ color: c1m !== null && c1m < 0 ? "var(--accent-negative, #c0392b)" : undefined }}>
+                              1月 {c1m !== null ? `${c1m > 0 ? "+" : ""}${c1m.toFixed(2)}%` : "—"}
+                            </span>
+                            <span style={{ color: c3m !== null && c3m < 0 ? "var(--accent-negative, #c0392b)" : undefined }}>
+                              3月 {c3m !== null ? `${c3m > 0 ? "+" : ""}${c3m.toFixed(2)}%` : "—"}
+                            </span>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+              <div>
+                <div className="text-sm font-semibold mb-2">因子趋势（近 20 交易日）</div>
+                {factorTrends.length === 0 ? (
+                  <div className="text-sm text-tertiary">暂无因子数据，请先 update factor-return</div>
+                ) : (
+                  <div className="flex flex-col gap-2">
+                    {factorTrends.map((t) => {
+                      const cum = typeof t.cumulative_return_pct === "number" ? t.cumulative_return_pct : null;
+                      return (
+                        <div
+                          key={asString(t.factor_name)}
+                          className="flex items-center justify-between"
+                          style={{
+                            padding: "var(--space-2) var(--space-3)",
+                            background: "var(--surface-raised)",
+                            border: "1px solid var(--border-hairline)",
+                            borderRadius: "var(--radius-sm)",
+                          }}
+                        >
+                          <div className="text-sm mono">{asString(t.factor_name)}</div>
+                          <div
+                            className="mono text-sm"
+                            style={{ color: cum !== null && cum < 0 ? "var(--accent-negative, #c0392b)" : undefined }}
+                          >
+                            {cum !== null ? `${cum > 0 ? "+" : ""}${cum.toFixed(2)}%` : "—"}
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
         </div>
       )}
 

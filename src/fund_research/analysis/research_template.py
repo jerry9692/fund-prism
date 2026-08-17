@@ -20,19 +20,28 @@ from datetime import date, datetime
 from time import perf_counter
 from typing import Any
 
+import pandas as pd
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from fund_research.analysis.anomaly import scan_anomalies
 from fund_research.analysis.fingerprint import generate_fingerprint
+from fund_research.analysis.holdings import analyze_disclosed_holdings
+from fund_research.analysis.nav_metrics import calculate_nav_metrics
 from fund_research.analysis.reverse_lookup import reverse_lookup
 from fund_research.analysis.similarity import find_similar_funds
-from fund_research.db.models import FundMain, FundManagerTenure, StyleExposureResult
+from fund_research.db.models import (
+    FundDisclosedHoldings,
+    FundMain,
+    FundManagerTenure,
+    FundNAV,
+    StyleExposureResult,
+)
 from fund_research.db.models_phase2 import ScoringResult
 from fund_research.db.models_phase3 import ResearchTemplate, TemplateRunRecord
 
 ALGORITHM_NAME = "research_template"
-ALGORITHM_VERSION = "0.1.0"
+ALGORITHM_VERSION = "0.2.0"
 
 
 # ============================================================
@@ -151,6 +160,50 @@ BUILTIN_TEMPLATES: dict[str, dict[str, Any]] = {
                     "name": "基金详情查询",
                     "tool": "fund_detail_query",
                     "params": {},
+                },
+            ],
+        },
+    },
+    # P4.3-2：§12.3 点名的"持仓变化"与"风险扫描"模板
+    "holding_change_watch": {
+        "template_id": "holding_change_watch",
+        "name": "持仓变化监控",
+        "description": "对比基金相邻两期披露持仓的增减持变化，并结合指纹持仓特征跟踪调仓行为。",
+        "definition": {
+            "steps": [
+                {
+                    "name": "持仓变化分析",
+                    "tool": "holding_change_query",
+                    "params": {},
+                },
+                {
+                    "name": "指纹持仓特征",
+                    "tool": "fingerprint",
+                    "params": {},
+                },
+            ],
+        },
+    },
+    "risk_scan": {
+        "template_id": "risk_scan",
+        "name": "风险扫描",
+        "description": "计算基金回撤/修复天数等风险指标，并扫描集中度与持有人结构异常。",
+        "definition": {
+            "steps": [
+                {
+                    "name": "净值风险指标",
+                    "tool": "nav_risk_metrics",
+                    "params": {},
+                },
+                {
+                    "name": "异常扫描",
+                    "tool": "anomaly_scan",
+                    "params": {
+                        "rules": [
+                            "concentration_anomaly",
+                            "holder_structure_anomaly",
+                        ]
+                    },
                 },
             ],
         },
@@ -535,6 +588,100 @@ def _dispatch_fund_detail_query(
     }
 
 
+def _dispatch_holding_change(
+    db: Session, inputs: dict[str, Any], params: dict[str, Any]
+) -> dict[str, Any]:
+    """相邻两期披露持仓增减持对比（P4.3-2 持仓变化模板）。"""
+    fund_code = inputs.get("fund_code")
+    if not fund_code:
+        return {"note": "missing required input: fund_code"}
+    rows = db.scalars(
+        select(FundDisclosedHoldings)
+        .where(FundDisclosedHoldings.fund_code == fund_code)
+        .order_by(FundDisclosedHoldings.report_date.desc())
+    ).all()
+    if not rows:
+        return {"note": f"no disclosed holdings for fund_code={fund_code}"}
+    report_dates = sorted({r.report_date for r in rows if r.report_date}, reverse=True)
+    latest = report_dates[0]
+    previous = report_dates[1] if len(report_dates) > 1 else None
+
+    def _to_frame(target: date):
+        return pd.DataFrame(
+            [
+                {
+                    "report_date": r.report_date,
+                    "security_code": r.security_code,
+                    "security_name": r.security_name,
+                    "weight_pct": r.weight_pct,
+                    "rank_in_holdings": r.rank_in_holdings,
+                    "asset_type": r.asset_type,
+                    "industry": r.industry,
+                }
+                for r in rows
+                if r.report_date == target
+            ]
+        )
+
+    result = analyze_disclosed_holdings(
+        _to_frame(latest),
+        _to_frame(previous) if previous else None,
+    )
+    return {
+        "fund_code": fund_code,
+        "report_date": str(latest),
+        "previous_report_date": str(previous) if previous else None,
+        "holding_changes": result.holding_changes,
+        "change_summary": result.change_summary,
+        "warnings": result.warnings,
+    }
+
+
+def _dispatch_nav_risk_metrics(
+    db: Session, inputs: dict[str, Any], params: dict[str, Any]
+) -> dict[str, Any]:
+    """回撤/修复天数等净值风险指标（P4.3-2 风险扫描模板）。"""
+    fund_code = inputs.get("fund_code")
+    if not fund_code:
+        return {"note": "missing required input: fund_code"}
+    rows = db.scalars(
+        select(FundNAV)
+        .where(FundNAV.fund_code == fund_code)
+        .order_by(FundNAV.trade_date)
+    ).all()
+    if not rows:
+        return {"note": f"no nav data for fund_code={fund_code}"}
+    nav_df = pd.DataFrame(
+        [
+            {
+                "trade_date": r.trade_date,
+                "unit_nav": r.unit_nav,
+                "daily_return": r.daily_return,
+            }
+            for r in rows
+        ]
+    )
+    result = calculate_nav_metrics(nav_df)
+    data = result.to_data()
+    # 风险扫描只关注风险类指标，控制输出体积
+    risk_keys = (
+        "max_drawdown",
+        "recovery_days",
+        "annualized_volatility",
+        "sharpe_ratio",
+        "calmar_ratio",
+    )
+    metrics = data.get("metrics", {})
+    return {
+        "fund_code": fund_code,
+        "risk_metrics": {k: metrics.get(k) for k in risk_keys},
+        "observations": data.get("observations"),
+        "start_date": data.get("start_date"),
+        "end_date": data.get("end_date"),
+        "warnings": data.get("warnings", []),
+    }
+
+
 # Tool name -> handler function mapping
 _STEP_DISPATCHERS: dict[
     str, Callable[[Session, dict[str, Any], dict[str, Any]], dict[str, Any]]
@@ -549,6 +696,8 @@ _STEP_DISPATCHERS: dict[
     "fund_list_by_manager": _dispatch_fund_list_by_manager,
     "scoring_summary": _dispatch_scoring_summary,
     "fund_detail_query": _dispatch_fund_detail_query,
+    "holding_change_query": _dispatch_holding_change,
+    "nav_risk_metrics": _dispatch_nav_risk_metrics,
 }
 
 

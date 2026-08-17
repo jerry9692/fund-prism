@@ -23,7 +23,7 @@ from fund_research.db.models_phase3 import AnomalyRecord, PoolAlertRecord
 
 def test_algorithm_name_and_version():
     assert ALGORITHM_NAME == "dashboard"
-    assert ALGORITHM_VERSION == "0.1.0"
+    assert ALGORITHM_VERSION == "0.2.0"
 
 
 def test_dashboard_data_to_data_returns_all_panels():
@@ -289,6 +289,73 @@ def test_gather_market_overview_with_data(test_session):
     assert result["by_category"]["股票型"] == 1
     assert result["by_operation_mode"]["开放式"] == 2
     assert result["by_operation_mode"]["封闭式"] == 1
+
+
+# ============================================================
+# P4.3-3: 市场环境面板 — 指数行情 + 因子趋势（§6.3.8）
+# ============================================================
+
+
+def test_market_overview_index_performance_from_stock_daily(test_session):
+    """宽基指数涨跌应由 stock_daily 收盘价推导（P4.1-2 数据域）。"""
+    from datetime import timedelta
+
+    from fund_research.db.models import StockDaily
+
+    db = test_session
+    start = date(2026, 8, 1)
+    # 22 个交易日：前 21 天 4000 点，最后 1 天 4200 点
+    for i in range(22):
+        db.add(StockDaily(
+            stock_code="sh000300",
+            trade_date=start + timedelta(days=i),
+            close_price=4000.0 if i < 21 else 4200.0,
+        ))
+    db.flush()
+
+    result = gather_market_overview(db)
+
+    perf = {p["symbol"]: p for p in result["index_performance"]}
+    assert "sh000300" in perf
+    # 1 月（21 交易日）基线为 4000 → 4200：+5%
+    assert perf["sh000300"]["change_1m_pct"] == 5.0
+    assert perf["sh000300"]["last_close"] == 4200.0
+    # 未入库的指数不出现
+    assert "sh000905" not in perf
+
+
+def test_market_overview_factor_trends_from_factor_return(test_session):
+    """因子趋势应取 factor_return 近 20 交易日累计（P4.1-5 数据域）。"""
+    from datetime import timedelta
+
+    from fund_research.db.models_phase4 import FactorReturn
+
+    db = test_session
+    start = date(2026, 8, 1)
+    # 3 天各 +1%：累计 ≈ 3.03%
+    for i in range(3):
+        db.add(FactorReturn(
+            factor_name="style_large_cap",
+            trade_date=start + timedelta(days=i),
+            factor_return=0.01,
+            source_name="test",
+            source_level="LOCAL",
+        ))
+    db.flush()
+
+    result = gather_market_overview(db)
+
+    trends = {t["factor_name"]: t for t in result["factor_trends"]}
+    assert "style_large_cap" in trends
+    assert trends["style_large_cap"]["cumulative_return_pct"] == 3.0301
+    assert trends["style_large_cap"]["observations"] == 3
+
+
+def test_market_overview_empty_db_has_empty_environment(test_session):
+    """空库时指数/因子环境为空列表，不报错。"""
+    result = gather_market_overview(test_session)
+    assert result["index_performance"] == []
+    assert result["factor_trends"] == []
 
 
 # ============================================================

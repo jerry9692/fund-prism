@@ -4721,6 +4721,14 @@ class ReverseLookupRequest(BaseModel):
     scope_id: str | None = None
     method: str = Field(default="weighted", pattern="^(disclosed|simulated|weighted)$")
     top_n: int = Field(default=20, ge=1, le=100)
+    # P4.3-1：披露持仓时间口径（§6.2.10），仅影响 disclosed/weighted
+    time_range: str = Field(
+        default="latest_report",
+        pattern="^(latest_report|recent_1y_avg|specified_date)$",
+    )
+    report_date: date | None = Field(
+        default=None, description="specified_date 口径的目标报告期"
+    )
 
 
 @v2_router.post("/analysis/reverse-lookup", response_model=APIResponse[dict])
@@ -4740,6 +4748,8 @@ def reverse_lookup_endpoint(
         "scope_id": request.scope_id,
         "method": request.method,
         "top_n": request.top_n,
+        "time_range": request.time_range,
+        "report_date": str(request.report_date) if request.report_date else None,
     }
     try:
         result = reverse_lookup(
@@ -4749,6 +4759,8 @@ def reverse_lookup_endpoint(
             fund_scope=request.fund_scope,
             scope_id=request.scope_id,
             top_n=request.top_n,
+            time_range=request.time_range,
+            report_date=request.report_date,
         )
         persist_reverse_lookup(
             db,
@@ -4757,6 +4769,7 @@ def reverse_lookup_endpoint(
             request.fund_scope,
             request.scope_id,
             request.method,
+            time_range=request.time_range,
         )
         db.commit()
 
@@ -4786,6 +4799,7 @@ def reverse_lookup_endpoint(
                     "stock_coverage": result["stock_coverage"],
                     "method": result["method"],
                     "fund_count": result["fund_count"],
+                    "time_range": result["time_range"],
                 },
                 metadata={
                     "tool": REVERSE_LOOKUP_NAME,

@@ -27,12 +27,13 @@ from typing import Any
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from fund_research.db.models import FundMain, FundNAV
+from fund_research.db.models import FundMain, FundNAV, StockDaily
 from fund_research.db.models_phase3 import AnomalyRecord, PoolAlertRecord
-from fund_research.utils import nav_value, utc_now
+from fund_research.db.models_phase4 import FactorReturn
+from fund_research.utils import nav_value, safe_float, utc_now
 
 ALGORITHM_NAME = "dashboard"
-ALGORITHM_VERSION = "0.1.0"
+ALGORITHM_VERSION = "0.2.0"
 
 
 @dataclass
@@ -281,9 +282,11 @@ def gather_ai_alerts(db: Session) -> dict[str, Any]:
 
 
 def gather_market_overview(db: Session) -> dict[str, Any]:
-    """Gather market overview: total fund count and category distribution.
+    """Gather market overview: fund counts + index/factor environment.
 
-    Returns total fund count, breakdown by category and by operation mode.
+    P4.3-3（§6.3.8 市场环境）：除基金数量/类别统计外，接入 P4.1-2 宽基
+    指数行情（stock_daily 收盘价推导涨跌）与 P4.1-5 因子收益（factor_return
+    近 20 交易日累计）。
     """
     total_funds = db.scalar(select(func.count(FundMain.id))) or 0
 
@@ -303,7 +306,96 @@ def gather_market_overview(db: Session) -> dict[str, Any]:
         "total_funds": total_funds,
         "by_category": by_category,
         "by_operation_mode": by_operation_mode,
+        "index_performance": _gather_index_performance(db),
+        "factor_trends": _gather_factor_trends(db),
     }
+
+
+# 市场环境宽基指数（P4.3-3，行情存 stock_daily，代码为 benchmark symbol）
+MARKET_INDEX_SYMBOLS = {
+    "sh000300": "沪深300",
+    "sh000905": "中证500",
+    "sh000852": "中证1000",
+}
+
+
+def _index_change_pct(rows: list, days: int) -> float | None:
+    """收盘价序列推导区间涨跌幅（%，缺样本返回 None）。"""
+    if len(rows) < 2:
+        return None
+    latest = safe_float(rows[-1].close_price)
+    # 回退 days 个交易日（不足则取最早点）
+    baseline_row = rows[-1 - min(days, len(rows) - 1)]
+    baseline = safe_float(baseline_row.close_price)
+    if not latest or not baseline:
+        return None
+    return round((latest / baseline - 1.0) * 100.0, 4)
+
+
+def _gather_index_performance(db: Session) -> list[dict[str, Any]]:
+    """宽基指数近 1 月（21 交易日）/ 3 月（63 交易日）涨跌。"""
+    performance: list[dict[str, Any]] = []
+    for symbol, name in MARKET_INDEX_SYMBOLS.items():
+        rows = db.scalars(
+            select(StockDaily)
+            .where(StockDaily.stock_code == symbol)
+            .order_by(StockDaily.trade_date.desc())
+            .limit(64)
+        ).all()
+        rows = list(reversed(rows))
+        if not rows:
+            continue
+        performance.append(
+            {
+                "symbol": symbol,
+                "name": name,
+                "change_1m_pct": _index_change_pct(rows, 21),
+                "change_3m_pct": _index_change_pct(rows, 63),
+                "last_close": safe_float(rows[-1].close_price),
+                "last_trade_date": str(rows[-1].trade_date),
+            }
+        )
+    return performance
+
+
+# 市场环境因子趋势展示的因子集（P4.3-3，全量见 models_phase4.FACTOR_NAMES）
+MARKET_FACTOR_NAMES = (
+    "style_large_cap",
+    "style_small_cap",
+    "style_growth",
+    "style_value",
+    "bond_rate",
+    "bond_credit_aaa",
+    "bond_convertible",
+)
+
+
+def _gather_factor_trends(db: Session, lookback_days: int = 20) -> list[dict[str, Any]]:
+    """因子近 20 交易日累计收益（factor_return，P4.1-5 数据域）。"""
+    trends: list[dict[str, Any]] = []
+    for factor_name in MARKET_FACTOR_NAMES:
+        rows = db.scalars(
+            select(FactorReturn)
+            .where(FactorReturn.factor_name == factor_name)
+            .order_by(FactorReturn.trade_date.desc())
+            .limit(lookback_days)
+        ).all()
+        if not rows:
+            continue
+        cumulative = 1.0
+        for row in rows:
+            ret = safe_float(row.factor_return)
+            if ret is not None:
+                cumulative *= 1.0 + ret
+        trends.append(
+            {
+                "factor_name": factor_name,
+                "cumulative_return_pct": round((cumulative - 1.0) * 100.0, 4),
+                "observations": len(rows),
+                "last_trade_date": str(rows[0].trade_date),
+            }
+        )
+    return trends
 
 
 # ============================================================

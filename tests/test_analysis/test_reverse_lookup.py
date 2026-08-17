@@ -460,3 +460,146 @@ def test_persist_result_hash_consistent(test_session):
 
     expected_hash = _hash_stock_codes(["600000", "000001"])
     assert row.stock_codes_hash == expected_hash
+
+
+# ============================================================
+# P4.3-1: 披露时间口径（§6.2.10 输入第 4 条）
+# ============================================================
+
+
+def _seed_multi_period_holdings(db) -> None:
+    """两期披露持仓：F001 在 600000 上 5% → 8%（加仓）。"""
+    _add_disclosed_holding(db, "F001", date(2025, 12, 31), "600000", 5.0)
+    _add_disclosed_holding(db, "F001", date(2026, 6, 30), "600000", 8.0)
+    db.flush()
+
+
+def test_disclosed_time_range_latest_report_default(test_session):
+    _seed_multi_period_holdings(test_session)
+
+    results = reverse_lookup_disclosed(test_session, ["600000"])
+
+    assert len(results) == 1
+    assert results[0]["total_exposure"] == pytest.approx(8.0)
+    assert results[0]["report_date"] == "2026-06-30"
+    assert results[0]["periods_used"] == 1
+    # 历史变化：8% − 5%
+    assert results[0]["exposure_change_vs_prev"] == pytest.approx(3.0)
+
+
+def test_disclosed_time_range_recent_1y_avg(test_session):
+    _seed_multi_period_holdings(test_session)
+
+    results = reverse_lookup_disclosed(
+        test_session, ["600000"], time_range="recent_1y_avg"
+    )
+
+    assert len(results) == 1
+    # (5 + 8) / 2
+    assert results[0]["total_exposure"] == pytest.approx(6.5)
+    assert results[0]["periods_used"] == 2
+
+
+def test_disclosed_time_range_specified_date(test_session):
+    _seed_multi_period_holdings(test_session)
+
+    results = reverse_lookup_disclosed(
+        test_session,
+        ["600000"],
+        time_range="specified_date",
+        report_date=date(2026, 1, 15),
+    )
+
+    assert len(results) == 1
+    # 不晚于 2026-01-15 的最近一期为 2025-12-31
+    assert results[0]["total_exposure"] == pytest.approx(5.0)
+    assert results[0]["report_date"] == "2025-12-31"
+    # 无更早披露期 → 历史变化 None
+    assert results[0]["exposure_change_vs_prev"] is None
+
+
+def test_disclosed_time_range_specified_date_requires_report_date(test_session):
+    with pytest.raises(ValueError, match="report_date"):
+        reverse_lookup_disclosed(
+            test_session, ["600000"], time_range="specified_date"
+        )
+
+
+def test_disclosed_time_range_unknown_raises(test_session):
+    with pytest.raises(ValueError, match="时间口径"):
+        reverse_lookup_disclosed(test_session, ["600000"], time_range="bad_range")
+
+
+def test_reverse_lookup_main_passes_time_range_and_persists(test_session):
+    _seed_multi_period_holdings(test_session)
+    test_session.add(
+        FundMain(
+            fund_code="F001", short_name="测试基金", full_name="测试基金全称",
+            category="股票型", sub_category="主动权益",
+        )
+    )
+    test_session.commit()
+
+    out = reverse_lookup(
+        test_session, ["600000"], method="disclosed", time_range="recent_1y_avg"
+    )
+
+    assert out["time_range"] == "recent_1y_avg"
+    assert out["results"][0]["total_exposure"] == pytest.approx(6.5)
+
+
+# ============================================================
+# P4.3-1: §6.2.10 输出字段补全（名称/公司/经理/同类排名）
+# ============================================================
+
+
+def test_enrich_fund_details_output_fields(test_session):
+    from fund_research.db.models import FundManager, FundManagerTenure
+
+    db = test_session
+    _seed_multi_period_holdings(db)
+    db.add(
+        FundMain(
+            fund_code="F001", short_name="测试基金", full_name="测试基金全称",
+            category="股票型", sub_category="主动权益",
+        )
+    )
+    db.add(FundManager(manager_id="M1", name="张三"))
+    db.add(FundManagerTenure(
+        manager_id="M1", fund_code="F001", start_date=date(2020, 1, 1),
+        is_current=True,
+    ))
+    db.commit()
+
+    out = reverse_lookup(db, ["600000"], method="disclosed")
+    row = out["results"][0]
+
+    assert row["fund_name"] == "测试基金"
+    assert row["manager_names"] == ["张三"]
+    assert row["sub_category"] == "主动权益"
+    # 同类只有一只 → k/N 排名 1/1
+    assert row["rank_in_category_1y"] in ("1/1", None)
+    # fund_company 无关联公司时为 None（不报错）
+    assert "fund_company" in row
+
+
+def test_weighted_warns_when_disclosed_outside_window(test_session):
+    """P4.3 审计修复：有披露持仓但时间口径无匹配而被 simulated 填充时附降级说明。"""
+    db = test_session
+    # F002 披露持仓只在 2024-06-30（近一年窗口外）
+    _add_disclosed_holding(db, "F002", date(2024, 6, 30), "600000", 4.0)
+    # F002 另有模拟持仓命中
+    db.add(_make_simulated(
+        "F002", date(2026, 8, 1),
+        [{"stock_code": "600000", "estimated_weight": 0.04}],
+        tracking_error=0.02,
+    ))
+    db.commit()
+
+    results = reverse_lookup_weighted(
+        db, ["600000"], time_range="recent_1y_avg"
+    )
+
+    row = next(r for r in results if r["fund_code"] == "F002")
+    assert row["source"] == "estimated"
+    assert any("时间口径" in w for w in row.get("warnings", []))

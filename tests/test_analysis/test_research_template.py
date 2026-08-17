@@ -130,8 +130,8 @@ def _create_manager_tenure(db, fund_code="000001", manager_id="M001"):
 
 
 def test_builtin_templates_count():
-    """BUILTIN_TEMPLATES should have exactly 5 templates."""
-    assert len(BUILTIN_TEMPLATES) == 5
+    """BUILTIN_TEMPLATES should have exactly 7 templates (P4.3-2 +2)."""
+    assert len(BUILTIN_TEMPLATES) == 7
 
 
 def test_builtin_templates_ids():
@@ -142,6 +142,8 @@ def test_builtin_templates_ids():
         "active_equity_screen",
         "style_drift_monitor",
         "stock_reverse_lookup",
+        "holding_change_watch",
+        "risk_scan",
     }
     assert set(BUILTIN_TEMPLATES.keys()) == expected_ids
 
@@ -203,23 +205,23 @@ def test_stock_reverse_lookup_steps():
 
 
 def test_seed_builtin_templates_inserts(test_session):
-    """seed_builtin_templates should insert all 5 templates."""
+    """seed_builtin_templates should insert all 7 templates."""
     db = test_session
     count = seed_builtin_templates(db)
-    assert count == 5
+    assert count == 7
     templates = list_templates(db)
-    assert len(templates) == 5
+    assert len(templates) == 7
 
 
 def test_seed_builtin_templates_idempotent(test_session):
     """seed_builtin_templates should be idempotent."""
     db = test_session
     first = seed_builtin_templates(db)
-    assert first == 5
+    assert first == 7
     second = seed_builtin_templates(db)
     assert second == 0
     templates = list_templates(db)
-    assert len(templates) == 5
+    assert len(templates) == 7
 
 
 def test_seed_builtin_templates_sets_is_builtin(test_session):
@@ -259,10 +261,10 @@ def test_list_templates_builtin_only(test_session):
     db.flush()
 
     all_templates = list_templates(db, builtin_only=False)
-    assert len(all_templates) == 6
+    assert len(all_templates) == 8
 
     builtin_templates = list_templates(db, builtin_only=True)
-    assert len(builtin_templates) == 5
+    assert len(builtin_templates) == 7
     for t in builtin_templates:
         assert t.is_builtin is True
 
@@ -644,4 +646,86 @@ def test_template_run_result_to_data_with_warnings():
 def test_algorithm_metadata():
     """ALGORITHM_NAME and ALGORITHM_VERSION should be set."""
     assert ALGORITHM_NAME == "research_template"
-    assert ALGORITHM_VERSION == "0.1.0"
+    assert ALGORITHM_VERSION == "0.2.0"
+
+
+# ============================================================
+# P4.3-2: 持仓变化 / 风险扫描模板执行
+# ============================================================
+
+
+def _seed_fund_with_holdings_and_nav(db) -> None:
+    from fund_research.db.models import FundNAV
+
+    db.add(FundMain(
+        fund_code="H0001", short_name="持仓测试", full_name="持仓测试全称",
+        category="混合型", sub_category="主动权益",
+    ))
+    # 两期披露持仓：600000 由 5% 增至 8%，000002 新进
+    db.add_all([
+        FundDisclosedHoldings(
+            fund_code="H0001", report_date=date(2025, 12, 31), asset_type="股票",
+            security_code="600000", security_name="浦发银行",
+            weight_pct=5.0, rank_in_holdings=1,
+        ),
+        FundDisclosedHoldings(
+            fund_code="H0001", report_date=date(2026, 6, 30), asset_type="股票",
+            security_code="600000", security_name="浦发银行",
+            weight_pct=8.0, rank_in_holdings=1,
+        ),
+        FundDisclosedHoldings(
+            fund_code="H0001", report_date=date(2026, 6, 30), asset_type="股票",
+            security_code="000002", security_name="万科A",
+            weight_pct=3.0, rank_in_holdings=2,
+        ),
+    ])
+    # 净值序列（供风险扫描）
+    db.add_all([
+        FundNAV(
+            fund_code="H0001", trade_date=date(2026, 1, i + 1),
+            unit_nav=1.0 + i * 0.001,
+        )
+        for i in range(30)
+    ])
+    db.commit()
+
+
+def test_run_holding_change_watch_template(test_session):
+    """P4.3-2：持仓变化模板可执行且输出增减持明细。"""
+    db = test_session
+    _seed_fund_with_holdings_and_nav(db)
+    seed_builtin_templates(db)
+    db.commit()
+
+    result = run_template(db, "holding_change_watch", {"fund_code": "H0001"})
+
+    assert result.steps_failed == 0
+    step = next(s for s in result.step_results if s.tool == "holding_change_query")
+    assert step.status == "success"
+    assert step.result["report_date"] == "2026-06-30"
+    assert step.result["previous_report_date"] == "2025-12-31"
+    # 600000 增持 +3%，000002 新进
+    changes = {c["security_code"]: c for c in step.result["holding_changes"]}
+    assert "600000" in changes
+    assert changes["600000"]["delta_weight_pct"] == pytest.approx(3.0)
+    assert "000002" in changes
+
+
+def test_run_risk_scan_template(test_session):
+    """P4.3-2：风险扫描模板输出回撤类风险指标。"""
+    db = test_session
+    _seed_fund_with_holdings_and_nav(db)
+    seed_builtin_templates(db)
+    db.commit()
+
+    result = run_template(db, "risk_scan", {"fund_code": "H0001"})
+
+    step = next(s for s in result.step_results if s.tool == "nav_risk_metrics")
+    assert step.status == "success"
+    assert "max_drawdown" in step.result["risk_metrics"]
+    assert "recovery_days" in step.result["risk_metrics"]
+    # daily_return 缺失时由 unit_nav pct_change 推导，首日为 NaN → 29
+    assert step.result["observations"] == 29
+    # 异常扫描步骤应执行（无数据时 0 条异常，不应失败）
+    scan_step = next(s for s in result.step_results if s.tool == "anomaly_scan")
+    assert scan_step.status == "success"
