@@ -59,7 +59,7 @@ def main() -> None:
             print(f"\n{symbol}: {len(member_codes)} member stocks")
 
             if not member_codes:
-                print(f"  No members found, skipping")
+                print("  No members found, skipping")
                 continue
 
             for report_date in HISTORICAL_DATES:

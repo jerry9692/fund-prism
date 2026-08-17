@@ -17,7 +17,7 @@ from __future__ import annotations
 
 import threading
 from datetime import date, datetime, time, timedelta
-from enum import Enum
+from enum import StrEnum
 
 from sqlalchemy import func, select
 
@@ -25,7 +25,7 @@ from fund_research.db.models import FundNAV, StockDaily
 from fund_research.utils.logging import logger
 
 
-class UpdateState(str, Enum):
+class UpdateState(StrEnum):
     IDLE = "idle"
     UPDATING = "updating"
     DONE = "done"

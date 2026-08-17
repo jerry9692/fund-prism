@@ -1,4 +1,4 @@
-import os, sys
+import os
 for k in list(os.environ.keys()):
     if 'proxy' in k.lower():
         del os.environ[k]

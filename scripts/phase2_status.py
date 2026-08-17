@@ -20,7 +20,6 @@ from fund_research.db.models import (
     StockDaily,
     BenchmarkIndustryWeight,
 )
-import pandas as pd
 
 settings = get_settings()
 db_path = settings.db_path_absolute
@@ -33,12 +32,12 @@ with Session() as db:
     fund_count = db.query(FundMain).count()
     nav_count = db.query(FundNAV).count()
     nav_funds = db.query(FundNAV.fund_code).distinct().count()
-    print(f"=== Core Data ===")
+    print("=== Core Data ===")
     print(f"  FundMain:       {fund_count}")
     print(f"  FundNAV:        {nav_count} rows across {nav_funds} funds")
 
     # Phase 2 data sources
-    print(f"\n=== Phase 2 Input Data ===")
+    print("\n=== Phase 2 Input Data ===")
     for model, label in [
         (FundDisclosedHoldings, "FundDisclosedHoldings"),
         (FundScale, "FundScale"),
@@ -61,7 +60,7 @@ with Session() as db:
         print(f"  {label:35s}: {cnt:6d} rows, {funds} codes")
 
     # Phase 2 experiment results
-    print(f"\n=== Phase 2 Experiment Results ===")
+    print("\n=== Phase 2 Experiment Results ===")
     for model, label in [
         (SimulatedHoldingResult, "SimulatedHoldingResult"),
         (DynamicAttributionResult, "DynamicAttributionResult"),
@@ -72,7 +71,7 @@ with Session() as db:
         print(f"  {label:35s}: {cnt} rows")
 
     # Experiment records
-    print(f"\n=== Algorithm Experiments ===")
+    print("\n=== Algorithm Experiments ===")
     exps = db.query(AlgorithmExperiment).all()
     for exp in exps:
         print(f"  {exp.algorithm_name:25s} id={exp.id}, status={exp.status}, "
@@ -80,7 +79,7 @@ with Session() as db:
               f"sample={len(exp.sample_fund_codes or [])} funds")
 
     # Check holdings date coverage
-    print(f"\n=== Holdings Date Range ===")
+    print("\n=== Holdings Date Range ===")
     dates = db.query(
         func.min(FundDisclosedHoldings.report_date),
         func.max(FundDisclosedHoldings.report_date)

@@ -1,8 +1,5 @@
 """Check stock daily count."""
-from sqlalchemy import text
-from sqlalchemy.orm import sessionmaker
 from fund_research.config.settings import get_settings
-from fund_research.db.session import create_engine_from_path, init_db
 import duckdb
 
 settings = get_settings()

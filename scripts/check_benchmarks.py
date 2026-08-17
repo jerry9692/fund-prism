@@ -1,5 +1,4 @@
 """Check which benchmarks sample funds use."""
-import csv
 from sqlalchemy.orm import sessionmaker
 from fund_research.config.settings import get_settings
 from fund_research.db.models import FundMain

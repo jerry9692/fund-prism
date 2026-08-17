@@ -3,7 +3,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import sessionmaker
 from fund_research.config.settings import get_settings
 from fund_research.db.models import (
-    FundDisclosedHoldings, StockIndustryMembership
+    StockIndustryMembership
 )
 from fund_research.db.session import create_engine_from_path, init_db
 

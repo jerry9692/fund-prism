@@ -1,10 +1,9 @@
-import os, sys
+import os
 for k in list(os.environ.keys()):
     if 'proxy' in k.lower():
         del os.environ[k]
 os.environ['NO_PROXY'] = '*'
 
-import akshare as ak
 import pandas as pd
 import requests
 import json

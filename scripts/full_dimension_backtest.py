@@ -22,7 +22,6 @@ from fund_research.db.session import create_engine_from_path, init_db
 from fund_research.experiments.runner import (
     _add_months,
     _composite_risk_score,
-    _DEFAULT_MIN_FORWARD_OBSERVATIONS,
     _forward_nav_metrics,
     _MIN_LOOKBACK_DAYS,
     _quarterly_dates,
@@ -150,7 +149,7 @@ def main() -> None:
             print(f"  {d:20s}: {dim_count[d]}/{n} ({cov:.0%})")
 
         if n < 5:
-            print(f"  SKIP (need >=5 funds)")
+            print("  SKIP (need >=5 funds)")
             continue
 
         scoring = score_funds(
@@ -179,14 +178,14 @@ def main() -> None:
     scores_df = pd.DataFrame(scores_rows)
     future_df = pd.DataFrame(future_rows)
     print(f"\n\n{'='*60}")
-    print(f"FULL-DIMENSION BACKTEST RESULTS (8 dimensions with team+holder)")
+    print("FULL-DIMENSION BACKTEST RESULTS (8 dimensions with team+holder)")
     print(f"{'='*60}")
     print(f"Algorithm version: {ALGORITHM_VERSION}")
     print(f"Eval periods: {len(eval_dates)}")
     print(f"Total score observations: {len(scores_df)}")
 
     bt = compute_scoring_backtest(scores_df, future_df, group_count=5)
-    print(f"\n--- IC Summary ---")
+    print("\n--- IC Summary ---")
     print(f"  IC mean:              {bt['ic_mean']}")
     print(f"  IC IR:                {bt['ic_ir']}")
     print(f"  Sample count:         {bt['sample_count']}")
@@ -194,7 +193,7 @@ def main() -> None:
     print(f"  Top-Bottom spread:    {bt['top_bottom_return_spread']}")
     print(f"  Top-Bottom p-value:   {bt['top_bottom_one_sided_p_value']}")
 
-    print(f"\n--- Group Returns (5 quintiles, 0=worst, 4=best) ---")
+    print("\n--- Group Returns (5 quintiles, 0=worst, 4=best) ---")
     gr = bt.get("group_results", {})
     for bucket in sorted(gr.keys(), key=lambda x: int(x)):
         vals = gr[bucket]
@@ -207,11 +206,11 @@ def main() -> None:
         print(f"  Q{bucket}: return={ret_str}, sharpe={sharpe_str}, maxdd={dd_str}")
 
     mono = bt.get("monotonicity_by_metric", {})
-    print(f"\n--- Monotonicity Checks ---")
+    print("\n--- Monotonicity Checks ---")
     for metric, is_mono in mono.items():
         print(f"  {metric}: {'PASS' if is_mono else 'FAIL'}")
 
-    print(f"\n--- Dimension Coverage (avg across periods) ---")
+    print("\n--- Dimension Coverage (avg across periods) ---")
     for d in DEFAULT_WEIGHTS:
         vals = dimension_coverage[d]
         avg = sum(vals) / len(vals) if vals else 0

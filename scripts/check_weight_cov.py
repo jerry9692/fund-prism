@@ -1,6 +1,5 @@
 """Check weight coverage of existing StockDaily data against holdings."""
 import duckdb
-from datetime import date
 
 conn = duckdb.connect("data/fund_research.duckdb", read_only=True)
 
@@ -40,7 +39,7 @@ result = conn.execute("""
     LIMIT 20
 """).fetchall()
 
-print(f"\nWeight coverage by fund/report (latest periods):")
+print("\nWeight coverage by fund/report (latest periods):")
 print(f"{'Fund':<8} {'Date':<12} {'Stocks':>8} {'Covered':>8} {'CoveredW%':>10} {'TotalW%':>10} {'CovRatio':>8}")
 total_weight_covered = 0
 total_weight_all = 0

@@ -1,5 +1,4 @@
 """Check if holding industries are populated."""
-from sqlalchemy import func, select
 from sqlalchemy.orm import sessionmaker
 from fund_research.config.settings import get_settings
 from fund_research.db.models import FundDisclosedHoldings

@@ -62,7 +62,7 @@ inserted = conn.execute("""
 """).fetchone()
 
 conn.commit()
-print(f"Inserted benchmark weight rows for quarterly dates")
+print("Inserted benchmark weight rows for quarterly dates")
 
 # Clean up temp table
 conn.execute("DROP TABLE bw_max_id")

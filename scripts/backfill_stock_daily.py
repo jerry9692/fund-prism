@@ -1,13 +1,11 @@
 """Efficient stock daily backfill - skips already-fetched stocks, uses commit batching."""
-import csv
 from datetime import date
 from time import sleep, perf_counter
-from sqlalchemy import select, text
+from sqlalchemy import text
 from sqlalchemy.orm import sessionmaker
 from fund_research.config.settings import get_settings
 from fund_research.data.adapters.akshare import AkshareAdapter
-from fund_research.data.update import _apply_stock_daily_row, UpdateSummary, _snapshot_from_fetch
-from fund_research.db.models import FundDisclosedHoldings, StockDaily, DataSourceSnapshot
+from fund_research.data.update import _apply_stock_daily_row, _snapshot_from_fetch
 from fund_research.db.session import create_engine_from_path, init_db
 
 settings = get_settings()
@@ -56,7 +54,7 @@ for batch_start in range(0, len(missing_codes), BATCH_SIZE):
                 else:
                     total_skipped += 1
                     errors += 1
-            except Exception as e:
+            except Exception:
                 total_skipped += 1
                 errors += 1
             if i < len(batch) - 1 and REQUEST_INTERVAL > 0:

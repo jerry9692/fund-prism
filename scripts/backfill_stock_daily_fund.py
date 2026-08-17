@@ -8,13 +8,12 @@ import sys
 from datetime import date
 from time import sleep, perf_counter
 
-from sqlalchemy import select, text
+from sqlalchemy import text
 from sqlalchemy.orm import sessionmaker
 
 from fund_research.config.settings import get_settings
 from fund_research.data.adapters.akshare import AkshareAdapter
 from fund_research.data.update import _apply_stock_daily_row, _snapshot_from_fetch
-from fund_research.db.models import FundDisclosedHoldings, StockDaily
 from fund_research.db.session import create_engine_from_path, init_db
 
 if len(sys.argv) < 2:

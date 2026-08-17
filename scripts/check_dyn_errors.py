@@ -1,6 +1,5 @@
 """Check latest dynamic attribution errors."""
 import duckdb
-import json
 
 conn = duckdb.connect("data/fund_research.duckdb", read_only=True)
 latest = conn.execute("""
@@ -31,7 +30,7 @@ print("Error distribution:")
 for err, cnt in err_counter.most_common():
     print(f"  {cnt}: {err}")
 
-print(f"\nFirst 5 detailed errors:")
+print("\nFirst 5 detailed errors:")
 for fc, is_succ, err in results[:5]:
     if not is_succ:
         print(f"  {fc}: {err}")

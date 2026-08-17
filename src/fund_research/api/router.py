@@ -279,7 +279,7 @@ def _run_static_attribution_for_latest_holdings(
         ConfidenceLevel.LOW if result.is_sufficient else ConfidenceLevel.NEEDS_REVIEW
     ).value
 
-    existing = _upsert_record(
+    _upsert_record(
         db,
         StaticAttributionResult,
         filters={
@@ -1714,7 +1714,7 @@ def run_exposure_analysis(
     if conclusion_status == ConclusionStatus.NEEDS_REVIEW:
         result.warnings.append("风格回归解释度偏低，暴露结果需复核")
 
-    existing = _upsert_record(
+    _upsert_record(
         db,
         StyleExposureResult,
         filters={

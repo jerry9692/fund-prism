@@ -1,8 +1,7 @@
 """Check stock code formats and data availability."""
-from sqlalchemy import text, select
+from sqlalchemy import text
 from sqlalchemy.orm import sessionmaker
 from fund_research.config.settings import get_settings
-from fund_research.db.models import FundDisclosedHoldings, StockDaily
 from fund_research.db.session import create_engine_from_path, init_db
 
 settings = get_settings()

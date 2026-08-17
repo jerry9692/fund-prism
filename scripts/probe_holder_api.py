@@ -1,4 +1,4 @@
-import os, sys
+import os
 for k in list(os.environ.keys()):
     if 'proxy' in k.lower():
         del os.environ[k]
@@ -6,9 +6,7 @@ os.environ['NO_PROXY'] = '*'
 
 import requests
 import pandas as pd
-import json
 import re
-from io import StringIO
 
 pd.set_option('display.max_columns', None)
 pd.set_option('display.width', 300)
@@ -34,17 +32,17 @@ try:
     log(f"Page length: {len(text)}")
     
     api_patterns = re.findall(r'(?:url|api|data|fetch|ajax|get|post)\s*[:=]\s*["\']([^"\']*(?:api|Data|cyrjg|holder|FundData|fundf10)[^"\']*)["\']', text, re.IGNORECASE)
-    log(f"Found API URLs in JS:")
+    log("Found API URLs in JS:")
     for p in set(api_patterns):
         log(f"  {p}")
     
     funddata_patterns = re.findall(r'FundDataPortfolio_Interface[^"\']*|api\.fund\.eastmoney\.com[^"\']*', text)
-    log(f"\nFundData/API patterns:")
+    log("\nFundData/API patterns:")
     for p in set(funddata_patterns):
         log(f"  {p}")
     
     js_files = re.findall(r'src=["\']([^"\']*\.js[^"\']*)["\']', text)
-    log(f"\nJS files referenced:")
+    log("\nJS files referenced:")
     for js in js_files:
         log(f"  {js}")
     

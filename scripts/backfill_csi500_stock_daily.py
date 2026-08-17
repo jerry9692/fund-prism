@@ -140,7 +140,7 @@ def show_status() -> None:
 
     total_batches = (total + BATCH_SIZE - 1) // BATCH_SIZE
     print(f"Missing: {total} stocks, {total_batches} batches needed")
-    print(f"Run: python scripts/backfill_csi500_stock_daily.py --batch 1")
+    print("Run: python scripts/backfill_csi500_stock_daily.py --batch 1")
     for i in range(total_batches):
         start = i * BATCH_SIZE
         end = min(start + BATCH_SIZE, total)

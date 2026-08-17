@@ -4,12 +4,9 @@ Uses Eastmoney F10 web scraping (C-level data source) to populate:
 - FundManagerTenure: complete historical manager changes (with start_date/end_date)
 - HolderStructure: semi-annual institutional/individual/employee holding ratios
 """
-import sys
 from datetime import date
-from pathlib import Path
 
-from sqlalchemy import select
-from sqlalchemy.orm import Session, sessionmaker
+from sqlalchemy.orm import sessionmaker
 
 from fund_research.config.settings import get_settings
 from fund_research.data.adapters.akshare import AkshareAdapter
@@ -18,7 +15,7 @@ from fund_research.data.update import (
     upsert_akshare_holder_structure,
     upsert_eastmoney_fund_manager_history,
 )
-from fund_research.db.models import FundMain, FundManagerTenure, HolderStructure
+from fund_research.db.models import FundManagerTenure, HolderStructure
 from fund_research.db.session import create_engine_from_path, init_db
 
 

@@ -3,13 +3,12 @@ import pandas as pd
 from sqlalchemy import select as sa_select
 from sqlalchemy.orm import sessionmaker
 from fund_research.config.settings import get_settings
-from fund_research.db.models import FundDisclosedHoldings, StockDaily, FundMain
+from fund_research.db.models import FundDisclosedHoldings, StockDaily
 from fund_research.db.session import create_engine_from_path, init_db
 from fund_research.experiments.runner import (
     _market_rows_to_return_df,
     _resolve_benchmark_symbol,
     _build_real_sector_return_df,
-    MIN_ATTRIBUTION_STOCK_WEIGHT_COVERAGE,
 )
 
 settings = get_settings()

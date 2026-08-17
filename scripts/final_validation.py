@@ -1,4 +1,4 @@
-import os, sys
+import os
 for k in list(os.environ.keys()):
     if 'proxy' in k.lower():
         del os.environ[k]
@@ -31,18 +31,18 @@ tables = pd.read_html(StringIO(resp.text))
 print(f"\nTotal tables on page: {len(tables)}")
 
 table1 = tables[1]
-print(f"\n--- 历任基金经理变动表 (Table 1) ---")
+print("\n--- 历任基金经理变动表 (Table 1) ---")
 print(f"shape: {table1.shape}")
 print(f"columns: {table1.columns.tolist()}")
 print(table1.to_string())
 
-print(f"\n--- 现任经理管理的其他基金 (Table 2) ---")
+print("\n--- 现任经理管理的其他基金 (Table 2) ---")
 table2 = tables[2]
 print(f"shape: {table2.shape}")
 print(f"columns: {table2.columns.tolist()}")
 print(table2.head(5).to_string())
 
-print(f"\n--- Table 3 (另一位经理) ---")
+print("\n--- Table 3 (另一位经理) ---")
 table3 = tables[3]
 print(f"shape: {table3.shape}")
 print(f"columns: {table3.columns.tolist()}")

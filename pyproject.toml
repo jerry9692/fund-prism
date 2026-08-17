@@ -110,6 +110,10 @@ line-length = 120
 [tool.ruff.lint]
 select = ["E", "F", "I", "N", "W", "UP", "B", "SIM"]
 
+[tool.ruff.lint.per-file-ignores]
+# scripts/ 为一次性回填/探测脚本，放宽风格类规则，保留错误类检查
+"scripts/*" = ["I", "N", "SIM", "B", "UP", "E401", "E402", "E501", "E722", "E741", "W"]
+
 [tool.ruff.format]
 quote-style = "double"
 indent-style = "space"

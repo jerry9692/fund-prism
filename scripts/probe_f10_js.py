@@ -1,4 +1,4 @@
-import os, sys
+import os
 for k in list(os.environ.keys()):
     if 'proxy' in k.lower():
         del os.environ[k]
@@ -6,9 +6,7 @@ os.environ['NO_PROXY'] = '*'
 
 import requests
 import pandas as pd
-import json
 import re
-from io import StringIO
 
 pd.set_option('display.max_columns', None)
 pd.set_option('display.width', 300)
