@@ -210,7 +210,7 @@
 6. **数据源边界**：AAA 利差序列（中短票AAA − 国债，均出自中债）近 3 年完整；AA 曲线取自中国货币网中短票(AA)，该接口历史深度仅近约 3 个月（更早窗口返回 `newDateValue` 错误，免费源不可得），AA 利差序列随每日增量更新自然积累，不硬造历史（数据源诚实原则，同 P4.1-2 中信指数处理）；交易所纯债个券日估值免费源不可得，`bond_daily` 目前仅覆盖可转债。
 7. **冒烟验证**：`bond_main` 1044 只可转债全量入库零警告；128039.SZ/110080.SH 行情 267 行（2023-08 起）；收益率曲线近 3 年回填：国债/中短票AAA/商业银行普通债AAA 各 748 个交易日 × 8 档期限，AA 近 3 个月 12 个交易日；`load_credit_spread_series` 利差核验合理（3Y 末值 AAA≈0.40pp、AA≈0.51pp，AA>AAA 且随期限抬升）；二次重跑 0 inserted 全 updated（幂等）。单测覆盖适配器标准化/分窗/upsert 幂等/dry-run/CLI 路由/表约束/runner 行情加载（`tests/test_data/test_update_bond_domain.py` 等，29 用例）。
 
-### P4.1-4 ETF 产品属性数据 ★阻塞指数基金分析与优选
+### P4.1-4 ETF 产品属性数据 ★阻塞指数基金分析与优选 ✅ 已完成（2026-08-17）
 
 **需求来源**：§6.2.8 评价维度（流动性/成交额/折溢价/跟踪误差/费率/申赎效率）。
 
@@ -224,15 +224,39 @@
 
 **验收标准**：样本内 ETF 均能产出 §6.2.8 评价维度所需的规模/费率/流动性/跟踪误差/折溢价五项字段。
 
-### P4.1-5 因子收益表（通用）
+**落地说明**（2026-08-17 实施记录）：
 
-**需求来源**：§15.2 因子收益表、§6.2.7 债基因子回归输入。
+1. **ORM**（`db/models_phase4.py` + migration `20260817_0001`）：`etf_profile`（fund_code 唯一，跟踪指数/成立日/日均成交额/日均换手/溢折率/近一年与成立以来年化跟踪误差/年化超额/快照日期，计算口径与附加字段落 `extra`）。
+2. **适配器**（`data/adapters/akshare.py`）：
+   - `fetch_etf_spot()` — 东财全市场 ETF 快照（`fund_etf_spot_em`），折溢价统一为正=溢价口径（东财"基金折价率"取反），IOPV/份额/市值进 `extra`
+   - `fetch_etf_daily_hist(symbol, start, end)` — 东财日线（`fund_etf_hist_em`，含换手率）；东财偶发断连时**自动回退新浪源**（`fund_etf_hist_sina`，全量历史本地过滤，无换手率）
+   - `fetch_etf_f10_profile(fund_code)` — 东财 F10 基本概况抓取（跟踪标的/成立日期/管理费率/托管费率，C 级源），跟踪指数经 `resolve_tracking_index_symbol` 映射为 benchmark symbol（沪深300→sh000300 等，未收录指数返回 None 并告警，不硬猜）
+   - 东财接口统一 `_retry_call` 指数退避重试
+3. **跟踪误差本地计算**（`data/update.py`）：`compute_etf_tracking_stats` 用 `fund_nav` 日收益 vs `stock_daily` 指数日收益对齐序列，年化跟踪误差 = 日超额标准差(ddof=1)×√252，近一年窗口 252 交易日 + 成立以来全窗口；指数 `daily_return` 为空（腾讯源）时由收盘价 pct_change 本地推导；样本 <20 不计算并告警。
+4. **CLI**：`fund-research update etf-profile [--fund-code]`，默认样本内 `fund_main.is_etf=1` 的 ETF；`--domains etf` 别名可用。快照口径 upsert：新值为空保留旧值（盘前快照不抹掉已有属性）。
+5. **冒烟验证**：样本 3 只 ETF（510300/510500/159915）五维度齐备 —— 规模（快照总市值进 `extra.market_cap`）、费率（F10 管理/托管费率进 `extra`）、流动性（日均成交额 40–55 亿元/日）、跟踪误差（如 510300 近一年 0.36%/成立以来 0.82%）、溢折率（±0.1% 内）；跟踪指数/成立日与 F10 一致。单测 19 用例（适配器标准化/新浪回退/F10 解析/跟踪计算含兜底/幂等合并/CLI 路由），全量回归 536 passed。
+6. **已知边界**：雪球源不支持场内 ETF 的规模/费率（`fund_scale`/`fund_fee` 对 ETF 失败），改由 ETF 快照市值 + F10 费率覆盖该两项；新浪回退无换手率字段（仅东财源有）；东财 hist 接口间歇断连属上游问题，已有重试 + 回退兜底。
+
+### P4.1-5 因子收益表（通用） ✅ 已完成（2026-08-17）
+
+**需求来源**：§15.2 因子收益表、§6.2.7 债基滚动回归输入。
 
 **实现计划**：
 
 1. `factor_return` 表：因子名、日期、因子收益。
 2. 首批覆盖：债券因子（P4.1-3 派生）+ 现有风格因子（沪深300/500/1000/成长/价值，复用 `index_daily`）。
 3. 因子收益统一走 `update` CLI 一个实体，避免散落。
+
+**落地说明**（2026-08-17 实施记录）：
+
+1. **ORM**（`db/models_phase4.py` + migration `20260817_0002`）：`factor_return`（`(factor_name, trade_date)` 唯一），因子名常量 `FACTOR_NAMES`：风格 5 个（`style_large_cap/mid_cap/small_cap/growth/value`，复用 `exposure.DEFAULT_STYLE_FACTORS` 指数口径）+ 债券 8 个（`bond_coupon/rate/slope/convexity/credit_aaa/credit_aa/credit_sink/convertible`）。
+2. **构造口径**（`data/update.py` `build_bond_factor_rows` / `build_style_factor_rows`，近似口径文档可追溯）：
+   - 风格因子：指数日收益（`stock_daily`，`daily_return` 缺失时收盘价 pct_change 兜底）
+   - `bond_coupon` = 1Y 国债收益率/252；`bond_rate` = −10×Δy(10Y)（10 年零息久期近似）；`bond_slope` = 10Y 与 1Y 零息收益之差；`bond_convexity` = 0.5×10²×(Δy10)²
+   - `bond_credit_aaa/aa` = −3×Δ利差（3Y 中票 − 3Y 国债，3Y 中票久期近似）；`bond_credit_sink` = AA − AAA；`bond_convertible` = 在库转债日收益截面等权
+3. **CLI**：`fund-research update factor-return [--factor bond_rate ...] [--start/--end]`，别名 `--domains factor`；未知名告警跳过，无样本数据告警提示。
+4. **冒烟验证**：13 个因子共 24336 行入库零警告 —— 风格因子全历史（沪深300 自 2005 年 5187 日）；债券利率/票息/斜率/凸度/AAA 信用因子近 3 年 747 日；AA/下沉受曲线深度限制近 3 个月 11 日（同 P4.1-3 边界）；转债因子 194 日（在库 2 只转债）。数值合理性核验：`bond_rate` 日极值 ≈1%（10bp×10 久期）、`bond_coupon` 均值≈ 1.5%/252；二次重跑 0 inserted 全 updated（幂等）。单测 8 用例（构造公式逐项验证/幂等/窗口/未知因子/CLI 路由），全量回归 545 passed。
+5. **已知边界**：AA/信用下沉因子历史深度受中国货币网曲线限制（近约 3 个月）随增量积累；转债因子仅覆盖已入库行情的转债，样本扩容后自动扩充。
 
 ---
 
@@ -310,7 +334,7 @@ P4.2-2 指标注册表 (独立)─┘
 - [x] 样本基金扩充至 ~50 只，含 ETF/联接/指增/债基（短债/纯债/二级债/转债）各类型代表（P4.1-1，实际 53 只）
 - [x] 申万/中信行业指数行情 + 成分权重可拉取（P4.1-2；申万一级 31 个全覆盖，中信一级免费数据源不可得、已预留 `CITIC` 体系待接入）
 - [x] 可转债行情 + 国债收益率曲线 + AAA/AA 信用利差可拉取（P4.1-3；国债/中短票AAA 近 3 年完整，中短票AA 受免费源限制仅近约 3 个月并随增量积累，利差由 `load_credit_spread_series` 本地派生）
-- [ ] ETF 规模/费率/流动性/折溢价/跟踪误差字段齐备（P4.1-4）
+- [x] ETF 规模/费率/流动性/折溢价/跟踪误差字段齐备（P4.1-4；`etf_profile` 三样本 ETF 五维度全部产出，规模/费率由快照市值+F10 覆盖）
 - [x] 收益拆解"转债收益"从残差剥离，`estimated_convertible_bond_return` 为真实计算值（P4.0-1，含 `convertible_bond_coverage` 披离标识）
 - [x] §6.1.4 胜率/回撤修复天数/同类排名 三指标可用（P4.0-2，`nav_metrics.py` + `analysis/rank.py`）
 - [ ] 债基/指数模板分流就绪，未适配类型标"不适用"（P4.2-1）
@@ -328,3 +352,5 @@ P4.2-2 指标注册表 (独立)─┘
 - [x] P4.1-1 样本基金扩充至 53 只（主动权益 30 + 指数/ETF/联接/指增 11 + 债基 12）
 - [x] P4.1-2 指数数据域（`index_main` / `index_daily` / `index_constituent` 三表 + 申万适配器 + CLI 批量链路，2026-08-14）
 - [x] P4.1-3 债券数据域（`bond_main` / `bond_daily` / `yield_curve_daily` 三表 + 可转债/收益率曲线适配器 + CLI 批量链路 + 动态归因转债行情接入，2026-08-14）
+- [x] P4.1-4 ETF 产品属性（`etf_profile` 表 + ETF 快照/日线/F10 适配器 + 跟踪误差本地计算 + CLI，2026-08-17）
+- [x] P4.1-5 因子收益表（`factor_return` 表，风格因子 5 + 债券因子 8，收益率曲线差分/信用利差差分本地派生，2026-08-17）

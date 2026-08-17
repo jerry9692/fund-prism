@@ -33,6 +33,8 @@ from fund_research.db.models import (
     BondDaily,
     BondMain,
     DataSourceSnapshot,
+    EtfProfile,
+    FactorReturn,
     FundCompany,
     FundDisclosedHoldings,
     FundFee,
@@ -3328,3 +3330,533 @@ def latest_holding_stock_codes(session: Session, fund_codes: set[str]) -> set[st
         ).all()
         stock_codes.update(str(code).strip() for code in rows if code)
     return stock_codes
+
+
+# ============================================================
+# P4.1-4: ETF 产品属性（etf_profile）
+# ============================================================
+
+ETF_TRACKING_MIN_OBSERVATIONS = 20
+
+
+def sample_etf_codes(session: Session, fund_codes: set[str] | None = None) -> set[str]:
+    """解析 fund_main 中场内 ETF 代码（样本范围，is_etf=1）。"""
+    query = select(FundMain.fund_code).where(FundMain.is_etf.is_(True))
+    if fund_codes:
+        query = query.where(FundMain.fund_code.in_(fund_codes))
+    return {str(code).strip() for code in session.scalars(query).all() if code}
+
+
+def _daily_return_series(rows: list, get_price: Any) -> Any:
+    """构造日收益序列；daily_return 缺失时用价格序列 pct_change 补齐。"""
+    import pandas as pd
+
+    if not rows:
+        return pd.Series(dtype="float64")
+    frame = pd.DataFrame(
+        [
+            {
+                "trade_date": row.trade_date,
+                "daily_return": row.daily_return,
+                "price": get_price(row),
+            }
+            for row in rows
+        ]
+    ).sort_values("trade_date")
+    returns = pd.to_numeric(frame["daily_return"], errors="coerce")
+    prices = pd.to_numeric(frame["price"], errors="coerce")
+    returns = returns.fillna(prices.pct_change())
+    series = pd.Series(returns.values, index=frame["trade_date"].values)
+    return series.dropna()
+
+
+def _load_return_series(
+    session: Session, fund_code: str, index_symbol: str
+) -> tuple[Any, int, int]:
+    """加载基金净值日收益与指数日收益并按日期对齐。
+
+    指数行情（stock_daily）的 daily_return 可能为空（腾讯源），此时由收盘价
+    pct_change 本地推导；基金侧同理用复权/单位净值兜底。
+    返回 (aligned_df[fund_return, index_return], fund_rows, index_rows)。
+    """
+    import pandas as pd
+
+    fund_rows = session.scalars(
+        select(FundNAV)
+        .where(FundNAV.fund_code == fund_code)
+        .order_by(FundNAV.trade_date)
+    ).all()
+    index_rows = session.scalars(
+        select(StockDaily)
+        .where(StockDaily.stock_code == index_symbol)
+        .order_by(StockDaily.trade_date)
+    ).all()
+    fund_series = _daily_return_series(
+        fund_rows, lambda row: row.adjusted_nav or row.unit_nav
+    )
+    fund_series.name = "fund_return"
+    index_series = _daily_return_series(index_rows, lambda row: row.close_price)
+    index_series.name = "index_return"
+    aligned = pd.concat([fund_series, index_series], axis=1).dropna()
+    return aligned, len(fund_rows), len(index_rows)
+
+
+def compute_etf_tracking_stats(
+    session: Session, fund_code: str, index_symbol: str
+) -> dict | None:
+    """本地计算跟踪误差与超额（fund_nav vs 指数行情，P4.1-4）。
+
+    - 年化跟踪误差 = 日超额收益标准差(ddof=1) × √252
+    - 年化超额 = (1 + 区间累计超额) ^ (252 / 样本数) − 1
+    返回 None 表示重叠样本不足以计算。
+    """
+    import numpy as np
+
+    aligned, _, _ = _load_return_series(session, fund_code, index_symbol)
+    if len(aligned) < ETF_TRACKING_MIN_OBSERVATIONS:
+        return None
+    excess = aligned["fund_return"] - aligned["index_return"]
+
+    stats: dict[str, Any] = {
+        "tracking_error_inception": float(excess.std(ddof=1) * np.sqrt(252)),
+        "annualized_excess_inception": float(
+            (1.0 + excess.sum()) ** (252.0 / len(excess)) - 1.0
+        ),
+        "inception_observations": int(len(aligned)),
+        "window_start": str(aligned.index.min()),
+        "window_end": str(aligned.index.max()),
+    }
+    recent = aligned.tail(252)
+    if len(recent) >= ETF_TRACKING_MIN_OBSERVATIONS:
+        recent_excess = recent["fund_return"] - recent["index_return"]
+        stats["tracking_error_1y"] = float(recent_excess.std(ddof=1) * np.sqrt(252))
+        stats["annualized_excess_1y"] = float(
+            (1.0 + recent_excess.sum()) ** (252.0 / len(recent_excess)) - 1.0
+        )
+        stats["recent_observations"] = int(len(recent))
+    return stats
+
+
+def _apply_etf_profile_row(
+    session: Session,
+    row: dict,
+    source_name: str,
+    source_level: DataSourceLevel,
+    dry_run: bool,
+) -> str:
+    fund_code = str(row.get("fund_code") or "").strip().zfill(6)
+    if not fund_code or fund_code == "000000":
+        return "skipped"
+
+    existing = session.scalar(select(EtfProfile).where(EtfProfile.fund_code == fund_code))
+    if dry_run:
+        return "updated" if existing else "inserted"
+    if existing is None:
+        existing = EtfProfile(fund_code=fund_code)
+        session.add(existing)
+        action = "inserted"
+    else:
+        action = "updated"
+
+    def assign(field: str, value: Any) -> None:
+        # 快照口径：新值为空时保留旧值，避免盘前/部分源缺失抹掉已有属性
+        if value is not None:
+            setattr(existing, field, value)
+
+    assign("fund_name", row.get("fund_name"))
+    assign("tracking_index_code", row.get("tracking_index_code"))
+    assign("tracking_index_name", row.get("tracking_index_name"))
+    assign("inception_date", _parse_date(row.get("inception_date")))
+    assign("avg_daily_amount_1y", _parse_float(row.get("avg_daily_amount_1y")))
+    assign("avg_daily_turnover_1y", _parse_float(row.get("avg_daily_turnover_1y")))
+    assign("latest_premium_rate", _parse_float(row.get("latest_premium_rate")))
+    assign("tracking_error_1y", _parse_float(row.get("tracking_error_1y")))
+    assign("tracking_error_inception", _parse_float(row.get("tracking_error_inception")))
+    assign("annualized_excess_1y", _parse_float(row.get("annualized_excess_1y")))
+    assign(
+        "annualized_excess_inception", _parse_float(row.get("annualized_excess_inception"))
+    )
+    assign("snapshot_date", _parse_date(row.get("snapshot_date")))
+    existing.source_name = source_name
+    existing.source_level = source_level.value
+    extra = row.get("extra")
+    if isinstance(extra, dict) and extra:
+        merged = dict(existing.extra or {})
+        merged.update(extra)
+        existing.extra = merged
+    return action
+
+
+def upsert_etf_profiles(
+    session: Session,
+    fund_codes: set[str],
+    *,
+    adapter: AkshareAdapter | None = None,
+    end_date: date | None = None,
+    dry_run: bool = False,
+) -> UpdateSummary:
+    """构建/更新样本 ETF 的产品属性快照（P4.1-4）。
+
+    流动性/折溢价取自 AKShare（东财），跟踪指数/成立日期抓取东财 F10，
+    跟踪误差与超额由 fund_nav + 指数行情本地计算（§6.2.8）。
+    """
+    import pandas as pd
+
+    adapter = adapter or AkshareAdapter()
+    end = end_date or date.today()
+    try:
+        start = date(end.year - 1, end.month, end.day)
+    except ValueError:
+        start = date(end.year - 1, end.month, 28)
+    codes = sorted(str(code).strip().zfill(6) for code in fund_codes if str(code).strip())
+    summary = UpdateSummary(
+        entity="etf_profile",
+        source="akshare",
+        requested=len(codes),
+        dry_run=dry_run,
+        warnings=[],
+    )
+    if not codes:
+        return summary
+
+    # 全市场快照一次拉取，按代码索引（盘前字段可能为空）
+    spot_by_code: dict[str, dict] = {}
+    spot_result = adapter.fetch_etf_spot()
+    if not dry_run:
+        _snapshot_from_fetch(session, spot_result)
+    if spot_result.is_success and spot_result.data is not None:
+        for record in spot_result.data.to_dict(orient="records"):
+            spot_by_code[str(record.get("fund_code"))] = record
+    else:
+        summary.warnings.append(spot_result.error_message or "ETF 实时快照为空")
+
+    for code in _progress_iter(codes, "更新 ETF 产品属性"):
+        row: dict[str, Any] = {"fund_code": code}
+
+        spot = spot_by_code.get(code)
+        if spot:
+            row["fund_name"] = spot.get("fund_name")
+            row["latest_premium_rate"] = spot.get("latest_premium_rate")
+            row["snapshot_date"] = spot.get("snapshot_date")
+            if isinstance(spot.get("extra"), dict):
+                row.setdefault("extra", {}).update(spot["extra"])
+
+        hist_result = adapter.fetch_etf_daily_hist(code, start, end)
+        if not dry_run:
+            _snapshot_from_fetch(session, hist_result)
+        summary.warnings.extend(hist_result.warnings)
+        if hist_result.is_success and hist_result.data is not None and not hist_result.data.empty:
+            hist = hist_result.data
+            row["avg_daily_amount_1y"] = float(
+                pd.to_numeric(hist["amount"], errors="coerce").mean()
+            )
+            row["avg_daily_turnover_1y"] = float(
+                pd.to_numeric(hist["turnover_rate_pct"], errors="coerce").mean()
+            )
+        else:
+            summary.warnings.append(hist_result.error_message or f"ETF 历史行情为空: {code}")
+
+        f10_result = adapter.fetch_etf_f10_profile(code)
+        if not dry_run:
+            _snapshot_from_fetch(session, f10_result)
+        tracking_symbol: str | None = None
+        if f10_result.is_success and f10_result.data is not None and not f10_result.data.empty:
+            f10 = f10_result.data.iloc[0]
+            row["tracking_index_name"] = f10.get("tracking_index_name")
+            row["inception_date"] = f10.get("inception_date")
+            tracking_symbol = f10.get("tracking_index_code")
+            # 雪球源不支持场内 ETF 费率，F10 费率快照落 extra（§6.2.8 费率维度）
+            fee_snapshot = {
+                key: float(f10.get(key))
+                for key in ("mgmt_fee_pct", "custody_fee_pct")
+                if pd.notna(f10.get(key))
+            }
+            if fee_snapshot:
+                row.setdefault("extra", {}).update(fee_snapshot)
+        else:
+            summary.warnings.append(f10_result.error_message or f"F10 跟踪标的抓取失败: {code}")
+        summary.warnings.extend(f10_result.warnings)
+
+        if tracking_symbol:
+            row["tracking_index_code"] = tracking_symbol
+            stats = compute_etf_tracking_stats(session, code, tracking_symbol)
+            if stats:
+                field_keys = {
+                    "tracking_error_1y",
+                    "tracking_error_inception",
+                    "annualized_excess_1y",
+                    "annualized_excess_inception",
+                }
+                for key, value in stats.items():
+                    if key in field_keys:
+                        row[key] = value
+                    else:
+                        row.setdefault("extra", {})[key] = value
+            else:
+                summary.warnings.append(
+                    f"{code} 净值与 {tracking_symbol} 行情重叠样本不足，跟踪误差未计算"
+                )
+        elif "tracking_index_code" not in row:
+            summary.warnings.append(f"{code} 跟踪指数未知，跟踪误差未计算")
+
+        action = _apply_etf_profile_row(
+            session,
+            row,
+            "akshare+eastmoney.f10+local",
+            DataSourceLevel.B,
+            dry_run,
+        )
+        if action == "inserted":
+            summary.inserted += 1
+        elif action == "updated":
+            summary.updated += 1
+        else:
+            summary.skipped += 1
+
+    if not dry_run:
+        _log_update_task(session, "etf_profile", summary)
+        session.commit()
+    return summary
+
+
+# ============================================================
+# P4.1-5: 因子收益表（factor_return）
+#
+# 构造口径（近似口径，供 §6.2.7 债基滚动回归输入，文档可追溯）：
+# - 风格因子：指数日收益（stock_daily，daily_return 缺失时收盘价推导）
+# - bond_coupon    = 1Y 国债收益率 / 252（日 carry）
+# - bond_rate      = −10 × Δy(10Y 国债)（10 年零息久期近似）
+# - bond_slope     = r(10Y 零息) − r(1Y 零息)
+# - bond_convexity = 0.5 × 10² × (Δy10)²
+# - bond_credit_aaa/aa = −3 × Δ利差（3Y 中票久期近似，利差 = 中票 − 国债）
+# - bond_credit_sink   = bond_credit_aa − bond_credit_aaa
+# - bond_convertible   = 在库转债日收益截面等权均值
+# ============================================================
+
+
+def _factor_row(factor_name: str, trade_date: Any, value: Any) -> dict | None:
+    if value is None:
+        return None
+    value = float(value)
+    if value != value:  # NaN
+        return None
+    return {
+        "factor_name": factor_name,
+        "trade_date": trade_date,
+        "factor_return": value,
+    }
+
+
+def build_style_factor_rows(session: Session) -> list[dict]:
+    """风格因子日收益（指数行情，P4.1-5）。"""
+    from fund_research.db.models_phase4 import STYLE_FACTOR_INDEX_SYMBOLS
+
+    rows: list[dict] = []
+    for factor_name, symbol in STYLE_FACTOR_INDEX_SYMBOLS.items():
+        index_rows = session.scalars(
+            select(StockDaily)
+            .where(StockDaily.stock_code == symbol)
+            .order_by(StockDaily.trade_date)
+        ).all()
+        series = _daily_return_series(index_rows, lambda row: row.close_price)
+        for trade_date, value in series.items():
+            row = _factor_row(factor_name, trade_date, value)
+            if row is not None:
+                rows.append(row)
+    return rows
+
+
+def build_bond_factor_rows(session: Session) -> list[dict]:
+    """债券因子日收益（收益率曲线差分 + 信用利差差分 + 转债行情，§6.2.7）。"""
+    import pandas as pd
+
+    rows: list[dict] = []
+    curve_rows = session.scalars(select(YieldCurveDaily)).all()
+    if curve_rows:
+        frame = pd.DataFrame(
+            [
+                {
+                    "trade_date": row.trade_date,
+                    "curve": row.curve_name,
+                    "tenor": row.tenor_years,
+                    "yield_pct": row.yield_pct,
+                }
+                for row in curve_rows
+                if row.yield_pct is not None
+            ]
+        )
+        frame["yield_dec"] = pd.to_numeric(frame["yield_pct"], errors="coerce") / 100.0
+
+        def _curve_wide(curve_name: str) -> Any:
+            subset = frame[frame["curve"] == curve_name]
+            if subset.empty:
+                return pd.DataFrame()
+            return (
+                subset.pivot(index="trade_date", columns="tenor", values="yield_dec")
+                .sort_index()
+            )
+
+        treasury = _curve_wide("treasury")
+        if not treasury.empty and 1.0 in treasury.columns and 10.0 in treasury.columns:
+            y1, y10 = treasury[1.0], treasury[10.0]
+            dy1, dy10 = y1.diff(), y10.diff()
+            r1, r10 = -1.0 * dy1, -10.0 * dy10
+            dates = treasury.index
+            for i, trade_date in enumerate(dates):
+                rows.extend(
+                    [
+                        _factor_row("bond_coupon", trade_date, y1.iloc[i] / 252.0),
+                        _factor_row("bond_rate", trade_date, r10.iloc[i]),
+                        _factor_row("bond_slope", trade_date, r10.iloc[i] - r1.iloc[i]),
+                        _factor_row(
+                            "bond_convexity", trade_date, 0.5 * 100.0 * dy10.iloc[i] ** 2
+                        ),
+                    ]
+                )
+        # 信用利差：3Y 中票 − 3Y 国债（AAA/AA，§6.2.7 信用因子）
+        if not treasury.empty and 3.0 in treasury.columns:
+            treasury_3y = treasury[3.0]
+            for curve_name, factor_name in (
+                ("medium_term_note_aaa", "bond_credit_aaa"),
+                ("medium_term_note_aa", "bond_credit_aa"),
+            ):
+                credit = _curve_wide(curve_name)
+                if credit.empty or 3.0 not in credit.columns:
+                    continue
+                spread = (credit[3.0] - treasury_3y).dropna()
+                delta = spread.diff()
+                factor_values = -3.0 * delta
+                for trade_date, value in factor_values.items():
+                    rows.append(_factor_row(factor_name, trade_date, value))
+
+    # 信用下沉因子 = AA − AAA（两者均有值的日期）
+    aaa = {
+        row["trade_date"]: row["factor_return"]
+        for row in rows
+        if row and row["factor_name"] == "bond_credit_aaa"
+    }
+    aa = {
+        row["trade_date"]: row["factor_return"]
+        for row in rows
+        if row and row["factor_name"] == "bond_credit_aa"
+    }
+    for trade_date in sorted(set(aaa) & set(aa)):
+        rows.append(
+            _factor_row("bond_credit_sink", trade_date, aa[trade_date] - aaa[trade_date])
+        )
+
+    # 转债因子：在库转债日收益截面等权
+    cb_rows = session.scalars(
+        select(BondDaily).where(BondDaily.daily_return.is_not(None))
+    ).all()
+    if cb_rows:
+        cb_frame = pd.DataFrame(
+            [
+                {"trade_date": row.trade_date, "daily_return": row.daily_return}
+                for row in cb_rows
+            ]
+        )
+        for trade_date, value in cb_frame.groupby("trade_date")["daily_return"].mean().items():
+            rows.append(_factor_row("bond_convertible", trade_date, value))
+
+    return [row for row in rows if row is not None]
+
+
+def _apply_factor_return_row(
+    session: Session,
+    row: dict,
+    source_name: str,
+    source_level: DataSourceLevel,
+    dry_run: bool,
+) -> str:
+    factor_name = str(row.get("factor_name") or "").strip()
+    trade_date = _parse_date(row.get("trade_date"))
+    if not factor_name or trade_date is None:
+        return "skipped"
+
+    existing = session.scalar(
+        select(FactorReturn)
+        .where(FactorReturn.factor_name == factor_name)
+        .where(FactorReturn.trade_date == trade_date)
+    )
+    if dry_run:
+        return "updated" if existing else "inserted"
+    if existing is None:
+        existing = FactorReturn(factor_name=factor_name, trade_date=trade_date)
+        session.add(existing)
+        action = "inserted"
+    else:
+        action = "updated"
+
+    existing.factor_return = _parse_float(row.get("factor_return"))
+    existing.source_name = source_name
+    existing.source_level = source_level.value
+    return action
+
+
+def upsert_factor_returns(
+    session: Session,
+    *,
+    factor_names: set[str] | None = None,
+    start_date: date | None = None,
+    end_date: date | None = None,
+    dry_run: bool = False,
+) -> UpdateSummary:
+    """构造并落库因子日收益（P4.1-5，因子收益统一走此实体）。"""
+    from fund_research.db.models_phase4 import (
+        BOND_FACTOR_NAMES,
+        FACTOR_NAMES,
+        STYLE_FACTOR_INDEX_SYMBOLS,
+    )
+
+    requested = set(factor_names) if factor_names else set(FACTOR_NAMES)
+    summary = UpdateSummary(
+        entity="factor_return",
+        source="local",
+        dry_run=dry_run,
+        warnings=[],
+    )
+    unknown = sorted(requested - set(FACTOR_NAMES))
+    if unknown:
+        summary.warnings.append(f"未知因子已跳过: {', '.join(unknown)}")
+    requested -= set(unknown)
+    if not requested:
+        return summary
+
+    rows: list[dict] = []
+    if requested & set(STYLE_FACTOR_INDEX_SYMBOLS):
+        rows.extend(build_style_factor_rows(session))
+    if requested & set(BOND_FACTOR_NAMES):
+        rows.extend(build_bond_factor_rows(session))
+
+    selected = [
+        row
+        for row in rows
+        if row["factor_name"] in requested
+        and (start_date is None or _parse_date(row["trade_date"]) >= start_date)
+        and (end_date is None or _parse_date(row["trade_date"]) <= end_date)
+    ]
+    summary.requested = len(selected)
+    if not selected:
+        summary.warnings.append("无可用因子样本（检查收益率曲线/指数行情/转债行情是否已入库）")
+        return summary
+
+    for row in _progress_iter(selected, "更新 因子收益"):
+        action = _apply_factor_return_row(
+            session,
+            row,
+            "local.derived",
+            DataSourceLevel.LOCAL,
+            dry_run,
+        )
+        if action == "inserted":
+            summary.inserted += 1
+        elif action == "updated":
+            summary.updated += 1
+        else:
+            summary.skipped += 1
+
+    if not dry_run:
+        _log_update_task(session, "factor_return", summary)
+        session.commit()
+    return summary

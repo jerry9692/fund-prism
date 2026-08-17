@@ -136,6 +136,7 @@ class BaseDataAdapter(ABC):
             "bond_main",
             "bond_daily",
             "yield_curve_daily",
+            "etf_profile",
             "benchmark_index_member",
             "stock_industry_membership",
             "fund_announcements",

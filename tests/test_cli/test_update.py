@@ -405,3 +405,129 @@ def test_update_help_includes_bond_domain_entities() -> None:
         "bond-main",
         "bond-daily",
     ]
+
+
+# ============================================================
+# P4.1-4: ETF 产品属性 — CLI 路由
+# ============================================================
+
+
+def test_update_etf_profile_routes_fund_codes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """etf-profile should pass --fund-code values into the ETF profile pipeline."""
+    import fund_research.data.update as update_module
+    from fund_research.data.update import UpdateSummary
+
+    sample_path = tmp_path / "sample.csv"
+    db_path = tmp_path / "fund_research.sqlite"
+    _write_sample(sample_path)
+    calls: dict[str, list] = {"profiles": []}
+
+    def fake_profiles(session, fund_codes, *, adapter=None, end_date=None, dry_run=False, **kwargs):
+        calls["profiles"].append(set(fund_codes))
+        return UpdateSummary(
+            entity="etf_profile", source="akshare", requested=len(fund_codes), dry_run=dry_run
+        )
+
+    monkeypatch.setattr(update_module, "upsert_etf_profiles", fake_profiles)
+
+    result = CliRunner().invoke(
+        app,
+        [
+            "update",
+            "etf-profile",
+            "--fund-code", "510300",
+            "--sample", str(sample_path),
+            "--db-path", str(db_path),
+            "--dry-run",
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert calls["profiles"] == [{"510300"}]
+
+
+def test_update_etf_profile_defaults_to_sample_etfs(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Without --fund-code, etf-profile should resolve sample ETFs via fund_main."""
+    import fund_research.data.update as update_module
+    from fund_research.data.update import UpdateSummary
+
+    sample_path = tmp_path / "sample.csv"
+    db_path = tmp_path / "fund_research.sqlite"
+    _write_sample(sample_path)
+    calls: dict[str, list] = {"profiles": [], "resolve": []}
+
+    def fake_profiles(session, fund_codes, *, adapter=None, end_date=None, dry_run=False, **kwargs):
+        calls["profiles"].append(set(fund_codes))
+        return UpdateSummary(
+            entity="etf_profile", source="akshare", requested=len(fund_codes), dry_run=dry_run
+        )
+
+    def fake_sample_etf_codes(session, fund_codes=None):
+        calls["resolve"].append(fund_codes)
+        return {"510300"}
+
+    monkeypatch.setattr(update_module, "upsert_etf_profiles", fake_profiles)
+    monkeypatch.setattr(update_module, "sample_etf_codes", fake_sample_etf_codes)
+
+    result = CliRunner().invoke(
+        app,
+        [
+            "update",
+            "etf-profile",
+            "--sample", str(sample_path),
+            "--db-path", str(db_path),
+            "--dry-run",
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert calls["profiles"] == [{"510300"}]
+    assert len(calls["resolve"]) == 1
+    # 域名别名 etf 亦可解析
+    assert _selected_update_entities("sample-funds", "etf") == ["etf-profile"]
+
+
+# ============================================================
+# P4.1-5: 因子收益表 — CLI 路由
+# ============================================================
+
+
+def test_update_factor_return_routes_factors(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """factor-return should pass --factor values into the factor pipeline."""
+    import fund_research.data.update as update_module
+    from fund_research.data.update import UpdateSummary
+
+    sample_path = tmp_path / "sample.csv"
+    db_path = tmp_path / "fund_research.sqlite"
+    _write_sample(sample_path)
+    calls: dict[str, list] = {"factors": []}
+
+    def fake_factors(session, *, factor_names=None, start_date=None, end_date=None, dry_run=False, **kwargs):
+        calls["factors"].append(factor_names)
+        return UpdateSummary(entity="factor_return", source="local", dry_run=dry_run)
+
+    monkeypatch.setattr(update_module, "upsert_factor_returns", fake_factors)
+
+    result = CliRunner().invoke(
+        app,
+        [
+            "update",
+            "factor-return",
+            "--factor", "bond_rate",
+            "--factor", "style_large_cap",
+            "--sample", str(sample_path),
+            "--db-path", str(db_path),
+            "--dry-run",
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert calls["factors"] == [{"bond_rate", "style_large_cap"}]
+    # 域名别名 factor 亦可解析；不传 --factor 时为全量（None）
+    assert _selected_update_entities("sample-funds", "factor") == ["factor-return"]

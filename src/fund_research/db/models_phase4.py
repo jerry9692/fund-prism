@@ -12,6 +12,12 @@ P4.1-3 债券数据域（需求书 §5.1 / §15.2）：
 - yield_curve_daily   收益率曲线日序（国债/中短票 AAA/AA，供久期/利率/
                       斜率/信用因子构造，§6.2.7 债基因子回归输入）
 
+P4.1-4 ETF 产品属性（需求书 §6.2.8 评价维度）：
+- etf_profile         ETF 产品属性快照（流动性/折溢价/跟踪误差/超额）
+
+P4.1-5 因子收益表（需求书 §15.2 / §6.2.7）：
+- factor_return       因子日收益序列（风格因子 + 债券因子）
+
 注意：行业分类口径版本化（需求书 §5.3.3），classification_system +
 classification_version 必填体系与版本，避免"代理基准"口径漂移。
 债券评级口径（§5.3.3）：bond_main.rating 记录抓取时点评级，
@@ -236,3 +242,119 @@ class YieldCurveDaily(Base):
 BondMainV4 = BondMain
 BondDailyV4 = BondDaily
 YieldCurveDailyV4 = YieldCurveDaily
+
+
+# ============================================================
+# P4.1-4 ETF 产品属性（需求书 §6.2.8）
+# ============================================================
+
+
+class EtfProfile(Base):
+    """ETF 产品属性快照 — 流动性/折溢价/跟踪误差/超额（§6.2.8 评价维度）。
+
+    跟踪误差与超额优先本地计算（fund_nav vs 指数行情），AKShare 快照仅提供
+    成交额/换手/折溢价等市场字段；计算口径（窗口/样本数）落 extra 以便追溯。
+    """
+
+    __tablename__ = "etf_profile"
+
+    id: Mapped[int] = id_column()
+    fund_code: Mapped[str] = mapped_column(
+        String(20), unique=True, index=True, comment="ETF 基金代码，如 510300"
+    )
+    fund_name: Mapped[str | None] = mapped_column(String(100), comment="ETF 名称")
+    tracking_index_code: Mapped[str | None] = mapped_column(
+        String(20), comment="跟踪指数代码（benchmark symbol 口径，如 sh000300）"
+    )
+    tracking_index_name: Mapped[str | None] = mapped_column(String(100), comment="跟踪指数名称")
+    inception_date: Mapped[date | None] = mapped_column(Date, comment="成立日期")
+    avg_daily_amount_1y: Mapped[float | None] = mapped_column(
+        Float, comment="近一年日均成交额（元）"
+    )
+    avg_daily_turnover_1y: Mapped[float | None] = mapped_column(
+        Float, comment="近一年日均换手率(%)"
+    )
+    latest_premium_rate: Mapped[float | None] = mapped_column(
+        Float, comment="最新 IOPV 溢折率(%)，正=溢价，负=折价"
+    )
+    tracking_error_1y: Mapped[float | None] = mapped_column(
+        Float, comment="近一年年化跟踪误差（本地计算，小数口径）"
+    )
+    tracking_error_inception: Mapped[float | None] = mapped_column(
+        Float, comment="成立以来年化跟踪误差（本地计算，小数口径）"
+    )
+    annualized_excess_1y: Mapped[float | None] = mapped_column(
+        Float, comment="近一年年化超额收益（基金 vs 指数，小数口径）"
+    )
+    annualized_excess_inception: Mapped[float | None] = mapped_column(
+        Float, comment="成立以来年化超额收益（小数口径）"
+    )
+    snapshot_date: Mapped[date | None] = mapped_column(Date, comment="快照日期")
+    source_name: Mapped[str] = mapped_column(String(80), comment="数据源名称")
+    source_level: Mapped[str] = mapped_column(String(10), comment="数据源等级 A/B/C/LOCAL")
+    extra: Mapped[dict[str, Any] | None] = mapped_column(
+        JSON, comment="计算口径快照（样本数/窗口/原始折价率等）"
+    )
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.now)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime, default=datetime.now, onupdate=datetime.now
+    )
+
+
+# ETF 属性导出别名
+EtfProfileV4 = EtfProfile
+
+
+# ============================================================
+# P4.1-5 因子收益表（需求书 §15.2 / §6.2.7）
+# ============================================================
+
+# 风格因子 → 指数行情 benchmark symbol（复用 exposure.DEFAULT_STYLE_FACTORS 口径）
+STYLE_FACTOR_INDEX_SYMBOLS = {
+    "style_large_cap": "sh000300",
+    "style_mid_cap": "sh000905",
+    "style_small_cap": "sh000852",
+    "style_growth": "sz399370",
+    "style_value": "sz399371",
+}
+
+# 债券因子（§6.2.7，由收益率曲线差分/信用利差差分/转债行情构造，见 update.py）
+BOND_FACTOR_NAMES = (
+    "bond_coupon",  # 票息因子：1Y 国债日 carry
+    "bond_rate",  # 利率波动因子：−10×Δy(10Y)，10 年零息久期口径
+    "bond_slope",  # 曲线斜率因子：10Y 与 1Y 零息收益之差
+    "bond_convexity",  # 曲线凸度因子：0.5×10²×(Δy10)²
+    "bond_credit_aaa",  # 隐含 AAA 信用因子：−3×Δ利差（3Y 中票久期口径）
+    "bond_credit_aa",  # 隐含 AA 信用因子：−3×Δ利差
+    "bond_credit_sink",  # 信用下沉因子：AA − AAA
+    "bond_convertible",  # 转债因子：在库转债等权日收益
+)
+
+FACTOR_NAMES = (*STYLE_FACTOR_INDEX_SYMBOLS, *BOND_FACTOR_NAMES)
+
+
+class FactorReturn(Base):
+    """因子日收益表 — 风格因子 + 债券因子统一存储（§15.2 因子收益表）。"""
+
+    __tablename__ = "factor_return"
+
+    id: Mapped[int] = id_column()
+    factor_name: Mapped[str] = mapped_column(
+        String(40), index=True, comment="因子名，如 style_large_cap / bond_rate"
+    )
+    trade_date: Mapped[date] = mapped_column(Date, index=True, comment="交易日")
+    factor_return: Mapped[float | None] = mapped_column(Float, comment="因子日收益（小数口径）")
+    source_name: Mapped[str] = mapped_column(String(80), comment="数据源名称")
+    source_level: Mapped[str] = mapped_column(String(10), comment="数据源等级 A/B/C/LOCAL")
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.now)
+
+    __table_args__ = (
+        UniqueConstraint(
+            "factor_name", "trade_date", name="uq_factor_name_trade_date"
+        ),
+        Index("ix_factor_return_name_date", "factor_name", "trade_date"),
+    )
+
+
+# 因子收益导出别名
+FactorReturnV4 = FactorReturn

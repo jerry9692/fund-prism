@@ -243,6 +243,43 @@ def cb_sina_symbol(symbol: str) -> str:
     return f"sz{code}" if code.startswith("12") else f"sh{code}"
 
 
+# ETF 跟踪指数名称 → benchmark symbol 映射（P4.1-4，覆盖常见宽基/主题指数）
+ETF_INDEX_NAME_TO_SYMBOL = {
+    "沪深300": "sh000300",
+    "中证500": "sh000905",
+    "中证1000": "sh000852",
+    "上证50": "sh000016",
+    "上证180": "sh000010",
+    "上证380": "sh000009",
+    "创业板指": "sz399006",
+    "创业板50": "sz399673",
+    "科创50": "sh000688",
+    "中证红利": "sh000922",
+    "深证100": "sz399330",
+    "深证300": "sz399008",
+    "中证A500": "sh000510",
+}
+
+
+def resolve_tracking_index_symbol(index_name: str | None) -> str | None:
+    """将 ETF 跟踪指数名称解析为 benchmark symbol（无法解析时返回 None）。"""
+    if not index_name:
+        return None
+    cleaned = str(index_name).strip().removesuffix("指数")
+    if cleaned in ETF_INDEX_NAME_TO_SYMBOL:
+        return ETF_INDEX_NAME_TO_SYMBOL[cleaned]
+    for name, symbol in ETF_INDEX_NAME_TO_SYMBOL.items():
+        if name in cleaned or cleaned in name:
+            return symbol
+    return None
+
+
+def etf_exchange_symbol(symbol: str) -> str:
+    """ETF 代码转新浪 symbol（1 开头深市 / 5 开头沪市）。"""
+    code = str(symbol).strip().zfill(6)
+    return f"sz{code}" if code.startswith("1") else f"sh{code}"
+
+
 def _add_months(day: date, months: int) -> date:
     """日期按月偏移（日序收敛到目标月最后一天）。"""
     month_index = day.month - 1 + months
@@ -260,6 +297,19 @@ def _json_safe_value(value: Any) -> Any:
     if isinstance(value, (date, pd.Timestamp)):
         return value.isoformat()
     return value
+
+
+def _retry_call(func: Callable[..., Any], *args: Any, max_retries: int = 3, **kwargs: Any) -> Any:
+    """东财接口偶发断连，统一指数退避重试。"""
+    last_exc: Exception | None = None
+    for attempt in range(max_retries):
+        try:
+            return func(*args, **kwargs)
+        except Exception as exc:
+            last_exc = exc
+            if attempt < max_retries - 1:
+                sleep(2**attempt)
+    raise last_exc if last_exc else RuntimeError("retry failed")
 
 
 def _manager_id_from_identity(name: str, company_name: str | None = None) -> str:
@@ -1559,6 +1609,207 @@ class AkshareAdapter(BaseDataAdapter):
             return result
         except Exception as exc:
             return self._error_result("yield_curve_daily", started_at, exc)
+
+    # ============================================================
+    # P4.1-4 ETF 产品属性（etf_profile）
+    # ============================================================
+
+    def fetch_etf_spot(self) -> FetchResult:
+        """拉取全市场 ETF 实时快照（东财），标准化折溢价口径（正=溢价）。"""
+        started_at = perf_counter()
+        try:
+            raw = pd.DataFrame(_retry_call(self.ak.fund_etf_spot_em)).rename(
+                columns={
+                    "代码": "fund_code",
+                    "名称": "fund_name",
+                    "最新价": "latest_price",
+                    "IOPV实时估值": "iopv",
+                    "基金折价率": "discount_rate_pct",
+                    "成交额": "amount",
+                    "换手率": "turnover_rate_pct",
+                    "最新份额": "latest_shares",
+                    "总市值": "market_cap",
+                    "数据日期": "snapshot_date",
+                }
+            )
+            data = pd.DataFrame(index=raw.index)
+            data["fund_code"] = raw["fund_code"].astype(str).str.zfill(6)
+            data["fund_name"] = raw.get("fund_name")
+            for column in (
+                "latest_price",
+                "iopv",
+                "discount_rate_pct",
+                "amount",
+                "turnover_rate_pct",
+                "latest_shares",
+                "market_cap",
+            ):
+                data[column] = pd.to_numeric(raw.get(column), errors="coerce")
+            # 东财口径：基金折价率正=折价；统一为溢折率正=溢价
+            data["latest_premium_rate"] = -data["discount_rate_pct"]
+            data["snapshot_date"] = raw.get("snapshot_date").astype(str).str.slice(0, 10)
+            extra_columns = [
+                "latest_price",
+                "iopv",
+                "discount_rate_pct",
+                "amount",
+                "turnover_rate_pct",
+                "latest_shares",
+                "market_cap",
+            ]
+            extras = raw.reindex(columns=extra_columns).to_dict(orient="records")
+            data["extra"] = [
+                {
+                    key: _json_safe_value(value)
+                    for key, value in extra.items()
+                    if pd.notna(value)
+                }
+                for extra in extras
+            ]
+            columns = [
+                "fund_code",
+                "fund_name",
+                "latest_premium_rate",
+                "snapshot_date",
+                "extra",
+            ]
+            return self._success_result_from_canonical(
+                "etf_profile",
+                data[columns],
+                started_at,
+                source_level=DataSourceLevel.B,
+            )
+        except Exception as exc:
+            return self._error_result("etf_profile", started_at, exc)
+
+    def fetch_etf_daily_hist(
+        self, symbol: str, start_date: date, end_date: date
+    ) -> FetchResult:
+        """拉取单只 ETF 日线行情，供日均成交额/换手率本地聚合。
+
+        首选东财（含换手率）；东财偶发断连时回退新浪（全量历史，仅成交额，
+        无换手率），窗口本地过滤。
+        """
+        started_at = perf_counter()
+        warnings: list[str] = []
+        source_label = "akshare.fund_etf_hist_em"
+        try:
+            try:
+                raw = pd.DataFrame(
+                    _retry_call(
+                        self.ak.fund_etf_hist_em,
+                        symbol=str(symbol).strip().zfill(6),
+                        period="daily",
+                        start_date=start_date.strftime("%Y%m%d"),
+                        end_date=end_date.strftime("%Y%m%d"),
+                        adjust="",
+                    )
+                ).rename(
+                    columns={
+                        "日期": "trade_date",
+                        "收盘": "close_price",
+                        "成交额": "amount",
+                        "换手率": "turnover_rate_pct",
+                    }
+                )
+            except Exception as exc:
+                warnings.append(f"东财 ETF 行情失败，回退新浪源（无换手率）: {exc}")
+                source_label = "akshare.fund_etf_hist_sina"
+                raw = pd.DataFrame(
+                    self.ak.fund_etf_hist_sina(symbol=etf_exchange_symbol(symbol))
+                ).rename(
+                    columns={
+                        "date": "trade_date",
+                        "close": "close_price",
+                        "amount": "amount",
+                    }
+                )
+                raw["turnover_rate_pct"] = None
+            data = pd.DataFrame(index=raw.index)
+            data["fund_code"] = str(symbol).strip().zfill(6)
+            data["trade_date"] = pd.to_datetime(raw["trade_date"], errors="coerce")
+            for column in ("close_price", "amount", "turnover_rate_pct"):
+                data[column] = pd.to_numeric(raw.get(column), errors="coerce")
+            data = data.dropna(subset=["trade_date"])
+            mask = (data["trade_date"] >= pd.Timestamp(start_date)) & (
+                data["trade_date"] <= pd.Timestamp(end_date)
+            )
+            data = data.loc[mask]
+            data["trade_date"] = data["trade_date"].dt.strftime("%Y-%m-%d")
+            columns = ["fund_code", "trade_date", "close_price", "amount", "turnover_rate_pct"]
+            result = self._success_result_from_canonical(
+                "etf_profile",
+                data[columns],
+                started_at,
+                source_level=DataSourceLevel.B,
+            )
+            result.warnings = warnings
+            result.source_name = source_label
+            return result
+        except Exception as exc:
+            result = self._error_result("etf_profile", started_at, exc)
+            result.warnings = warnings
+            return result
+
+    def fetch_etf_f10_profile(self, fund_code: str) -> FetchResult:
+        """抓取东财 F10 基本概况，解析跟踪标的与成立日期（C 级抓取源）。"""
+        started_at = perf_counter()
+        try:
+            code = str(fund_code).strip().zfill(6)
+            response = _retry_call(
+                requests.get,
+                f"https://fundf10.eastmoney.com/jbgk_{code}.html",
+                headers=EASTMONEY_F10_HEADERS,
+                timeout=30,
+            )
+            response.raise_for_status()
+            response.encoding = "utf-8"
+            text = response.text
+            tracking_match = re.search(r"跟踪标的</th><td>([^<]+)</td>", text)
+            tracking_name = tracking_match.group(1).strip() if tracking_match else None
+            inception_match = re.search(r"成立日期：<span>(\d{4}-\d{2}-\d{2})</span>", text)
+            if inception_match is None:
+                inception_match = re.search(
+                    r"成立日期/发行日期</th><td>\s*(\d{4})年(\d{2})月(\d{2})日", text
+                )
+            if inception_match is None:
+                inception_date = None
+            elif len(inception_match.groups()) == 1:
+                inception_date = inception_match.group(1)
+            else:
+                inception_date = (
+                    f"{inception_match.group(1)}-{inception_match.group(2)}"
+                    f"-{inception_match.group(3)}"
+                )
+            mgmt_fee_match = re.search(r"管理费率</th><td>\s*([\d.]+)%", text)
+            custody_fee_match = re.search(r"托管费率</th><td>\s*([\d.]+)%", text)
+            data = pd.DataFrame(
+                [
+                    {
+                        "fund_code": code,
+                        "tracking_index_name": tracking_name,
+                        "tracking_index_code": resolve_tracking_index_symbol(tracking_name),
+                        "inception_date": inception_date,
+                        "mgmt_fee_pct": (
+                            float(mgmt_fee_match.group(1)) if mgmt_fee_match else None
+                        ),
+                        "custody_fee_pct": (
+                            float(custody_fee_match.group(1)) if custody_fee_match else None
+                        ),
+                    }
+                ]
+            )
+            result = self._success_result_from_canonical(
+                "etf_profile",
+                data,
+                started_at,
+                source_level=DataSourceLevel.C,
+            )
+            if tracking_name and data.loc[0, "tracking_index_code"] is None:
+                result.warnings.append(f"跟踪标的无法解析为指数代码: {tracking_name}")
+            return result
+        except Exception as exc:
+            return self._error_result("etf_profile", started_at, exc)
 
     def fetch_sw_industry_membership(
         self,

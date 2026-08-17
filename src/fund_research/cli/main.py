@@ -52,6 +52,8 @@ UPDATE_ENTITY_ORDER = [
     "bond-daily",
     "yield-curve",
     "bond-domain",
+    "etf-profile",
+    "factor-return",
     "benchmark-members",
     "stock-industry",
     "benchmark-industry",
@@ -114,6 +116,15 @@ UPDATE_DOMAIN_ALIASES = {
     "yield": "yield-curve",
     "yield-curve": "yield-curve",
     "bond-yield": "yield-curve",
+    "etf": "etf-profile",
+    "etfs": "etf-profile",
+    "etf-profile": "etf-profile",
+    "etf-attribute": "etf-profile",
+    "etf-attributes": "etf-profile",
+    "factor": "factor-return",
+    "factors": "factor-return",
+    "factor-return": "factor-return",
+    "factor-returns": "factor-return",
     "benchmark": "benchmark-members",
     "benchmark-members": "benchmark-members",
     "benchmark-index-member": "benchmark-members",
@@ -142,7 +153,7 @@ UpdateEntityArg = Annotated[
             "(sample-funds/fund-info/fund-managers/fund-manager-history/fund-scale/fund-scale-history/fund-fees/fund-nav/"
             "fund-dividends/fund-holdings/fund-industry-allocation/"
             "fund-portfolio-change/holder-structure/stock-daily/index-daily/industry-index/"
-            "bond-main/bond-daily/yield-curve/bond-domain/"
+            "bond-main/bond-daily/yield-curve/bond-domain/etf-profile/factor-return/"
             "benchmark-members/stock-industry/benchmark-industry/official-pdf/all)"
         )
     ),
@@ -164,6 +175,13 @@ BondCodeOption = Annotated[
     typer.Option(
         "--bond-code",
         help="只更新指定可转债代码，可重复传入，如 128039 / 128039.SZ；bond-daily 不传则取样本基金披露转债持仓",
+    ),
+]
+FactorOption = Annotated[
+    list[str] | None,
+    typer.Option(
+        "--factor",
+        help="只构造指定因子，可重复传入，如 bond_rate / style_large_cap；不传则全部因子",
     ),
 ]
 SwLevelOption = Annotated[
@@ -977,6 +995,7 @@ def update(
     stock_code: StockCodeOption = None,
     index_symbol: IndexSymbolOption = None,
     bond_code: BondCodeOption = None,
+    factor: FactorOption = None,
     sw_level: SwLevelOption = 1,
     benchmark_members_file: BenchmarkMembersFileOption = None,
     industry_symbol: IndustrySymbolOption = None,
@@ -1008,6 +1027,7 @@ def update(
         latest_holding_stock_codes,
         load_sample_funds,
         resolve_sw_industry_index_symbols,
+        sample_etf_codes,
         upsert_akshare_benchmark_index_members,
         upsert_akshare_cb_daily,
         upsert_akshare_cb_list,
@@ -1033,6 +1053,8 @@ def update(
         upsert_benchmark_industry_weights,
         upsert_eastmoney_fund_manager_history,
         upsert_eastmoney_fund_scale_history,
+        upsert_etf_profiles,
+        upsert_factor_returns,
         upsert_local_benchmark_index_members,
         upsert_local_stock_industry_membership,
         upsert_sample_funds,
@@ -1294,6 +1316,41 @@ def update(
                     start_date=start_date,
                     end_date=end_date,
                     request_interval_seconds=max(request_interval, 0.3),
+                    dry_run=dry_run,
+                )
+            )
+        if "etf-profile" in selected_entities:
+            # P4.1-4: 默认范围为样本内场内 ETF（fund_main.is_etf），可用 --fund-code 指定
+            selected_etf_codes = (
+                set(fund_code) if fund_code else sample_etf_codes(session, selected_codes)
+            )
+            if selected_etf_codes:
+                summaries.append(
+                    upsert_etf_profiles(
+                        session,
+                        selected_etf_codes,
+                        end_date=end_date,
+                        dry_run=dry_run,
+                    )
+                )
+            else:
+                summaries.append(
+                    UpdateSummary(
+                        entity="etf_profile",
+                        source="akshare",
+                        requested=0,
+                        dry_run=dry_run,
+                        warnings=["样本范围内无场内 ETF（fund_main.is_etf=1）"],
+                    )
+                )
+        if "factor-return" in selected_entities:
+            # P4.1-5: 因子收益统一实体（风格因子 + 债券因子本地派生）
+            summaries.append(
+                upsert_factor_returns(
+                    session,
+                    factor_names=set(factor) if factor else None,
+                    start_date=start_date,
+                    end_date=end_date,
                     dry_run=dry_run,
                 )
             )
