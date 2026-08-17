@@ -195,6 +195,11 @@ def index_code_to_benchmark_symbol(index_code: str) -> str:
 
 SW_INDEX_CODE_RE = re.compile(r"^(80\d{4})(\.SI)?$", re.IGNORECASE)
 
+# 申万行业分类口径版本（P4.2-3 口径版本化，§5.3.3）：
+# 当前 AKShare 申万接口对应申万 2021 分类（2021-12 发布，31 个一级行业）。
+# index_main / stock_industry_membership 落库强制写此版本，禁止 unknown。
+SW_CLASSIFICATION_VERSION = "SW2021"
+
 
 def is_sw_index_symbol(symbol: str) -> bool:
     """判断是否申万指数代码（如 801010 / 801010.SI，申万体系 80 开头）。"""
@@ -547,7 +552,7 @@ class AkshareAdapter(BaseDataAdapter):
         result["stock_code"] = data["stock_code"].astype(str).str.extract(r"(\d{6})", expand=False)
         result["stock_name"] = data["stock_name"] if "stock_name" in data.columns else None
         result["classification_type"] = "SW"
-        result["classification_version"] = "unknown"
+        result["classification_version"] = SW_CLASSIFICATION_VERSION
         result["level"] = 1
         result["industry_code"] = None
         result["industry_name"] = data["sw_level_1"] if "sw_level_1" in data.columns else None
@@ -1190,6 +1195,7 @@ class AkshareAdapter(BaseDataAdapter):
             data["index_name"] = raw["index_name"]
             data["index_type"] = "industry"
             data["classification_system"] = "SW"
+            data["classification_version"] = SW_CLASSIFICATION_VERSION
             data["level"] = level
             data["member_count"] = pd.to_numeric(raw.get("member_count"), errors="coerce")
             valuation_columns = ["pe_static", "pe_ttm", "pb", "dividend_yield"]
@@ -1216,6 +1222,7 @@ class AkshareAdapter(BaseDataAdapter):
                 "index_name",
                 "index_type",
                 "classification_system",
+                "classification_version",
                 "level",
                 "member_count",
                 "extra",

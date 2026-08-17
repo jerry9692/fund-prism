@@ -262,11 +262,9 @@
 
 ## 3. 架构与口径准备（P4.2）
 
-### P4.2-1 模型模板机制扩展 ★阻塞债基/ETF 算法
+### P4.2-1 模型模板机制扩展 ★阻塞债基/ETF 算法 ✅ 已完成（2026-08-17）
 
 **需求来源**：§6.2.7 验收（"短债/纯债/二级债/转债基金需使用不同模板"）、§17（"不同基金类型混用模型"风险）。
-
-**现状**：[fingerprint.py](../src/fund_research/analysis/fingerprint.py) 仅 `active_equity`/`index_fund`/`default` 三套模板；债基无模板，债基因子算法无类型分流。
 
 **实现计划**：
 
@@ -276,11 +274,17 @@
 2. `credibility.py` 的 `MODULE_FUND_TYPE_EXCLUSIONS` 同步更新（债基因子仅适用债基，ETF 优选仅适用指数类，避免跨类型硬算）。
 3. 未适配类型直接标"不适用"（`needs_review`），不输出确定性结论。
 
-### P4.2-2 指标注册表补全
+**落地说明**（2026-08-17 实施记录）：
+
+1. **模板扩展**（`analysis/fingerprint.py`，算法版本 0.1.0→0.2.0）：新增债基四模板 `bond_pure/bond_short/bond_secondary/bond_convertible`（权益风格/行业/alpha 维度权重 0 不采集，债券因子维度组待 Phase 4 扩展）；指数细分 `index_passive`（被动指数/ETF/联接/普通指数，alpha=0）与 `index_enhanced`（指增，alpha=0.7）；旧 `index_fund` 模板保留兼容历史记录。路由表 `TEMPLATE_BY_SUB_CATEGORY` 覆盖全部 53 只样本 sub_category（含旧值"偏股混合"兼容）。
+2. **覆盖率口径修正**：指纹覆盖率仅统计权重 > 0 的启用维度，债基不因权益维度未采集误判低覆盖。
+3. **门禁同步**（`research/credibility.py`）：新增 `normalize_fund_family`（东财复合分类"债券型-短债"按前缀归族：bond/money/index/equity/mixed_family），`MODULE_FUND_TYPE_EXCLUSIONS` 改族匹配兼容旧精确名；新增 Phase 4 占位模块 `bond_factor_exposure`（仅债基）与 `etf_selection`（仅指数类）。
+4. **未适配类型标不适用**：回落 default 模板的基金 conclusion_status=`needs_review` 并附"不适用"告警。
+5. **冒烟**：53 只样本指纹分流核验 —— 30 active_equity + 12 债基（5 二级债/2 纯债/3 转债/2 短债）+ 11 指数（8 被动/3 增强）零误分流；30 只主动权益 computed，23 只新增样本因上游评分/规模链未跑标 needs_review（数据完整性门禁正常行为）。新增单测 39 例（模板路由/债基维度禁用/needs_review/族归一/门禁排除）。
+
+### P4.2-2 指标注册表补全 ✅ 已完成（2026-08-17）
 
 **需求来源**：§7.4 指标注册表（AI 理解口径的基础组件）。
-
-**现状**：`config/metrics_registry_template.yaml` 仅 8 个指标（收益/风险/集中度/持有人），无债基、ETF、跟踪误差、折溢价等定义。
 
 **实现计划**：补充以下指标组的 YAML 定义：
 
@@ -288,7 +292,9 @@
 - ETF/指数：跟踪误差、年化跟踪误差、日均偏离、折溢价、超额收益、信息比率
 - 基础补全（P4.0-2 同步）：胜率、回撤修复天数、同类排名
 
-### P4.2-3 口径版本化
+**落地说明**（2026-08-17 实施记录）：`config/metrics_registry_template.yaml` 新增 11 个指标：债券组 5（bond_duration/bond_credit_exposure/bond_leverage_ratio/convertible_bond_exposure/interest_rate_risk_exposure）+ ETF/指数组 6（tracking_error/annualized_tracking_error/avg_daily_tracking_deviation/premium_discount_rate/annualized_excess_return/information_ratio），口径与 `etf_profile` 字段、P4.1-4 本地计算口径对齐；基础三指标 P4.0-2 已补。`fund-research init` 重新 seed 验证 11 inserted / 11 updated 零跳过。
+
+### P4.2-3 口径版本化 ✅ 已完成（2026-08-17）
 
 **需求来源**：§5.3.3 口径一致性（行业分类、债券评级口径版本化）。
 
@@ -296,6 +302,11 @@
 
 1. `industry_category` 表已有 `classification_version` 字段，指数/成分数据（P4.1-2）落地时强制写版本。
 2. 债券评级口径：明确采用发行时评级 vs 最新评级，落库时记 `rating_date`/`rating_source`。
+
+**落地说明**（2026-08-17 实施记录）：
+
+1. **指数口径版本**：适配器新增常量 `SW_CLASSIFICATION_VERSION = "SW2021"`（申万 2021 分类，2021-12 发布 31 个一级行业）；`fetch_sw_index_list` / `_normalize_sw_industry_membership` 落库强制写版本（原 unknown 废弃）；`_apply_index_main_row` 申万体系缺版本时强制回填，禁止 None/unknown。存量 `stock_industry_membership` 5210 条 unknown 一次性修复为 SW2021；`index_main` 31 个申万一级全部 SW2021 入库零警告。
+2. **债券评级口径**：明确采用"抓取时点源站显示的最新评级快照"（非发行时评级）；`_apply_bond_main_row` 有评级时随库记 `extra.rating_date/rating_source/rating_basis`，无评级不落地空口径。重跑 bond-main 后 1045 只带评级转债全部补齐口径字段，`BondMain` 模型注释同步明确。
 
 ---
 
@@ -337,8 +348,9 @@ P4.2-2 指标注册表 (独立)─┘
 - [x] ETF 规模/费率/流动性/折溢价/跟踪误差字段齐备（P4.1-4；`etf_profile` 三样本 ETF 五维度全部产出，规模/费率由快照市值+F10 覆盖）
 - [x] 收益拆解"转债收益"从残差剥离，`estimated_convertible_bond_return` 为真实计算值（P4.0-1，含 `convertible_bond_coverage` 披离标识）
 - [x] §6.1.4 胜率/回撤修复天数/同类排名 三指标可用（P4.0-2，`nav_metrics.py` + `analysis/rank.py`）
-- [ ] 债基/指数模板分流就绪，未适配类型标"不适用"（P4.2-1）
-- [ ] 指标注册表覆盖债基/ETF 指标定义（P4.2-2）
+- [x] 债基/指数模板分流就绪，未适配类型标"不适用"（P4.2-1；债基四模板 + 指数被动/增强细分，53 只样本零误分流，default 回落标 needs_review）
+- [x] 指标注册表覆盖债基/ETF 指标定义（P4.2-2；债券组 5 + ETF/指数组 6 共 11 个新指标 seed 入库）
+- [x] 口径版本化（P4.2-3；申万指数/行业成分强制 SW2021 版本，债券评级口径 rating_date/rating_source 随库可追溯）
 
 ---
 
@@ -354,3 +366,6 @@ P4.2-2 指标注册表 (独立)─┘
 - [x] P4.1-3 债券数据域（`bond_main` / `bond_daily` / `yield_curve_daily` 三表 + 可转债/收益率曲线适配器 + CLI 批量链路 + 动态归因转债行情接入，2026-08-14）
 - [x] P4.1-4 ETF 产品属性（`etf_profile` 表 + ETF 快照/日线/F10 适配器 + 跟踪误差本地计算 + CLI，2026-08-17）
 - [x] P4.1-5 因子收益表（`factor_return` 表，风格因子 5 + 债券因子 8，收益率曲线差分/信用利差差分本地派生，2026-08-17）
+- [x] P4.2-1 模板机制扩展（债基四模板 + 指数被动/增强细分 + 基金族门禁，2026-08-17）
+- [x] P4.2-2 指标注册表补全（债券组 5 + ETF/指数组 6 指标，2026-08-17）
+- [x] P4.2-3 口径版本化（SW2021 强制版本 + 债券评级口径记录，2026-08-17）

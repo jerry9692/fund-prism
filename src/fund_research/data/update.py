@@ -18,6 +18,7 @@ from sqlalchemy.orm import Session
 
 from fund_research.core.enums import DataSourceLevel, DataSourceType, TaskStatus, TaskType
 from fund_research.data.adapters.akshare import (
+    SW_CLASSIFICATION_VERSION,
     AkshareAdapter,
     benchmark_symbol_to_index_code,
     canonical_cb_code,
@@ -1687,7 +1688,11 @@ def _apply_index_main_row(
     existing.index_name = index_name
     existing.index_type = str(row.get("index_type") or "industry").strip()
     existing.classification_system = str(row.get("classification_system") or "SW").strip()
-    existing.classification_version = row.get("classification_version")
+    # P4.2-3：申万体系强制写口径版本，禁止 unknown/None（§5.3.3）
+    version = row.get("classification_version")
+    if not version and existing.classification_system == "SW":
+        version = SW_CLASSIFICATION_VERSION
+    existing.classification_version = version
     level = _parse_float(row.get("level"))
     existing.level = int(level) if level is not None else None
     member_count = _parse_float(row.get("member_count"))
@@ -1738,6 +1743,7 @@ def _ensure_index_main_entries(
                 "index_name": name_by_code.get(code, code),
                 "index_type": "industry",
                 "classification_system": "SW",
+                "classification_version": SW_CLASSIFICATION_VERSION,
             },
             "akshare.sw_index_first_info",
             DataSourceLevel.B,
@@ -2067,7 +2073,14 @@ def _apply_bond_main_row(
     existing.source_name = source_name
     existing.source_level = source_level.value
     extra = row.get("extra")
-    existing.extra = extra if isinstance(extra, dict) and extra else None
+    extra = dict(extra) if isinstance(extra, dict) else {}
+    # P4.2-3 评级口径（§5.3.3）：rating 为抓取时点源站显示的最新评级快照
+    #（非发行时评级），rating_date/rating_source 随库可追溯
+    if existing.rating:
+        extra.setdefault("rating_date", date.today().isoformat())
+        extra["rating_source"] = source_name
+        extra["rating_basis"] = "抓取时点最新评级快照"
+    existing.extra = extra or None
     return action
 
 
@@ -2537,7 +2550,8 @@ def _normalize_local_stock_industry_row(row: dict[str, Any], default_source_name
         "stock_code": pick("stock_code", "股票代码", "证券代码", "code"),
         "stock_name": pick("stock_name", "股票简称", "证券简称", "name"),
         "classification_type": pick("classification_type", "分类体系") or "SW",
-        "classification_version": pick("classification_version", "分类版本") or "2021",
+        "classification_version": pick("classification_version", "分类版本")
+        or SW_CLASSIFICATION_VERSION,
         "level": pick("level", "分类层级") or 1,
         "industry_code": pick("industry_code", "行业代码"),
         "industry_name": pick("industry_name", "申万1级", "一级行业", "行业名称"),

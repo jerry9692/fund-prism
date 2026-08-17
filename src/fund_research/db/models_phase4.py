@@ -148,7 +148,12 @@ YIELD_CURVE_NAMES = (
 
 
 class BondMain(Base):
-    """债券主表 — 可转债/国债/金融债/信用债统一登记（需求书 §15.2）。"""
+    """债券主表 — 可转债/国债/金融债/信用债统一登记（需求书 §15.2）。
+
+    评级口径（P4.2-3，§5.3.3）：``rating`` 为抓取时点源站显示的最新评级
+    快照（非发行时评级），``extra.rating_date`` / ``extra.rating_source`` /
+    ``extra.rating_basis`` 记录口径可追溯。
+    """
 
     __tablename__ = "bond_main"
 

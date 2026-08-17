@@ -20,6 +20,7 @@ from fund_research.data.adapters.akshare import (
 )
 from fund_research.data.adapters.base import FetchResult
 from fund_research.data.update import (
+    _apply_bond_main_row,
     disclosed_convertible_bond_codes,
     load_credit_spread_series,
     upsert_akshare_cb_daily,
@@ -432,7 +433,11 @@ def test_upsert_akshare_cb_list_writes_bond_main(test_session: Session) -> None:
     assert row.conversion_price == pytest.approx(21.05)
     assert row.underlying_stock_code == "601012"
     assert row.listing_date == date(2019, 4, 8)
-    assert row.extra == {"conversion_value": 87.89}
+    # P4.2-3：评级口径随库可追溯（抓取时点快照）
+    assert row.extra["conversion_value"] == 87.89
+    assert row.extra["rating_source"] == "akshare.bond_zh_cov"
+    assert row.extra["rating_basis"] == "抓取时点最新评级快照"
+    assert "rating_date" in row.extra
     assert row.source_level == DataSourceLevel.B.value
 
 
@@ -445,6 +450,25 @@ def test_upsert_akshare_cb_list_is_idempotent(test_session: Session) -> None:
     assert first.inserted == 1
     assert second.inserted == 0
     assert second.updated == 1
+
+
+def test_apply_bond_main_row_no_rating_skips_rating_basis(test_session: Session) -> None:
+    """P4.2-3：无评级时不落 rating_date/rating_source（避免空口径记录）。"""
+    action = _apply_bond_main_row(
+        test_session,
+        {"bond_code": "113050.SH", "bond_name": "无评级转债", "bond_type": "convertible"},
+        "akshare.bond_zh_cov",
+        DataSourceLevel.B,
+        dry_run=False,
+    )
+
+    assert action == "inserted"
+    row = test_session.scalar(
+        select(BondMain).where(BondMain.bond_code == "113050.SH")
+    )
+    assert row is not None
+    assert row.rating is None
+    assert row.extra is None or "rating_date" not in (row.extra or {})
 
 
 def test_upsert_akshare_cb_daily_writes_rows(test_session: Session) -> None:

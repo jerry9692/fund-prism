@@ -8,6 +8,7 @@ import pytest
 
 from fund_research.core.enums import DataSourceLevel
 from fund_research.data.adapters.akshare import (
+    SW_CLASSIFICATION_VERSION,
     AkshareAdapter,
     benchmark_symbol_to_index_code,
     index_code_to_benchmark_symbol,
@@ -599,6 +600,8 @@ def test_fetch_sw_industry_membership_standardizes_level_one_rows() -> None:
     row = result.data.iloc[0]
     assert row["stock_code"] == "600519"
     assert row["classification_type"] == "SW"
+    # P4.2-3：口径版本强制写（§5.3.3），禁止 unknown
+    assert row["classification_version"] == SW_CLASSIFICATION_VERSION
     assert row["level"] == 1
     assert row["industry_name"] == "食品饮料"
     assert row["effective_date"] == "2021-12-13"

@@ -10,6 +10,7 @@ from sqlalchemy.orm import Session
 
 from fund_research.core.enums import DataSourceLevel, DataSourceType
 from fund_research.data.adapters.akshare import (
+    SW_CLASSIFICATION_VERSION,
     AkshareAdapter,
     canonical_sw_index_code,
     is_sw_index_symbol,
@@ -17,6 +18,7 @@ from fund_research.data.adapters.akshare import (
 )
 from fund_research.data.adapters.base import FetchResult
 from fund_research.data.update import (
+    _apply_index_main_row,
     resolve_sw_industry_index_symbols,
     upsert_akshare_index_constituents,
     upsert_akshare_index_main,
@@ -166,6 +168,8 @@ def test_fetch_sw_index_list_level1_standardizes_rows() -> None:
     assert row["index_name"] == "农林牧渔"
     assert row["index_type"] == "industry"
     assert row["classification_system"] == "SW"
+    # P4.2-3：口径版本强制写（§5.3.3）
+    assert row["classification_version"] == SW_CLASSIFICATION_VERSION
     assert row["level"] == 1
     assert row["member_count"] == 104
     assert row["extra"]["pe_static"] == 22.51
@@ -515,3 +519,26 @@ def test_resolve_sw_industry_index_symbols_falls_back_to_db(test_session: Sessio
     symbols = resolve_sw_industry_index_symbols(test_session, adapter=BrokenAdapter())
 
     assert symbols == {"801050.SI"}
+
+
+def test_apply_index_main_row_forces_classification_version(test_session: Session) -> None:
+    """P4.2-3：申万体系缺失版本时强制回填 SW_CLASSIFICATION_VERSION，禁止 unknown。"""
+    action = _apply_index_main_row(
+        test_session,
+        {
+            "index_code": "801010.SI",
+            "index_name": "农林牧渔",
+            "index_type": "industry",
+            "classification_system": "SW",
+            # 故意不提供 classification_version
+        },
+        "akshare.sw_index_first_info",
+        DataSourceLevel.B,
+        dry_run=False,
+    )
+
+    assert action == "inserted"
+    row = test_session.scalar(select(IndexMain).where(IndexMain.index_code == "801010.SI"))
+    assert row is not None
+    assert row.classification_version == SW_CLASSIFICATION_VERSION
+    assert row.classification_version != "unknown"

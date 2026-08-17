@@ -161,6 +161,159 @@ metrics:
     version: "1.0.0"
     limitations: "仅在同一二级分类内可比；单只基金组无分位数"
 
+  # --- 债券指标组（P4.2-2，需求书 §7.4 / §6.2.7） ---
+  - field_name: bond_duration
+    name_zh: 组合久期
+    name_en: Portfolio Duration
+    entity_type: fund
+    data_type: float
+    unit: "年"
+    formula: "sum(bond_weight_pct * bond_duration)（定期报告披露口径）"
+    input_fields: ["bond_duration", "weight_pct"]
+    applicable_fund_types: ["债券型"]
+    update_frequency: semiannual
+    metric_group: bond
+    version: "1.0.0"
+    limitations: "仅半年报/年报披露；未披露时为 None，不得用持仓个券久期硬造"
+
+  - field_name: bond_credit_exposure
+    name_zh: 信用债暴露
+    name_en: Credit Bond Exposure
+    entity_type: fund
+    data_type: float
+    unit: "%"
+    formula: "sum(信用债持仓权重)（评级非国债/政金债的债券持仓）"
+    input_fields: ["bond_rating", "weight_pct"]
+    applicable_fund_types: ["债券型"]
+    update_frequency: semiannual
+    metric_group: bond
+    version: "1.0.0"
+    limitations: "依赖披露持仓的评级字段；评级为抓取时点快照（P4.2-3 口径）"
+
+  - field_name: bond_leverage_ratio
+    name_zh: 杠杆率
+    name_en: Bond Fund Leverage Ratio
+    entity_type: fund
+    data_type: float
+    unit: "%"
+    formula: "基金总资产 / 基金净资产 * 100（定期报告披露）"
+    input_fields: ["total_assets", "net_assets"]
+    applicable_fund_types: ["债券型"]
+    update_frequency: semiannual
+    metric_group: bond
+    version: "1.0.0"
+    limitations: "仅定期报告可得；>140% 通常触发关注阈值"
+
+  - field_name: convertible_bond_exposure
+    name_zh: 转债暴露
+    name_en: Convertible Bond Exposure
+    entity_type: fund
+    data_type: float
+    unit: "%"
+    formula: "sum(可转债持仓权重)（asset_type='可转债'）"
+    input_fields: ["asset_type", "weight_pct"]
+    applicable_fund_types: ["债券型", "混合型"]
+    update_frequency: semiannual
+    metric_group: bond
+    version: "1.0.0"
+
+  - field_name: interest_rate_risk_exposure
+    name_zh: 利率风险暴露
+    name_en: Interest Rate Risk Exposure
+    entity_type: fund
+    data_type: float
+    unit: "%"
+    formula: "−duration × Δy(10Y国债)（近似，Δy 取自 yield_curve_daily）"
+    input_fields: ["bond_duration", "yield_curve_daily"]
+    applicable_fund_types: ["债券型"]
+    update_frequency: daily
+    metric_group: bond
+    version: "1.0.0"
+    limitations: "久期缺失时不可计算；凸度项忽略，利率大幅波动日误差放大"
+
+  # --- ETF/指数指标组（P4.2-2，需求书 §6.2.8） ---
+  - field_name: tracking_error
+    name_zh: 跟踪误差
+    name_en: Tracking Error
+    entity_type: fund
+    data_type: float
+    unit: ""
+    formula: "std(fund_daily_return − index_daily_return)（日频，小数口径）"
+    input_fields: ["fund_nav.daily_return", "stock_daily.daily_return"]
+    applicable_fund_types: ["指数型", "ETF"]
+    update_frequency: daily
+    metric_group: index_tracking
+    version: "1.0.0"
+    limitations: "最小样本 20 个交易日（ETF_TRACKING_MIN_OBSERVATIONS）"
+
+  - field_name: annualized_tracking_error
+    name_zh: 年化跟踪误差
+    name_en: Annualized Tracking Error
+    entity_type: fund
+    data_type: float
+    unit: "%"
+    formula: "tracking_error × sqrt(252) × 100"
+    input_fields: ["tracking_error"]
+    applicable_fund_types: ["指数型", "ETF"]
+    update_frequency: daily
+    metric_group: index_tracking
+    version: "1.0.0"
+    explanation: "etf_profile.tracking_error_1y / tracking_error_inception 分别对应近一年与成立以来窗口"
+
+  - field_name: avg_daily_tracking_deviation
+    name_zh: 日均跟踪偏离
+    name_en: Average Daily Tracking Deviation
+    entity_type: fund
+    data_type: float
+    unit: ""
+    formula: "mean(abs(fund_daily_return − index_daily_return))"
+    input_fields: ["fund_nav.daily_return", "stock_daily.daily_return"]
+    applicable_fund_types: ["指数型", "ETF"]
+    update_frequency: daily
+    metric_group: index_tracking
+    version: "1.0.0"
+
+  - field_name: premium_discount_rate
+    name_zh: IOPV 溢折率
+    name_en: IOPV Premium/Discount Rate
+    entity_type: fund
+    data_type: float
+    unit: "%"
+    formula: "(market_price − IOPV) / IOPV × 100（正=溢价）"
+    input_fields: ["fund_etf_spot_em"]
+    applicable_fund_types: ["ETF"]
+    update_frequency: daily
+    metric_group: index_tracking
+    version: "1.0.0"
+    limitations: "存库口径统一为正=溢价（东财原始「基金折价率」取反）；盘前行情字段可能为空"
+
+  - field_name: annualized_excess_return
+    name_zh: 年化超额收益
+    name_en: Annualized Excess Return
+    entity_type: fund
+    data_type: float
+    unit: "%"
+    formula: "(∏(1+fund_return)/∏(1+index_return) − 1) 年化 × 100"
+    input_fields: ["fund_nav.daily_return", "stock_daily.daily_return"]
+    applicable_fund_types: ["指数型", "ETF"]
+    update_frequency: daily
+    metric_group: index_tracking
+    version: "1.0.0"
+    explanation: "etf_profile.annualized_excess_1y / annualized_excess_inception"
+
+  - field_name: information_ratio
+    name_zh: 信息比率
+    name_en: Information Ratio
+    entity_type: fund
+    data_type: float
+    unit: ""
+    formula: "mean(excess_daily_return) / std(excess_daily_return) × sqrt(252)"
+    input_fields: ["fund_nav.daily_return", "stock_daily.daily_return"]
+    applicable_fund_types: ["指数型", "ETF", "主动权益"]
+    update_frequency: daily
+    metric_group: index_tracking
+    version: "1.0.0"
+
 # ============================================================
 # 数据源等级映射
 # ============================================================

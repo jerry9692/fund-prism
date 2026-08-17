@@ -122,14 +122,42 @@ MAX_RESIDUAL: dict[str, float] = {
     "attribution_residual_max": 0.5,  # 归因残差占比 > 50% → 降级
 }
 
-# 不适用于某类基金的模块
+# 不适用于某类基金的模块（P4.2-1：按基金族匹配，兼容精确类型名）
+# 族名：bond_family / money_family / index_family / equity_family / mixed_family
 MODULE_FUND_TYPE_EXCLUSIONS: dict[str, set[str]] = {
-    "exposure": {"债券型", "货币型", "偏债混合"},
-    "attribution": {"债券型", "货币型"},
-    "simulated_holding": {"债券型", "货币型", "指数型"},
-    "dynamic_attribution": {"债券型", "货币型"},
-    "scoring": {"货币型"},
+    "exposure": {"bond_family", "money_family", "偏债混合"},
+    "attribution": {"bond_family", "money_family"},
+    "simulated_holding": {"bond_family", "money_family", "index_family"},
+    "dynamic_attribution": {"bond_family", "money_family"},
+    "scoring": {"money_family"},
+    # Phase 4 模块占位（§6.2.7/§6.2.8）：债基因子仅适用债基，ETF 优选仅适用指数类
+    "bond_factor_exposure": {"equity_family", "index_family", "mixed_family", "money_family"},
+    "etf_selection": {"bond_family", "money_family", "equity_family", "mixed_family"},
 }
+
+# 基金族归一化（§5.3.3 口径：东财分类如 "债券型-短债" 按前缀归族）
+FUND_FAMILY_PREFIXES: tuple[tuple[str, str], ...] = (
+    ("债券型", "bond_family"),
+    ("货币", "money_family"),
+    ("股票型-增强指数", "index_family"),
+    ("股票型-标准指数", "index_family"),
+    ("指数", "index_family"),
+    ("股票型", "equity_family"),
+    ("混合型", "mixed_family"),
+)
+
+
+def normalize_fund_family(category: str | None) -> str | None:
+    """将基金分类（含 "债券型-短债" 类复合值）归一为基金族。
+
+    返回 FUND_FAMILY_PREFIXES 中的族名；无法识别时返回 None（视为适用）。
+    """
+    if not category:
+        return None
+    for prefix, family in FUND_FAMILY_PREFIXES:
+        if str(category).startswith(prefix):
+            return family
+    return None
 
 
 # ============================================================
@@ -256,9 +284,12 @@ def check_algorithm_applicability(
     门禁3：算法适用性检查。
 
     检查基金类型是否适用该算法模块（如债券基金不应跑权益风格暴露）。
+    P4.2-1：同时支持精确类型名与基金族（bond_family 等）匹配。
     """
     exclusions = MODULE_FUND_TYPE_EXCLUSIONS.get(module, set())
-    if fund_type and fund_type in exclusions:
+    family = normalize_fund_family(fund_type)
+    excluded = bool(fund_type) and (fund_type in exclusions or (family in exclusions))
+    if excluded:
         return GateResult(
             gate_type=GateType.ALGORITHM_APPLICABILITY,
             passed=False,

@@ -207,14 +207,56 @@ def test_select_template_active_equity():
 
 
 def test_select_template_index_fund():
-    """Index funds should use the index_fund template."""
+    """被动指数类 should use the index_passive template (P4.2-1)."""
     fund = FundMain(fund_code="000002", short_name="t", full_name="t", category="指数型", sub_category="被动指数")
-    assert _select_template(fund) == "index_fund"
+    assert _select_template(fund) == "index_passive"
 
 
 def test_select_template_none():
     """No fund should use the default template."""
     assert _select_template(None) == "default"
+
+
+@pytest.mark.parametrize(
+    ("sub_category", "expected"),
+    [
+        ("ETF", "index_passive"),
+        ("ETF联接", "index_passive"),
+        ("普通指数", "index_passive"),
+        ("指数增强", "index_enhanced"),
+        ("纯债", "bond_pure"),
+        ("短债", "bond_short"),
+        ("一级债基", "bond_secondary"),
+        ("二级债基", "bond_secondary"),
+        ("可转债", "bond_convertible"),
+        ("主动权益", "active_equity"),
+        ("偏股混合", "active_equity"),
+        ("未知新类型", "default"),
+    ],
+)
+def test_select_template_p421_routing(sub_category: str, expected: str):
+    """P4.2-1: 模板分流覆盖债基四模板 + 指数细分。"""
+    fund = FundMain(
+        fund_code="T0001", short_name="t", full_name="t",
+        category="x", sub_category=sub_category,
+    )
+    assert _select_template(fund) == expected
+
+
+def test_bond_templates_disable_equity_dimensions():
+    """债基模板的权益风格/行业/alpha 维度权重必须为 0（§6.2.7 验收）。"""
+    for name in ("bond_pure", "bond_short", "bond_secondary", "bond_convertible"):
+        template = FINGERPRINT_TEMPLATES[name]
+        assert template["style_exposure"] == 0.0
+        assert template["industry_exposure"] == 0.0
+        assert template["alpha"] == 0.0
+        assert template["return_risk"] > 0
+
+
+def test_index_enhanced_template_has_alpha():
+    """指数增强模板应保留 alpha 维度（超额可评估）。"""
+    assert FINGERPRINT_TEMPLATES["index_enhanced"]["alpha"] > 0
+    assert FINGERPRINT_TEMPLATES["index_passive"]["alpha"] == 0.0
 
 
 def test_template_definitions_complete():
@@ -295,6 +337,45 @@ def test_generate_fingerprint_missing_data(test_session):
     assert len(result.missing_dimensions) > 0
     assert result.confidence == "low"
     assert result.conclusion_status == "needs_review"
+
+
+def test_generate_fingerprint_bond_template(test_session):
+    """P4.2-1：债基走 bond_pure 模板，权益维度不采集也不计缺失。"""
+    _create_fund(test_session, "B0001", sub_category="纯债")
+    _create_scoring(test_session, "B0001")
+    _create_scale(test_session, "B0001")
+    _create_manager_tenure(test_session, "B0001")
+    test_session.commit()
+
+    result = generate_fingerprint(test_session, "B0001")
+
+    assert result.template_name == "bond_pure"
+    assert "return_risk" in result.vector
+    assert "scale" in result.vector
+    assert "team" in result.vector
+    # 权益维度不采集（权重 0），不应计入 vector 也不应计入缺失
+    assert "style_exposure" not in result.vector
+    assert "industry_exposure" not in result.vector
+    assert "alpha" not in result.vector
+    assert not any("style_exposure" in d for d in result.missing_dimensions)
+
+
+def test_generate_fingerprint_unadapted_type_needs_review(test_session):
+    """P4.2-1：无专用模板的类型回落 default，结论标不适用。"""
+    _setup_full_fund(test_session, "000001")
+    from sqlalchemy import select
+
+    fund = test_session.scalars(
+        select(FundMain).where(FundMain.fund_code == "000001")
+    ).first()
+    fund.sub_category = "货币市场型"  # 尚无专用模板
+    test_session.commit()
+
+    result = generate_fingerprint(test_session, "000001")
+
+    assert result.template_name == "default"
+    assert result.conclusion_status == "needs_review"
+    assert any("不适用" in warning for warning in result.warnings)
 
 
 def test_generate_fingerprint_industry_hhi(test_session):

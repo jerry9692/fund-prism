@@ -11,7 +11,12 @@ Each fund gets a multi-dimensional vector grouped by dimension categories:
 - scale: fund scale, scale change rate
 - team: manager tenure days, change frequency
 
-Different fund types use different templates (active_equity vs index_fund).
+Different fund types use different templates (P4.2-1 模板分流):
+- active_equity: 主动权益
+- index_passive / index_enhanced: 指数类细分（被动/增强）
+- bond_pure / bond_short / bond_secondary / bond_convertible: 债基四模板
+债基模板仅启用收益风险/规模/团队维度（权益风格/行业/alpha 维度不适用），
+债券因子维度组待 Phase 4 债基因子算法落地后扩展。
 Estimated dimensions (turnover, dynamic attribution residual) use estimated_*
 prefix and are flagged in vector_metadata.
 
@@ -39,9 +44,10 @@ from fund_research.db.models_phase3 import FundFingerprint
 from fund_research.utils import safe_float
 
 ALGORITHM_NAME = "fund_fingerprint"
-ALGORITHM_VERSION = "0.1.0"
+ALGORITHM_VERSION = "0.2.0"
 
 # Dimension group weights per fund type template
+# 权重 0 的维度组不采集（债基的权益风格/行业/alpha 维度不适用，§6.2.7 验收）。
 FINGERPRINT_TEMPLATES: dict[str, dict[str, float]] = {
     "active_equity": {
         "return_risk": 1.0,
@@ -53,6 +59,7 @@ FINGERPRINT_TEMPLATES: dict[str, dict[str, float]] = {
         "team": 0.5,
     },
     "index_fund": {
+        # 兼容旧模板名（历史指纹记录）；新路由走 index_passive / index_enhanced
         "return_risk": 0.5,
         "style_exposure": 1.0,
         "industry_exposure": 1.0,
@@ -60,6 +67,67 @@ FINGERPRINT_TEMPLATES: dict[str, dict[str, float]] = {
         "alpha": 0.0,
         "scale": 0.5,
         "team": 0.3,
+    },
+    "index_passive": {
+        # 被动指数 / ETF / ETF联接 / 普通指数：无主动 alpha
+        "return_risk": 0.5,
+        "style_exposure": 1.0,
+        "industry_exposure": 1.0,
+        "holding_features": 0.5,
+        "alpha": 0.0,
+        "scale": 0.5,
+        "team": 0.3,
+    },
+    "index_enhanced": {
+        # 指数增强：选股/择时增强产生可评估的超额
+        "return_risk": 0.5,
+        "style_exposure": 1.0,
+        "industry_exposure": 1.0,
+        "holding_features": 0.5,
+        "alpha": 0.7,
+        "scale": 0.5,
+        "team": 0.3,
+    },
+    "bond_pure": {
+        # 纯债：仅收益风险/规模/团队；权益维度权重 0 不采集，
+        # 债券因子维度组待 Phase 4 扩展
+        "return_risk": 1.0,
+        "style_exposure": 0.0,
+        "industry_exposure": 0.0,
+        "holding_features": 0.0,
+        "alpha": 0.0,
+        "scale": 0.5,
+        "team": 0.5,
+    },
+    "bond_short": {
+        # 短债：同纯债，久期短、波动低
+        "return_risk": 1.0,
+        "style_exposure": 0.0,
+        "industry_exposure": 0.0,
+        "holding_features": 0.0,
+        "alpha": 0.0,
+        "scale": 0.5,
+        "team": 0.5,
+    },
+    "bond_secondary": {
+        # 一级/二级债基：可含少量权益，持仓特征低权重
+        "return_risk": 1.0,
+        "style_exposure": 0.0,
+        "industry_exposure": 0.0,
+        "holding_features": 0.3,
+        "alpha": 0.0,
+        "scale": 0.5,
+        "team": 0.5,
+    },
+    "bond_convertible": {
+        # 可转债基金：股性较强，持仓特征适度参与
+        "return_risk": 1.0,
+        "style_exposure": 0.0,
+        "industry_exposure": 0.0,
+        "holding_features": 0.5,
+        "alpha": 0.0,
+        "scale": 0.5,
+        "team": 0.5,
     },
     "default": {
         "return_risk": 1.0,
@@ -70,6 +138,22 @@ FINGERPRINT_TEMPLATES: dict[str, dict[str, float]] = {
         "scale": 0.5,
         "team": 0.5,
     },
+}
+
+# sub_category → 模板（P4.2-1 类型分流）
+TEMPLATE_BY_SUB_CATEGORY: dict[str, str] = {
+    "被动指数": "index_passive",
+    "ETF": "index_passive",
+    "ETF联接": "index_passive",
+    "普通指数": "index_passive",
+    "指数增强": "index_enhanced",
+    "纯债": "bond_pure",
+    "短债": "bond_short",
+    "一级债基": "bond_secondary",
+    "二级债基": "bond_secondary",
+    "可转债": "bond_convertible",
+    "主动权益": "active_equity",
+    "偏股混合": "active_equity",  # 兼容旧分类值
 }
 
 # Dimensions that come from estimated sources
@@ -110,13 +194,10 @@ class FingerprintResult:
 
 
 def _select_template(fund: FundMain | None) -> str:
-    """Choose fingerprint template based on fund sub-category."""
+    """Choose fingerprint template based on fund sub-category (P4.2-1)."""
     if fund is None or fund.sub_category is None:
         return "default"
-    sub = fund.sub_category
-    if sub in ("被动指数", "ETF", "ETF联接", "指数增强"):
-        return "index_fund"
-    return "active_equity"
+    return TEMPLATE_BY_SUB_CATEGORY.get(fund.sub_category, "default")
 
 
 def _gather_return_risk(
@@ -465,10 +546,11 @@ def generate_fingerprint(
             metadata["team"] = m
         all_missing.extend(miss)
 
-    # Determine confidence
+    # Determine confidence（仅统计权重 > 0 的启用维度，权重 0 维度不计为缺失）
     non_missing_ratio = 1.0
-    total_dims = len(template)
-    missing_dims = sum(1 for d in template if d not in vector)
+    active_dims = [dim for dim, weight in template.items() if weight > 0]
+    total_dims = len(active_dims)
+    missing_dims = sum(1 for d in active_dims if d not in vector)
     if total_dims > 0:
         non_missing_ratio = (total_dims - missing_dims) / total_dims
 
@@ -502,6 +584,14 @@ def generate_fingerprint(
             confidence = "medium"
         conclusion_status = "estimated"
         warnings.append("包含估算维度，结论可信度受限")
+
+    # P4.2-1：未适配类型回落 default 模板，不输出确定性结论（§17 风险规避）
+    if template_name == "default":
+        conclusion_status = "needs_review"
+        warnings.append(
+            f"基金类型 '{fund_type or '未知'}' 尚无专用指纹模板，"
+            "回落 default 模板，结论标不适用"
+        )
 
     return FingerprintResult(
         fund_code=fund_code,
