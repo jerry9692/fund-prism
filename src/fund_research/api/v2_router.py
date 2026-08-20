@@ -29,6 +29,20 @@ from fund_research.analysis.anomaly import (
     persist_anomaly,
     scan_anomalies,
 )
+from fund_research.analysis.bond_factor_exposure import (
+    ALGORITHM_NAME as BOND_FACTOR_NAME,
+)
+from fund_research.analysis.bond_factor_exposure import (
+    ALGORITHM_VERSION as BOND_FACTOR_VERSION,
+)
+from fund_research.analysis.bond_factor_exposure import (
+    exposure_row_to_dict,
+    get_latest_bond_factor_exposure,
+    get_latest_bond_factor_exposures,
+    load_bond_fund_candidates,
+    persist_bond_factor_exposures,
+    run_bond_factor_batch,
+)
 from fund_research.analysis.dashboard import (
     ALGORITHM_NAME as DASHBOARD_NAME,
 )
@@ -44,6 +58,18 @@ from fund_research.analysis.fingerprint import (
     generate_fingerprint,
     get_latest_fingerprint,
     persist_fingerprint,
+)
+from fund_research.analysis.index_fund_selection import (
+    ALGORITHM_NAME as INDEX_FUND_SELECTION_NAME,
+)
+from fund_research.analysis.index_fund_selection import (
+    ALGORITHM_VERSION as INDEX_FUND_SELECTION_VERSION,
+)
+from fund_research.analysis.index_fund_selection import (
+    get_latest_selection_results,
+    persist_selection_results,
+    run_selection,
+    selection_row_to_dict,
 )
 from fund_research.analysis.pool_alert import (
     ALERT_TYPES,
@@ -5231,3 +5257,593 @@ def dashboard_endpoint(
             ),
             started,
         )
+
+
+# ============================================================
+# P4A: 指数基金分析与优选（需求书 §6.2.8）
+# ============================================================
+
+
+class IndexFundSelectionRequest(BaseModel):
+    """指数基金优选请求。"""
+
+    index_symbol: str | None = Field(
+        None, description="仅分析跟踪该指数的产品（如 sh000300），留空则全部"
+    )
+    calc_date: date | None = Field(None, description="计算日期，默认今日")
+
+
+def _selection_overall_status(statuses: list[str]) -> ConclusionStatus:
+    """汇总各记录结论状态：needs_review > observation > computed。"""
+    if any(s == ConclusionStatus.NEEDS_REVIEW.value for s in statuses):
+        return ConclusionStatus.NEEDS_REVIEW
+    if any(s == ConclusionStatus.OBSERVATION.value for s in statuses):
+        return ConclusionStatus.OBSERVATION
+    return ConclusionStatus.COMPUTED
+
+
+@v2_router.get("/index-funds/compare", response_model=APIResponse[dict])
+def compare_index_funds_endpoint(
+    db: SessionDep,
+    index_symbol: str = Query(..., description="跟踪指数 benchmark symbol，如 sh000300"),
+) -> APIResponse[dict]:
+    """同指数产品对比表（含偏离曲线），不落库。"""
+    started = perf_counter()
+    params = {"index_symbol": index_symbol}
+    try:
+        report = run_selection(db, index_symbol=index_symbol)
+        members = [
+            {**rec.to_data(), "deviation_curve": rec.deviation_curve}
+            for rec in report.records
+        ]
+        if not members:
+            return _log(
+                db,
+                "compare_index_funds",
+                params,
+                APIResponse(
+                    data={"index_symbol": index_symbol, "members": []},
+                    metadata={
+                        "tool": INDEX_FUND_SELECTION_NAME,
+                        "algorithm_version": INDEX_FUND_SELECTION_VERSION,
+                        "platform_version": __version__,
+                    },
+                    warnings=report.warnings or [f"无跟踪指数 {index_symbol} 的候选基金"],
+                    conclusion_status=ConclusionStatus.NEEDS_REVIEW,
+                ),
+                started,
+            )
+        statuses = [m["conclusion_status"] for m in members]
+        return _log(
+            db,
+            "compare_index_funds",
+            params,
+            APIResponse(
+                data={
+                    "index_symbol": index_symbol,
+                    "index_name": members[0].get("tracking_index_name"),
+                    "members": members,
+                },
+                metadata={
+                    "tool": INDEX_FUND_SELECTION_NAME,
+                    "algorithm_version": INDEX_FUND_SELECTION_VERSION,
+                    "platform_version": __version__,
+                },
+                warnings=report.warnings,
+                conclusion_status=_selection_overall_status(statuses),
+            ),
+            started,
+        )
+    except Exception as exc:
+        db.rollback()
+        return _log(
+            db,
+            "compare_index_funds",
+            params,
+            APIResponse(
+                data=None,
+                metadata={
+                    "tool": INDEX_FUND_SELECTION_NAME,
+                    "algorithm_version": INDEX_FUND_SELECTION_VERSION,
+                    "platform_version": __version__,
+                },
+                warnings=[str(exc)],
+                conclusion_status=ConclusionStatus.NEEDS_REVIEW,
+            ),
+            started,
+        )
+
+
+@v2_router.post("/index-funds/selection", response_model=APIResponse[dict])
+def run_index_fund_selection_endpoint(
+    db: SessionDep,
+    body: IndexFundSelectionRequest | None = None,
+) -> APIResponse[dict]:
+    """运行指数基金综合优选评分并落库（幂等覆盖同日期同版本记录）。"""
+    started = perf_counter()
+    index_symbol = body.index_symbol if body else None
+    calc_date = body.calc_date if body else None
+    params = {"index_symbol": index_symbol, "calc_date": str(calc_date) if calc_date else None}
+    try:
+        report = run_selection(db, index_symbol=index_symbol)
+        rows = persist_selection_results(db, report, calc_date=calc_date)
+        db.commit()
+        results = [r.to_data() for r in report.records]
+        ranked = sorted(
+            [r for r in results if r["composite_score"] is not None],
+            key=lambda r: r["composite_score"],
+            reverse=True,
+        )
+        statuses = [r["conclusion_status"] for r in results] or [
+            ConclusionStatus.NEEDS_REVIEW.value
+        ]
+        return _log(
+            db,
+            "index_fund_selection",
+            params,
+            APIResponse(
+                data={
+                    "calc_date": str(calc_date or date.today()),
+                    "persisted": len(rows),
+                    "ranking": ranked,
+                    "not_scored": [r for r in results if r["composite_score"] is None],
+                },
+                metadata={
+                    "tool": INDEX_FUND_SELECTION_NAME,
+                    "algorithm_version": INDEX_FUND_SELECTION_VERSION,
+                    "platform_version": __version__,
+                },
+                warnings=report.warnings,
+                conclusion_status=_selection_overall_status(statuses),
+            ),
+            started,
+        )
+    except Exception as exc:
+        db.rollback()
+        return _log(
+            db,
+            "index_fund_selection",
+            params,
+            APIResponse(
+                data=None,
+                metadata={
+                    "tool": INDEX_FUND_SELECTION_NAME,
+                    "algorithm_version": INDEX_FUND_SELECTION_VERSION,
+                    "platform_version": __version__,
+                },
+                warnings=[str(exc)],
+                conclusion_status=ConclusionStatus.NEEDS_REVIEW,
+            ),
+            started,
+        )
+
+
+@v2_router.get("/index-funds/selection/latest", response_model=APIResponse[dict])
+def get_index_fund_selection_endpoint(db: SessionDep) -> APIResponse[dict]:
+    """获取最近一次优选结果（已落库）。"""
+    started = perf_counter()
+    params: dict[str, Any] = {}
+    try:
+        rows = get_latest_selection_results(db)
+        if not rows:
+            return _log(
+                db,
+                "get_index_fund_selection",
+                params,
+                APIResponse(
+                    data=None,
+                    metadata={
+                        "tool": INDEX_FUND_SELECTION_NAME,
+                        "platform_version": __version__,
+                    },
+                    warnings=["暂无指数基金优选记录，请先运行 POST /index-funds/selection"],
+                    conclusion_status=ConclusionStatus.NEEDS_REVIEW,
+                ),
+                started,
+            )
+        results = [selection_row_to_dict(row) for row in rows]
+        statuses = [r["conclusion_status"] for r in results]
+        return _log(
+            db,
+            "get_index_fund_selection",
+            params,
+            APIResponse(
+                data={"calc_date": str(rows[0].calc_date), "results": results},
+                metadata={
+                    "tool": INDEX_FUND_SELECTION_NAME,
+                    "algorithm_version": rows[0].algorithm_version,
+                    "platform_version": __version__,
+                },
+                warnings=[],
+                conclusion_status=_selection_overall_status(statuses),
+            ),
+            started,
+        )
+    except Exception as exc:
+        db.rollback()
+        return _log(
+            db,
+            "get_index_fund_selection",
+            params,
+            APIResponse(
+                data=None,
+                metadata={
+                    "tool": INDEX_FUND_SELECTION_NAME,
+                    "platform_version": __version__,
+                },
+                warnings=[str(exc)],
+                conclusion_status=ConclusionStatus.NEEDS_REVIEW,
+            ),
+            started,
+        )
+
+
+# ============================================================
+# P4B: 债基金因子暴露 · 粗粒度版（需求书 §6.2.7）
+# ============================================================
+
+
+class BondFactorRunRequest(BaseModel):
+    """债基因子暴露批量运行请求。"""
+
+    calc_date: date | None = Field(None, description="计算日期，默认今日")
+
+
+class BondFactorSingleRequest(BaseModel):
+    """单只债基因子暴露分析请求。"""
+
+    calc_date: date | None = Field(None, description="计算日期，默认今日")
+    persist: bool = Field(True, description="是否落库（默认幂等落库）")
+
+
+_BOND_FACTOR_CONFIDENCE: dict[str, str] = {
+    "fact": "high",
+    "computed": "medium",
+    "estimated": "medium",
+    "observation": "low",
+    "needs_review": "needs_review",
+}
+
+
+def _bond_factor_meta() -> dict:
+    return {
+        "tool": BOND_FACTOR_NAME,
+        "algorithm_version": BOND_FACTOR_VERSION,
+        "platform_version": __version__,
+    }
+
+
+def _bond_fund_names(db: Session, fund_codes: list[str]) -> dict[str, dict]:
+    """补齐落库行缺失的基金名称/二级分类（结果表不冗余存名称）。"""
+    funds = db.scalars(
+        select(FundMain).where(FundMain.fund_code.in_(fund_codes))
+    ).all()
+    return {
+        f.fund_code: {
+            "fund_name": getattr(f, "short_name", None),
+            "sub_category": f.sub_category,
+        }
+        for f in funds
+    }
+
+
+def _write_bond_factor_evidence(
+    db: Session, record: dict, calc_date: date
+) -> str:
+    """登记因子序列覆盖度证据（evidence 表，算法结果类）。"""
+    fund_code = record["fund_code"]
+    evidence_id = f"bond_factor_exposure:{fund_code}:{calc_date}"
+    coverage = record.get("factor_coverage") or {}
+    coverage_text = "、".join(
+        f"{name} {value:.0%}" for name, value in coverage.items()
+    )
+    existing = db.scalar(
+        select(DbEvidenceRecord).where(DbEvidenceRecord.evidence_id == evidence_id)
+    )
+    summary = (
+        f"债基因子滚动回归（{record.get('template_name') or '未知模板'}），"
+        f"窗口 {record.get('window_days')} 日/步长 {record.get('step_days')} 日，"
+        f"全窗口 R²={record.get('full_window_r_squared')}；"
+        f"因子序列覆盖度：{coverage_text or '无'}"
+    )
+    status = ConclusionStatus(record.get("conclusion_status") or "needs_review")
+    metadata = {
+        "algorithm_name": BOND_FACTOR_NAME,
+        "algorithm_version": BOND_FACTOR_VERSION,
+        "parameters": {
+            "window_days": record.get("window_days"),
+            "step_days": record.get("step_days"),
+            "factor_names": record.get("factor_names"),
+        },
+        "warnings": record.get("warnings") or [],
+    }
+    if existing is None:
+        existing = DbEvidenceRecord(
+            evidence_id=evidence_id,
+            entity_id=fund_code,
+            entity_type="fund",
+            evidence_type=EvidenceType.ALGORITHM_RESULT.value,
+            source="bond_factor_exposure_result",
+            source_level=DataSourceLevel.B,
+        )
+        db.add(existing)
+    existing.data_summary = summary[:500]
+    existing.algorithm_metadata = metadata
+    existing.conclusion_status = status
+    existing.confidence = _BOND_FACTOR_CONFIDENCE.get(status.value, "needs_review")
+    if record.get("window_start"):
+        existing.date_start = date.fromisoformat(str(record["window_start"]))
+    if record.get("window_end"):
+        existing.date_end = date.fromisoformat(str(record["window_end"]))
+    return evidence_id
+
+
+@v2_router.post("/analysis/bond-factors/run", response_model=APIResponse[dict])
+def run_bond_factor_exposure_batch_endpoint(
+    db: SessionDep,
+    body: BondFactorRunRequest | None = None,
+) -> APIResponse[dict]:
+    """批量运行全部债基因子暴露分析并落库（幂等覆盖）。"""
+    started = perf_counter()
+    calc_date = body.calc_date if body else None
+    params = {"calc_date": str(calc_date) if calc_date else None}
+    try:
+        records = run_bond_factor_batch(db)
+        if not records:
+            return _log(
+                db,
+                "bond_factor_exposure_run",
+                params,
+                APIResponse(
+                    data={"persisted": 0, "results": []},
+                    metadata=_bond_factor_meta(),
+                    warnings=["样本内无债基候选基金"],
+                    conclusion_status=ConclusionStatus.NEEDS_REVIEW,
+                ),
+                started,
+            )
+        rows = persist_bond_factor_exposures(db, records, calc_date=calc_date)
+        effective_date = calc_date or date.today()
+        evidence_ids = [
+            _write_bond_factor_evidence(db, rec.to_data(), effective_date)
+            for rec in records
+            if rec.conclusion_status != ConclusionStatus.NEEDS_REVIEW.value
+            or rec.factor_coverage
+        ]
+        db.commit()
+        results = [rec.to_data() for rec in records]
+        statuses = [r["conclusion_status"] for r in results]
+        return _log(
+            db,
+            "bond_factor_exposure_run",
+            params,
+            APIResponse(
+                data={
+                    "calc_date": str(effective_date),
+                    "persisted": len(rows),
+                    "evidence_count": len(evidence_ids),
+                    "results": results,
+                },
+                metadata=_bond_factor_meta(),
+                warnings=[],
+                conclusion_status=_selection_overall_status(statuses),
+            ),
+            started,
+        )
+    except Exception as exc:
+        db.rollback()
+        return _log(
+            db,
+            "bond_factor_exposure_run",
+            params,
+            APIResponse(
+                data=None,
+                metadata=_bond_factor_meta(),
+                warnings=[str(exc)],
+                conclusion_status=ConclusionStatus.NEEDS_REVIEW,
+            ),
+            started,
+        )
+
+
+@v2_router.get("/analysis/bond-factors/scan", response_model=APIResponse[dict])
+def scan_bond_factor_exposure_endpoint(db: SessionDep) -> APIResponse[dict]:
+    """债基风险扫描：最近一次已落库的全部债基因子暴露结果。"""
+    started = perf_counter()
+    params: dict[str, Any] = {}
+    try:
+        rows = get_latest_bond_factor_exposures(db)
+        if not rows:
+            return _log(
+                db,
+                "bond_factor_exposure_scan",
+                params,
+                APIResponse(
+                    data=None,
+                    metadata=_bond_factor_meta(),
+                    warnings=["暂无债基因子暴露记录，请先运行 POST /analysis/bond-factors/run"],
+                    conclusion_status=ConclusionStatus.NEEDS_REVIEW,
+                ),
+                started,
+            )
+        results = [exposure_row_to_dict(row) for row in rows]
+        names = _bond_fund_names(db, [r["fund_code"] for r in results])
+        for item in results:
+            item.update(names.get(item["fund_code"], {}))
+        statuses = [r["conclusion_status"] for r in results]
+        return _log(
+            db,
+            "bond_factor_exposure_scan",
+            params,
+            APIResponse(
+                data={"calc_date": str(rows[0].calc_date), "results": results},
+                metadata=_bond_factor_meta(),
+                warnings=[],
+                conclusion_status=_selection_overall_status(statuses),
+            ),
+            started,
+        )
+    except Exception as exc:
+        db.rollback()
+        return _log(
+            db,
+            "bond_factor_exposure_scan",
+            params,
+            APIResponse(
+                data=None,
+                metadata=_bond_factor_meta(),
+                warnings=[str(exc)],
+                conclusion_status=ConclusionStatus.NEEDS_REVIEW,
+            ),
+            started,
+        )
+
+
+@v2_router.post("/analysis/bond-factors/{fund_code}", response_model=APIResponse[dict])
+def run_bond_factor_exposure_endpoint(
+    db: SessionDep,
+    fund_code: str,
+    body: BondFactorSingleRequest | None = None,
+) -> APIResponse[dict]:
+    """单只债基因子暴露分析（含同类对比，默认幂等落库 + evidence 登记）。"""
+    started = perf_counter()
+    calc_date = body.calc_date if body else None
+    persist = body.persist if body else True
+    params = {
+        "fund_code": fund_code,
+        "calc_date": str(calc_date) if calc_date else None,
+        "persist": persist,
+    }
+    try:
+        fund = db.scalar(select(FundMain).where(FundMain.fund_code == fund_code))
+        if fund is None:
+            return _log(
+                db,
+                "bond_factor_exposure",
+                params,
+                APIResponse(
+                    data=None,
+                    metadata=_bond_factor_meta(),
+                    warnings=[f"基金 {fund_code} 不存在"],
+                    conclusion_status=ConclusionStatus.NEEDS_REVIEW,
+                ),
+                started,
+            )
+        # 同类对比需要同 sub_category 的同类样本：批次内计算后取目标记录
+        peer_codes = [
+            f.fund_code
+            for f in load_bond_fund_candidates(db)
+            if f.sub_category == fund.sub_category
+        ]
+        codes = list(dict.fromkeys([fund_code, *peer_codes]))
+        records = run_bond_factor_batch(db, fund_codes=codes)
+        record = next((r for r in records if r.fund_code == fund_code), None)
+        if record is None:
+            return _log(
+                db,
+                "bond_factor_exposure",
+                params,
+                APIResponse(
+                    data=None,
+                    metadata=_bond_factor_meta(),
+                    warnings=[f"基金 {fund_code} 非债基候选，模块不适用"],
+                    conclusion_status=ConclusionStatus.NEEDS_REVIEW,
+                ),
+                started,
+            )
+
+        evidence_id: str | None = None
+        if persist:
+            persist_bond_factor_exposures(db, [record], calc_date=calc_date)
+            evidence_id = _write_bond_factor_evidence(
+                db, record.to_data(), calc_date or date.today()
+            )
+            db.commit()
+
+        data = record.to_data()
+        data["persisted"] = persist
+        if evidence_id:
+            data["evidence_id"] = evidence_id
+        return _log(
+            db,
+            "bond_factor_exposure",
+            params,
+            APIResponse(
+                data=data,
+                metadata=_bond_factor_meta(),
+                warnings=record.warnings,
+                conclusion_status=ConclusionStatus(record.conclusion_status),
+            ),
+            started,
+        )
+    except Exception as exc:
+        db.rollback()
+        return _log(
+            db,
+            "bond_factor_exposure",
+            params,
+            APIResponse(
+                data=None,
+                metadata=_bond_factor_meta(),
+                warnings=[str(exc)],
+                conclusion_status=ConclusionStatus.NEEDS_REVIEW,
+            ),
+            started,
+        )
+
+
+@v2_router.get(
+    "/analysis/bond-factors/{fund_code}/latest", response_model=APIResponse[dict]
+)
+def get_bond_factor_exposure_endpoint(db: SessionDep, fund_code: str) -> APIResponse[dict]:
+    """获取单只基金最近一条债基因子暴露结果（已落库）。"""
+    started = perf_counter()
+    params = {"fund_code": fund_code}
+    try:
+        row = get_latest_bond_factor_exposure(db, fund_code)
+        if row is None:
+            return _log(
+                db,
+                "get_bond_factor_exposure",
+                params,
+                APIResponse(
+                    data=None,
+                    metadata=_bond_factor_meta(),
+                    warnings=[
+                        f"基金 {fund_code} 暂无债基因子暴露记录，"
+                        f"请先运行 POST /analysis/bond-factors/{fund_code}"
+                    ],
+                    conclusion_status=ConclusionStatus.NEEDS_REVIEW,
+                ),
+                started,
+            )
+        return _log(
+            db,
+            "get_bond_factor_exposure",
+            params,
+            APIResponse(
+                data={
+                    **exposure_row_to_dict(row),
+                    **_bond_fund_names(db, [fund_code]).get(fund_code, {}),
+                },
+                metadata=_bond_factor_meta(),
+                warnings=[],
+                conclusion_status=ConclusionStatus(row.conclusion_status),
+            ),
+            started,
+        )
+    except Exception as exc:
+        db.rollback()
+        return _log(
+            db,
+            "get_bond_factor_exposure",
+            params,
+            APIResponse(
+                data=None,
+                metadata=_bond_factor_meta(),
+                warnings=[str(exc)],
+                conclusion_status=ConclusionStatus.NEEDS_REVIEW,
+            ),
+            started,
+        )
+

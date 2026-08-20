@@ -560,6 +560,86 @@ async function request<T>(
   return res.json() as Promise<APIResponse<T>>;
 }
 
+// ---- Phase 4 (P4A) 指数基金优选 ----
+
+export interface SelectionDimensionEntry {
+  raw: number | null;
+  score: number | null;
+  missing: boolean;
+}
+
+export interface IndexFundSelectionItem {
+  fund_code: string;
+  calc_date?: string;
+  algorithm_version?: string;
+  group_key: string | null;
+  tracking_index_code?: string | null;
+  tracking_index_name: string | null;
+  template_name: string | null;
+  dimension_scores: Record<string, SelectionDimensionEntry> | null;
+  composite_score: number | null;
+  rank_in_group: number | null;
+  group_size: number | null;
+  alpha_annualized: number | null;
+  information_ratio: number | null;
+  conclusion_status: string;
+  warnings: string[];
+}
+
+export interface IndexFundCompareMember extends IndexFundSelectionItem {
+  fund_name: string | null;
+  sub_category: string | null;
+  raw_metrics: Record<string, number | string | null>;
+  monthly_excess_win_rate: number | null;
+  deviation_curve: Array<{
+    date: string;
+    cum_deviation: number;
+    daily_deviation: number;
+  }>;
+}
+
+// ---- Phase 4 (P4B) 债基金因子暴露 ----
+
+export interface BondFactorCurvePoint {
+  date: string;
+  exposure: number;
+  t_value: number;
+  r_squared: number;
+}
+
+export interface BondFactorExposureItem {
+  id?: number;
+  fund_code: string;
+  fund_name?: string | null;
+  sub_category?: string | null;
+  calc_date?: string;
+  algorithm_version?: string;
+  template_name: string | null;
+  window_days: number;
+  step_days: number;
+  factor_names: string[];
+  factor_labels?: Record<string, string>;
+  latest_exposures: Record<string, number>;
+  latest_t_values: Record<string, number>;
+  full_window_r_squared: number | null;
+  avg_rolling_r_squared: number | null;
+  exposure_curves: Record<string, BondFactorCurvePoint[]>;
+  contributions: Record<string, number>;
+  radar: {
+    duration: number | null;
+    credit: number | null;
+    coupon_carry_annualized: number | null;
+    convertible: number | null;
+    equity_beta: number | null;
+  };
+  peer_rank: Record<string, { rank: number | null; total: number; rank_text: string; percentile: number | null }>;
+  factor_coverage: Record<string, number>;
+  window_start: string | null;
+  window_end: string | null;
+  conclusion_status: string;
+  warnings: string[];
+}
+
 // ---- API functions (one per endpoint) ----
 
 export const api = {
@@ -1270,4 +1350,66 @@ export const api = {
       warnings: string[];
     }>(`/api/v2/dashboard${qs ? "?" + qs : ""}`);
   },
+
+  // ---- Phase 4: 指数基金分析与优选（P4A）----
+
+  compareIndexFunds: (indexSymbol: string) =>
+    request<{
+      index_symbol: string;
+      index_name: string | null;
+      members: IndexFundCompareMember[];
+    }>(
+      `/api/v2/index-funds/compare?index_symbol=${encodeURIComponent(indexSymbol)}`
+    ),
+
+  runIndexFundSelection: (body?: { index_symbol?: string; calc_date?: string }) =>
+    request<{
+      calc_date: string;
+      persisted: number;
+      ranking: IndexFundSelectionItem[];
+      not_scored: IndexFundSelectionItem[];
+    }>("/api/v2/index-funds/selection", {
+      method: "POST",
+      body: JSON.stringify(body ?? {}),
+    }),
+
+  getLatestIndexFundSelection: () =>
+    request<{ calc_date: string; results: IndexFundSelectionItem[] }>(
+      "/api/v2/index-funds/selection/latest"
+    ),
+
+  // ---- Phase 4: 债基金因子暴露 · 粗粒度版（P4B）----
+
+  runBondFactorScan: (body?: { calc_date?: string }) =>
+    request<{
+      calc_date: string;
+      persisted: number;
+      evidence_count: number;
+      results: BondFactorExposureItem[];
+    }>("/api/v2/analysis/bond-factors/run", {
+      method: "POST",
+      body: JSON.stringify(body ?? {}),
+    }),
+
+  getBondFactorScan: () =>
+    request<{ calc_date: string; results: BondFactorExposureItem[] }>(
+      "/api/v2/analysis/bond-factors/scan"
+    ),
+
+  runBondFactorSingle: (
+    fundCode: string,
+    body?: { calc_date?: string; persist?: boolean }
+  ) =>
+    request<BondFactorExposureItem & { persisted: boolean; evidence_id?: string }>(
+      `/api/v2/analysis/bond-factors/${encodeURIComponent(fundCode)}`,
+      {
+        method: "POST",
+        body: JSON.stringify(body ?? {}),
+      }
+    ),
+
+  getLatestBondFactor: (fundCode: string) =>
+    request<BondFactorExposureItem>(
+      `/api/v2/analysis/bond-factors/${encodeURIComponent(fundCode)}/latest`
+    ),
 };

@@ -121,6 +121,14 @@ const PATHS: Record<string, JSX.Element> = {
       <path d="M5 9 L5 5 L9 5" strokeOpacity="0.6" />
     </>
   ),
+  // 指数优选：多层堆叠（同指数产品组）
+  layers: (
+    <>
+      <path d="M12 3 L21 8 L12 13 L3 8 Z" />
+      <path d="M3 12.5 L12 17.5 L21 12.5" strokeOpacity="0.7" />
+      <path d="M3 16.5 L12 21.5 L21 16.5" strokeOpacity="0.4" />
+    </>
+  ),
 
   // ---- 系统 ----
   // 数据质量：盾牌 + 勾
@@ -190,6 +198,13 @@ const PATHS: Record<string, JSX.Element> = {
     <>
       <rect x="4" y="4" width="16" height="16" rx="2" />
       <path d="M8 12 L11 15 L16 9" />
+    </>
+  ),
+  // 债基风险扫描：圆内脉冲波形（因子暴露探测）
+  scan: (
+    <>
+      <circle cx="12" cy="12" r="9" strokeOpacity="0.5" />
+      <path d="M4.5 12 H8 L10 8 L13 16 L15 12 H19.5" />
     </>
   ),
 };

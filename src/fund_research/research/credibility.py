@@ -114,12 +114,14 @@ MIN_COVERAGE: dict[str, float] = {
     "nav_metrics": 0.8,       # NAV 数据需覆盖至少 80% 的目标区间
     "disclosed_holdings": 0.5,  # 持仓至少有最近1期
     "exposure": 0.6,          # 风格暴露至少覆盖 60% 交易日
+    "bond_factor_exposure": 0.6,  # P4B：债基因子序列至少覆盖 60% 回归区间
 }
 
 # 残差阈值（超过则降级）
 MAX_RESIDUAL: dict[str, float] = {
     "exposure_r_squared_min": 0.5,    # 风格回归 R² < 0.5 → 降级
     "attribution_residual_max": 0.5,  # 归因残差占比 > 50% → 降级
+    "bond_factor_r_squared_min": 0.3,  # P4B：债基因子回归 R² < 0.3 → 降级（粗粒度阈值放宽）
 }
 
 # 不适用于某类基金的模块（P4.2-1：按基金族匹配，兼容精确类型名）
@@ -337,6 +339,24 @@ def check_residual_threshold(
                 severity=GateSeverity.SOFT,
                 message=(
                     f"风格回归 R²={r_squared:.2f}，"
+                    f"{'达到' if passed else '未达到'}最低要求 {min_r2}"
+                ),
+                module=module,
+                details={"r_squared": r_squared, "min_r_squared": min_r2},
+            )
+
+    # 债基因子暴露（P4B）：检查全窗口 R²（回归稳定性，§7.3 第 4 条）
+    if module == "bond_factor_exposure":
+        r_squared = data.get("full_window_r_squared")
+        min_r2 = MAX_RESIDUAL["bond_factor_r_squared_min"]
+        if r_squared is not None:
+            passed = r_squared >= min_r2
+            return GateResult(
+                gate_type=GateType.RESIDUAL_THRESHOLD,
+                passed=passed,
+                severity=GateSeverity.SOFT,
+                message=(
+                    f"债基因子回归 R²={r_squared:.2f}，"
                     f"{'达到' if passed else '未达到'}最低要求 {min_r2}"
                 ),
                 module=module,

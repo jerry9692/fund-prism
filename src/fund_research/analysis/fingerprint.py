@@ -15,10 +15,11 @@ Different fund types use different templates (P4.2-1 模板分流):
 - active_equity: 主动权益
 - index_passive / index_enhanced: 指数类细分（被动/增强）
 - bond_pure / bond_short / bond_secondary / bond_convertible: 债基四模板
-债基模板仅启用收益风险/规模/团队维度（权益风格/行业/alpha 维度不适用），
-债券因子维度组待 Phase 4 债基因子算法落地后扩展。
-Estimated dimensions (turnover, dynamic attribution residual) use estimated_*
-prefix and are flagged in vector_metadata.
+债基模板启用收益风险/规模/团队维度，并于 P4B 接入债券因子维度组
+（bond_factor，回归暴露读 bond_factor_exposure_result，estimated_* 隔离）；
+权益风格/行业/alpha 维度对债基不适用（权重 0 不采集）。
+Estimated dimensions (turnover, dynamic attribution residual, bond factor
+exposures) use estimated_* prefix and are flagged in vector_metadata.
 
 References:
 - v0.4 requirements §6.3.5 Fund Fingerprint
@@ -44,7 +45,7 @@ from fund_research.db.models_phase3 import FundFingerprint
 from fund_research.utils import safe_float
 
 ALGORITHM_NAME = "fund_fingerprint"
-ALGORITHM_VERSION = "0.2.0"
+ALGORITHM_VERSION = "0.3.0"
 
 # Dimension group weights per fund type template
 # 权重 0 的维度组不采集（债基的权益风格/行业/alpha 维度不适用，§6.2.7 验收）。
@@ -89,13 +90,14 @@ FINGERPRINT_TEMPLATES: dict[str, dict[str, float]] = {
         "team": 0.3,
     },
     "bond_pure": {
-        # 纯债：仅收益风险/规模/团队；权益维度权重 0 不采集，
-        # 债券因子维度组待 Phase 4 扩展
+        # 纯债：收益风险/规模/团队 + 债券因子维度组（P4B）；
+        # 权益维度权重 0 不采集
         "return_risk": 1.0,
         "style_exposure": 0.0,
         "industry_exposure": 0.0,
         "holding_features": 0.0,
         "alpha": 0.0,
+        "bond_factor": 1.0,
         "scale": 0.5,
         "team": 0.5,
     },
@@ -106,6 +108,7 @@ FINGERPRINT_TEMPLATES: dict[str, dict[str, float]] = {
         "industry_exposure": 0.0,
         "holding_features": 0.0,
         "alpha": 0.0,
+        "bond_factor": 1.0,
         "scale": 0.5,
         "team": 0.5,
     },
@@ -116,6 +119,7 @@ FINGERPRINT_TEMPLATES: dict[str, dict[str, float]] = {
         "industry_exposure": 0.0,
         "holding_features": 0.3,
         "alpha": 0.0,
+        "bond_factor": 1.0,
         "scale": 0.5,
         "team": 0.5,
     },
@@ -126,6 +130,7 @@ FINGERPRINT_TEMPLATES: dict[str, dict[str, float]] = {
         "industry_exposure": 0.0,
         "holding_features": 0.5,
         "alpha": 0.0,
+        "bond_factor": 1.0,
         "scale": 0.5,
         "team": 0.5,
     },
@@ -157,7 +162,17 @@ TEMPLATE_BY_SUB_CATEGORY: dict[str, str] = {
 }
 
 # Dimensions that come from estimated sources
-ESTIMATED_DIMENSIONS = {"holding_features.estimated_turnover", "alpha.estimated_residual_pct"}
+ESTIMATED_DIMENSIONS = {
+    "holding_features.estimated_turnover",
+    "alpha.estimated_residual_pct",
+    # P4B：债基因子回归暴露为模型估计结果，一律 estimated_* 隔离
+    "bond_factor.estimated_duration",
+    "bond_factor.estimated_credit",
+    "bond_factor.estimated_coupon_carry_annualized",
+    "bond_factor.estimated_convertible_exposure",
+    "bond_factor.estimated_equity_beta",
+    "bond_factor.estimated_r_squared",
+}
 
 
 @dataclass
@@ -398,6 +413,51 @@ def _gather_alpha(
     return vector, meta, missing, has_estimated
 
 
+def _gather_bond_factors(
+    db: Session, fund_code: str
+) -> tuple[dict[str, float | None], dict[str, str], list[str], bool]:
+    """Gather bond factor exposures from the latest bond_factor_exposure_result.
+
+    P4B 指纹闭环：回归结果回填债基模板债券维度组。回归暴露为模型估计，
+    统一 estimated_* 前缀并标 estimated，不进高置信结论（设计原则 2）。
+    """
+    from fund_research.db.models_phase4 import BondFactorExposureResult
+
+    vector: dict[str, float | None] = {}
+    meta: dict[str, str] = {}
+    missing: list[str] = []
+
+    row = db.scalars(
+        select(BondFactorExposureResult)
+        .where(BondFactorExposureResult.fund_code == fund_code)
+        .order_by(BondFactorExposureResult.calc_date.desc())
+        .limit(1)
+    ).first()
+
+    if row is None or not row.radar:
+        missing.append("bond_factor")
+        return vector, meta, missing, False
+
+    radar = row.radar
+    mapping = {
+        "estimated_duration": radar.get("duration"),
+        "estimated_credit": radar.get("credit"),
+        "estimated_coupon_carry_annualized": radar.get("coupon_carry_annualized"),
+        "estimated_convertible_exposure": radar.get("convertible"),
+        "estimated_equity_beta": radar.get("equity_beta"),
+    }
+    for key, value in mapping.items():
+        if value is not None:
+            vector[key] = safe_float(value)
+            meta[key] = "estimated"
+    if row.full_window_r_squared is not None:
+        vector["estimated_r_squared"] = float(row.full_window_r_squared)
+        meta["estimated_r_squared"] = "estimated"
+    if not vector:
+        missing.append("bond_factor")
+    return vector, meta, missing, bool(vector)
+
+
 def _gather_scale(
     db: Session, fund_code: str
 ) -> tuple[dict[str, float | None], dict[str, str], list[str]]:
@@ -529,6 +589,14 @@ def generate_fingerprint(
         if v:
             vector["alpha"] = v
             metadata["alpha"] = m
+        all_missing.extend(miss)
+        contains_estimated = contains_estimated or est
+
+    if template.get("bond_factor", 0) > 0:
+        v, m, miss, est = _gather_bond_factors(db, fund_code)
+        if v:
+            vector["bond_factor"] = v
+            metadata["bond_factor"] = m
         all_missing.extend(miss)
         contains_estimated = contains_estimated or est
 

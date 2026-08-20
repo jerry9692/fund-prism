@@ -32,6 +32,8 @@ const NAV_GROUPS: NavGroup[] = [
       { to: "/fingerprint", label: "指纹管理", icon: "fingerprint" },
       { to: "/similar-funds", label: "相似搜索", icon: "similar" },
       { to: "/fund-compare", label: "基金对比", icon: "compare" },
+      { to: "/index-funds", label: "指数优选", icon: "layers" },
+      { to: "/bond-factors", label: "债基风险扫描", icon: "scan" },
     ],
   },
   {

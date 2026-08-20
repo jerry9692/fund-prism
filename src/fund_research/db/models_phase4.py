@@ -363,3 +363,145 @@ class FactorReturn(Base):
 
 # 因子收益导出别名
 FactorReturnV4 = FactorReturn
+
+
+# ============================================================
+# P4A 指数基金分析与优选结果（需求书 §6.2.8 / §12.4.1）
+# ============================================================
+
+# 五维评分维度（§6.2.8 评价维度）：规模/费率/流动性/跟踪质量/折溢价
+SELECTION_DIMENSIONS = ("scale", "fee", "liquidity", "tracking", "premium")
+
+
+class IndexFundSelectionResult(Base):
+    """指数基金优选结果表 — 同指数分组五维评分与综合排序（§6.2.8）。
+
+    维度分项与原始值落 ``dimension_scores`` JSON（含缺失标记与降权说明），
+    指增 alpha/IR 仅指数增强模板输出，被动产品不输出 alpha 结论。
+    """
+
+    __tablename__ = "index_fund_selection_result"
+
+    id: Mapped[int] = id_column()
+    fund_code: Mapped[str] = mapped_column(
+        String(20), index=True, comment="基金代码，关联 fund_main.fund_code"
+    )
+    calc_date: Mapped[date] = mapped_column(Date, index=True, comment="计算日期")
+    algorithm_name: Mapped[str] = mapped_column(String(50), comment="算法名")
+    algorithm_version: Mapped[str] = mapped_column(String(10), comment="算法版本")
+    group_key: Mapped[str | None] = mapped_column(
+        String(40), index=True, comment="同指数分组键（跟踪指数 benchmark symbol）"
+    )
+    tracking_index_code: Mapped[str | None] = mapped_column(String(40), comment="跟踪指数代码")
+    tracking_index_name: Mapped[str | None] = mapped_column(String(100), comment="跟踪指数名称")
+    template_name: Mapped[str | None] = mapped_column(
+        String(30), comment="模板 index_passive/index_enhanced"
+    )
+    dimension_scores: Mapped[dict[str, Any] | None] = mapped_column(
+        JSON, comment="五维分项 {dim: {raw, score, missing}}"
+    )
+    composite_score: Mapped[float | None] = mapped_column(Float, comment="综合优选评分 0-100")
+    rank_in_group: Mapped[int | None] = mapped_column(Integer, comment="组内综合分排名")
+    group_size: Mapped[int | None] = mapped_column(Integer, comment="同指数组内产品数")
+    alpha_annualized: Mapped[float | None] = mapped_column(
+        Float, comment="年化 Jensen Alpha（仅指增，小数口径）"
+    )
+    information_ratio: Mapped[float | None] = mapped_column(Float, comment="信息比率（仅指增）")
+    conclusion_status: Mapped[str] = mapped_column(String(20), default="computed")
+    warnings: Mapped[list[str] | None] = mapped_column(JSON)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.now)
+
+    __table_args__ = (
+        UniqueConstraint(
+            "fund_code",
+            "calc_date",
+            "algorithm_name",
+            "algorithm_version",
+            name="uq_index_fund_selection_fund_date_algo",
+        ),
+        Index("ix_index_fund_selection_fund_date", "fund_code", "calc_date"),
+    )
+
+
+# 指数基金优选导出别名
+IndexFundSelectionResultV4 = IndexFundSelectionResult
+
+
+# ============================================================
+# P4B 债基金因子暴露结果（需求书 §6.2.7 / §15.2 第 11 条）
+# ============================================================
+
+
+class BondFactorExposureResult(Base):
+    """债基金因子暴露结果表 — 滚动回归粗粒度因子暴露（§6.2.7）。
+
+    一期启用因子：bond_coupon/bond_rate/bond_slope/bond_credit_aaa/
+    bond_convertible + 权益 beta（仅二级债基/转债基金）；久期由 bond_rate
+    暴露代理，流动性因子免费源不可得显式不启用，AA/信用下沉因子序列不足
+    默认不回归。暴露曲线与滚动 R² 落 JSON 供风险扫描页直接绘制。
+    """
+
+    __tablename__ = "bond_factor_exposure_result"
+
+    id: Mapped[int] = id_column()
+    fund_code: Mapped[str] = mapped_column(
+        String(20), index=True, comment="基金代码，关联 fund_main.fund_code"
+    )
+    calc_date: Mapped[date] = mapped_column(Date, index=True, comment="计算日期")
+    algorithm_name: Mapped[str] = mapped_column(String(50), comment="算法名")
+    algorithm_version: Mapped[str] = mapped_column(String(10), comment="算法版本")
+    template_name: Mapped[str | None] = mapped_column(
+        String(30), comment="模板 bond_pure/bond_short/bond_secondary/bond_convertible"
+    )
+    window_days: Mapped[int | None] = mapped_column(Integer, comment="滚动窗口（交易日）")
+    step_days: Mapped[int | None] = mapped_column(Integer, comment="滚动步长（交易日）")
+    factor_names: Mapped[list[str] | None] = mapped_column(
+        JSON, comment="本次回归使用的因子列表（模板分流后）"
+    )
+    latest_exposures: Mapped[dict[str, Any] | None] = mapped_column(
+        JSON, comment="最新窗口因子暴露 {factor: exposure}"
+    )
+    latest_t_values: Mapped[dict[str, Any] | None] = mapped_column(
+        JSON, comment="最新窗口 t 值 {factor: t_value}"
+    )
+    full_window_r_squared: Mapped[float | None] = mapped_column(
+        Float, comment="全样本窗口 OLS R²（回归稳定性）"
+    )
+    avg_rolling_r_squared: Mapped[float | None] = mapped_column(
+        Float, comment="滚动窗口 R² 均值"
+    )
+    exposure_curves: Mapped[dict[str, Any] | None] = mapped_column(
+        JSON, comment="暴露曲线 {factor: [{date, exposure, t_value, r_squared}]}"
+    )
+    contributions: Mapped[dict[str, Any] | None] = mapped_column(
+        JSON, comment="因子收益贡献拆解 {factor: 累计贡献}（暴露 × 因子累计收益）"
+    )
+    radar: Mapped[dict[str, Any] | None] = mapped_column(
+        JSON, comment="久期/信用/票息杠杆/转债/权益风险雷达数据"
+    )
+    peer_rank: Mapped[dict[str, Any] | None] = mapped_column(
+        JSON, comment="同类对比（rank.py 口径：k/N 与分位）"
+    )
+    factor_coverage: Mapped[dict[str, Any] | None] = mapped_column(
+        JSON, comment="因子序列覆盖度 {factor: coverage}（evidence 输入）"
+    )
+    window_start: Mapped[date | None] = mapped_column(Date, comment="回归窗口起始日")
+    window_end: Mapped[date | None] = mapped_column(Date, comment="回归窗口结束日")
+    conclusion_status: Mapped[str] = mapped_column(String(20), default="computed")
+    warnings: Mapped[list[str] | None] = mapped_column(JSON)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.now)
+
+    __table_args__ = (
+        UniqueConstraint(
+            "fund_code",
+            "calc_date",
+            "algorithm_name",
+            "algorithm_version",
+            name="uq_bond_factor_exposure_fund_date_algo",
+        ),
+        Index("ix_bond_factor_exposure_fund_date", "fund_code", "calc_date"),
+    )
+
+
+# 债基因子暴露导出别名
+BondFactorExposureResultV4 = BondFactorExposureResult

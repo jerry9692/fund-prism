@@ -24,6 +24,8 @@ import TemplateListPage from "./pages/TemplateListPage";
 import SimilarFundsPage from "./pages/SimilarFundsPage";
 import FingerprintPage from "./pages/FingerprintPage";
 import FundComparePage from "./pages/FundComparePage";
+import IndexFundSelectionPage from "./pages/IndexFundSelectionPage";
+import BondFactorScanPage from "./pages/BondFactorScanPage";
 import AnomalyListPage from "./pages/AnomalyListPage";
 import AnomalyDetailPage from "./pages/AnomalyDetailPage";
 import ResearchPacketListPage from "./pages/ResearchPacketListPage";
@@ -64,6 +66,8 @@ export default function App() {
           <Route path="/similar-funds" element={<SimilarFundsPage />} />
           <Route path="/fingerprint" element={<FingerprintPage />} />
           <Route path="/fund-compare" element={<FundComparePage />} />
+          <Route path="/index-funds" element={<RouteErrorBoundary><IndexFundSelectionPage /></RouteErrorBoundary>} />
+          <Route path="/bond-factors" element={<RouteErrorBoundary><BondFactorScanPage /></RouteErrorBoundary>} />
           <Route path="/anomalies" element={<AnomalyListPage />} />
           <Route path="/anomalies/:id" element={<RouteErrorBoundary><AnomalyDetailPage /></RouteErrorBoundary>} />
           <Route path="/research-packets" element={<RouteErrorBoundary><ResearchPacketListPage /></RouteErrorBoundary>} />
