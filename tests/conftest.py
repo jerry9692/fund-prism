@@ -41,6 +41,7 @@ def _clear_analysis_result_tables(test_engine: Engine) -> Generator[None, None, 
         "fund_comparison_cache",
         "index_fund_selection_result",
         "bond_factor_exposure_result",
+        "user_portfolio",
         "evidence",
     ]
     with test_engine.begin() as conn:

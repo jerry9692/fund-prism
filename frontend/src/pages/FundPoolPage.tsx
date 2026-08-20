@@ -1,5 +1,5 @@
-// 基金池页 — 后端持久化的基金观察列表(P2.5-1)
-// 支持多池子管理、添加/移除基金、备注、导出 JSON
+// 基金池页 — 后端持久化的基金观察列表(P2.5-1) + 组合穿透分析(P4C)
+// 支持多池子管理、添加/移除基金、备注、权重编辑、组合分析与研究包导出
 
 import { useEffect, useState, useCallback } from "react";
 import {
@@ -9,13 +9,14 @@ import {
   EmptyState,
   LoadingState,
   ExportButton,
+  StatusBadge,
   type BreadcrumbItem,
 } from "../components/display";
 import { DataTable, type Column } from "../components/data/DataTable";
-import { api } from "../api/client";
+import { api, type PortfolioAnalysis } from "../api/client";
 
 interface Pool {
-  id: number;
+  id: string;
   name: string;
   description: string | null;
   fund_count: number;
@@ -27,16 +28,19 @@ interface PoolMember {
   fund_code: string;
   note: string | null;
   added_at: string | null;
+  weight_pct: number | null;
 }
 
 interface PoolRow extends PoolMember {
   key: string;
   removeSelf: (code: string) => void;
+  weightDraft: string;
+  onWeightChange: (code: string, value: string) => void;
 }
 
 interface AlertRule {
-  id: number;
-  pool_id: number;
+  id: string;
+  pool_id: string;
   fund_code: string;
   alert_type: string;
   params: Record<string, unknown>;
@@ -45,9 +49,9 @@ interface AlertRule {
 }
 
 interface AlertRecord {
-  id: number;
-  rule_id: number | null;
-  pool_id: number;
+  id: string;
+  rule_id: string | null;
+  pool_id: string;
   fund_code: string;
   alert_type: string;
   severity: string;
@@ -72,6 +76,232 @@ const SEVERITY_COLOR: Record<string, string> = {
   critical: "var(--negative)",
   observation: "var(--ink-tertiary)",
 };
+
+const STYLE_LABELS: Record<string, string> = {
+  large_cap: "大盘",
+  mid_cap: "中盘",
+  small_cap: "小盘",
+  growth: "成长",
+  value: "价值",
+};
+
+function fmtPct(v: number | string | null | undefined, digits = 2): string {
+  const n = typeof v === "number" ? v : typeof v === "string" ? Number(v) : NaN;
+  if (!Number.isFinite(n)) return "—";
+  return `${(n * 100).toFixed(digits)}%`;
+}
+
+// ---- P4C 组合分析展示（指标/相关性/穿透/重叠/集中度）----
+
+function PortfolioAnalysisView({ analysis }: { analysis: PortfolioAnalysis }) {
+  const m = analysis.portfolio_metrics ?? {};
+  const corr = analysis.correlation_matrix ?? {};
+  const corrCodes = Object.keys(corr);
+  const disclosed = analysis.holding_overlap?.disclosed;
+  const estimated = analysis.holding_overlap?.estimated_overlap ?? {};
+  const estimatedCount =
+    typeof estimated["estimated_shared_stock_count"] === "number"
+      ? (estimated["estimated_shared_stock_count"] as number)
+      : null;
+
+  return (
+    <div style={{ marginTop: "var(--space-3)" }}>
+      <div style={{ display: "flex", gap: "var(--space-2)", alignItems: "center", marginBottom: "var(--space-3)" }}>
+        <StatusBadge status={analysis.conclusion_status} />
+        <span className="text-sm text-tertiary">
+          权重模式：{analysis.weights_mode === "weighted" ? "自定义权重" : "等权（观察列表）"}
+          {analysis.window_start && ` · 窗口 ${analysis.window_start} ~ ${analysis.window_end}`}
+        </span>
+      </div>
+
+      {analysis.warnings.length > 0 && (
+        <div className="text-sm text-tertiary" style={{ marginBottom: "var(--space-3)" }}>
+          {analysis.warnings.join("；")}
+        </div>
+      )}
+
+      <div
+        className="grid"
+        style={{
+          gridTemplateColumns: "repeat(auto-fill, minmax(150px, 1fr))",
+          gap: "var(--space-3)",
+          marginBottom: "var(--space-4)",
+        }}
+      >
+        <MetricCard label="年化收益" value={fmtPct(m.annualized_return)} />
+        <MetricCard label="年化波动" value={fmtPct(m.annualized_volatility)} />
+        <MetricCard label="最大回撤" value={fmtPct(m.max_drawdown)} />
+        <MetricCard label="Sharpe" value={m.sharpe_ratio != null ? Number(m.sharpe_ratio).toFixed(2) : "—"} />
+        <MetricCard
+          label="回撤修复天数"
+          value={m.recovery_days == null ? "未修复" : String(m.recovery_days)}
+        />
+        <MetricCard label="月度胜率" value={fmtPct(m.win_rate, 0)} />
+      </div>
+
+      <div className="grid" style={{ gridTemplateColumns: "1fr 1fr", gap: "var(--space-4)" }}>
+        <div>
+          <SectionHeader title="风格穿透" subtitle="成员最新风格暴露加权合成（缺失成员权重再归一）" />
+          {analysis.style_penetration?.available && analysis.style_penetration.composite ? (
+            <div style={{ display: "flex", flexWrap: "wrap", gap: "var(--space-2)", marginTop: "var(--space-2)" }}>
+              {Object.entries(analysis.style_penetration.composite).map(([dim, value]) => (
+                <span
+                  key={dim}
+                  className="mono text-sm"
+                  style={{
+                    padding: "4px var(--space-3)",
+                    background: "var(--surface-raised)",
+                    border: "1px solid var(--border-hairline)",
+                    borderRadius: "var(--radius-sm)",
+                  }}
+                >
+                  {STYLE_LABELS[dim] ?? dim} {fmtPct(value, 1)}
+                </span>
+              ))}
+            </div>
+          ) : (
+            <div className="text-sm text-tertiary" style={{ marginTop: "var(--space-2)" }}>
+              无成员风格暴露可得
+            </div>
+          )}
+
+          <SectionHeader title="行业穿透（SW2021 一级）" subtitle="披露持仓行业权重加权合成" />
+          {analysis.industry_penetration?.available && analysis.industry_penetration.industries ? (
+            <table className="mono text-sm" style={{ width: "100%", marginTop: "var(--space-2)" }}>
+              <tbody>
+                {analysis.industry_penetration.industries.slice(0, 8).map((item) => (
+                  <tr key={item.industry}>
+                    <td style={{ padding: "3px 0" }}>{item.industry}</td>
+                    <td style={{ textAlign: "right" }}>{fmtPct(item.weight, 1)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          ) : (
+            <div className="text-sm text-tertiary" style={{ marginTop: "var(--space-2)" }}>
+              无披露股票持仓可得
+            </div>
+          )}
+        </div>
+
+        <div>
+          <SectionHeader title="相关性矩阵" subtitle="成员日收益相关系数（对称，对角为 1）" />
+          {corrCodes.length > 0 ? (
+            <table className="mono text-sm" style={{ marginTop: "var(--space-2)" }}>
+              <thead>
+                <tr>
+                  <th style={{ padding: "3px 8px" }} />
+                  {corrCodes.map((c) => (
+                    <th key={c} style={{ padding: "3px 8px" }}>{c}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {corrCodes.map((a) => (
+                  <tr key={a}>
+                    <td style={{ padding: "3px 8px", fontWeight: 600 }}>{a}</td>
+                    {corrCodes.map((b) => (
+                      <td key={b} style={{ textAlign: "right", padding: "3px 8px" }}>
+                        {corr[a]?.[b]?.toFixed(2) ?? "—"}
+                      </td>
+                    ))}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          ) : (
+            <div className="text-sm text-tertiary" style={{ marginTop: "var(--space-2)" }}>
+              样本不足，相关性不可得
+            </div>
+          )}
+
+          <SectionHeader title="集中度风险" subtitle="同一现任经理/同一公司权重合计" />
+          <div className="text-sm" style={{ marginTop: "var(--space-2)" }}>
+            {analysis.concentration?.manager_concentration?.length ? (
+              <div style={{ marginBottom: "var(--space-2)" }}>
+                {analysis.concentration.manager_concentration.map((item) => (
+                  <div key={item.manager_id} style={{ display: "flex", gap: "var(--space-2)" }}>
+                    <span>经理 {item.manager_name}</span>
+                    <span className="mono">{fmtPct(item.weight, 1)}</span>
+                    <span className="text-tertiary">｜{item.fund_codes.join("、")}</span>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <div className="text-tertiary">无现任经理任职记录</div>
+            )}
+            {analysis.concentration?.company_concentration?.map((item) => (
+              <div key={item.company} style={{ display: "flex", gap: "var(--space-2)" }}>
+                <span>公司 {item.company}</span>
+                <span className="mono">{fmtPct(item.weight, 1)}</span>
+                <span className="text-tertiary">｜{item.fund_codes.join("、")}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
+
+      <SectionHeader
+        title="重仓重叠穿透"
+        subtitle="披露口径（computed）为主；模拟持仓口径（estimated）隔离展示，不进默认结论"
+      />
+      <div className="grid" style={{ gridTemplateColumns: "1fr 1fr", gap: "var(--space-4)", marginTop: "var(--space-2)" }}>
+        <div>
+          {disclosed?.available && disclosed.top_overlaps.length > 0 ? (
+            <>
+              <div className="text-sm text-tertiary" style={{ marginBottom: "var(--space-2)" }}>
+                共享个股 {disclosed.shared_stock_count} / 并集 {disclosed.union_stock_count}
+                {disclosed.overlap_ratio != null && ` · 重叠率 ${fmtPct(disclosed.overlap_ratio, 1)}`}
+              </div>
+              <table className="mono text-sm" style={{ width: "100%" }}>
+                <thead>
+                  <tr>
+                    <th style={{ textAlign: "left", padding: "3px 8px" }}>个股</th>
+                    <th style={{ textAlign: "right", padding: "3px 8px" }}>持有基金数</th>
+                    <th style={{ textAlign: "right", padding: "3px 8px" }}>组合合计权重</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {disclosed.top_overlaps.slice(0, 10).map((item) => (
+                    <tr key={item.stock_code}>
+                      <td style={{ padding: "3px 8px" }}>
+                        {item.stock_name ?? item.stock_code}
+                        <span className="text-tertiary"> {item.stock_code}</span>
+                      </td>
+                      <td style={{ textAlign: "right", padding: "3px 8px" }}>{item.fund_count}</td>
+                      <td style={{ textAlign: "right", padding: "3px 8px" }}>{fmtPct(item.combined_weight, 2)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </>
+          ) : (
+            <div className="text-sm text-tertiary">披露口径无重叠个股（或无披露持仓）</div>
+          )}
+        </div>
+        <div
+          style={{
+            padding: "var(--space-3)",
+            background: "var(--surface-raised)",
+            border: "1px dashed var(--border-hairline)",
+            borderRadius: "var(--radius-sm)",
+          }}
+        >
+          <div className="text-sm" style={{ fontWeight: 600, marginBottom: "var(--space-2)" }}>
+            estimated 口径（模拟持仓，隔离展示）
+          </div>
+          {estimatedCount != null ? (
+            <div className="text-sm text-tertiary">
+              模拟持仓共享个股 {estimatedCount} 只；估计结果不进默认结论与评分。
+            </div>
+          ) : (
+            <div className="text-sm text-tertiary">无成员模拟持仓结果</div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
 
 const COLUMNS: Column<PoolRow>[] = [
   {
@@ -114,6 +344,24 @@ const COLUMNS: Column<PoolRow>[] = [
     ),
   },
   {
+    key: "weight_pct",
+    header: "组合权重(%)",
+    width: "120px",
+    render: (row) => (
+      <input
+        type="number"
+        min={0}
+        max={100}
+        step={0.1}
+        className="form-input"
+        style={{ width: "90px", padding: "4px 8px", fontFamily: "var(--font-mono)" }}
+        value={row.weightDraft}
+        placeholder="—"
+        onChange={(e) => row.onWeightChange(row.fund_code, e.target.value)}
+      />
+    ),
+  },
+  {
     key: "actions",
     header: "操作",
     width: "80px",
@@ -150,6 +398,14 @@ export default function FundPoolPage() {
   const [scanning, setScanning] = useState(false);
   const [alertsLoading, setAlertsLoading] = useState(false);
 
+  // P4C 组合权重与分析状态
+  const [weightDrafts, setWeightDrafts] = useState<Record<string, string>>({});
+  const [savingWeights, setSavingWeights] = useState(false);
+  const [analysis, setAnalysis] = useState<PortfolioAnalysis | null>(null);
+  const [analysisRunning, setAnalysisRunning] = useState(false);
+  const [packetInfo, setPacketInfo] = useState<string | null>(null);
+  const [packetBuilding, setPacketBuilding] = useState(false);
+
   const loadPools = useCallback(async () => {
     try {
       const res = await api.listPools();
@@ -169,7 +425,7 @@ export default function FundPoolPage() {
     }
   }, [activePool]);
 
-  const loadMembers = useCallback(async (poolId: number) => {
+  const loadMembers = useCallback(async (poolId: string) => {
     try {
       const res = await api.getPool(poolId);
       setMembers(res.data?.funds ?? []);
@@ -179,7 +435,7 @@ export default function FundPoolPage() {
     }
   }, []);
 
-  const loadAlerts = useCallback(async (poolId: number) => {
+  const loadAlerts = useCallback(async (poolId: string) => {
     setAlertsLoading(true);
     try {
       const [rulesRes, recordsRes] = await Promise.all([
@@ -189,9 +445,9 @@ export default function FundPoolPage() {
       setAlertRules(rulesRes.data?.rules ?? []);
       const recordsRaw = (recordsRes.data?.items ?? []) as Array<Record<string, unknown>>;
       setAlertRecords(recordsRaw.map((r) => ({
-        id: Number(r.id),
-        rule_id: r.rule_id != null ? Number(r.rule_id) : null,
-        pool_id: Number(r.pool_id),
+        id: String(r.id),
+        rule_id: r.rule_id != null ? String(r.rule_id) : null,
+        pool_id: String(r.pool_id),
         fund_code: String(r.fund_code ?? ""),
         alert_type: String(r.alert_type ?? ""),
         severity: String(r.severity ?? "info"),
@@ -216,11 +472,38 @@ export default function FundPoolPage() {
     if (activePool) {
       loadMembers(activePool.id);
       loadAlerts(activePool.id);
-    } else {
-      setAlertRules([]);
-      setAlertRecords([]);
+      // 读最近一次组合分析快照（无则留空）
+      let cancelled = false;
+      api
+        .getLatestPortfolioAnalysis(activePool.id)
+        .then((res) => {
+          if (!cancelled) setAnalysis(res.data ?? null);
+        })
+        .catch(() => {
+          if (!cancelled) setAnalysis(null);
+        });
+      return () => {
+        cancelled = true;
+      };
     }
+    setAlertRules([]);
+    setAlertRecords([]);
+    setAnalysis(null);
+    setPacketInfo(null);
+    return undefined;
   }, [activePool, loadMembers, loadAlerts]);
+
+  // 成员变化时同步权重草稿
+  useEffect(() => {
+    setWeightDrafts(
+      Object.fromEntries(
+        members.map((m) => [
+          m.fund_code,
+          m.weight_pct != null ? String(m.weight_pct) : "",
+        ])
+      )
+    );
+  }, [members]);
 
   const handleAddFund = async () => {
     if (!activePool) return;
@@ -347,7 +630,7 @@ export default function FundPoolPage() {
     }
   };
 
-  const handleDeleteRule = async (ruleId: number) => {
+  const handleDeleteRule = async (ruleId: string) => {
     if (!activePool) return;
     try {
       await api.deleteAlertRule(activePool.id, ruleId);
@@ -371,7 +654,7 @@ export default function FundPoolPage() {
     }
   };
 
-  const handleMarkAlertRead = async (alertId: number) => {
+  const handleMarkAlertRead = async (alertId: string) => {
     if (!activePool) return;
     try {
       await api.markAlertRead(alertId);
@@ -380,6 +663,75 @@ export default function FundPoolPage() {
       );
     } catch (e) {
       setError(e instanceof Error ? e.message : "标记已读失败");
+    }
+  };
+
+  // ---- P4C 组合权重与分析 ----
+
+  const handleWeightChange = (code: string, value: string) => {
+    setWeightDrafts((prev) => ({ ...prev, [code]: value }));
+  };
+
+  const weightsDirty = members.some((m) => {
+    const draft = weightDrafts[m.fund_code] ?? "";
+    const current = m.weight_pct != null ? String(m.weight_pct) : "";
+    return draft !== current;
+  });
+
+  const handleSaveWeights = async () => {
+    if (!activePool) return;
+    setSavingWeights(true);
+    try {
+      const weights: Record<string, number | null> = {};
+      for (const m of members) {
+        const draft = (weightDrafts[m.fund_code] ?? "").trim();
+        weights[m.fund_code] = draft === "" ? null : Number(draft);
+      }
+      const res = await api.updatePoolWeights(activePool.id, weights);
+      if (res.warnings.length > 0) setError(res.warnings.join("；"));
+      await loadMembers(activePool.id);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "保存权重失败");
+    } finally {
+      setSavingWeights(false);
+    }
+  };
+
+  const handleRunAnalysis = async () => {
+    if (!activePool) return;
+    setAnalysisRunning(true);
+    setError(null);
+    try {
+      const res = await api.runPortfolioAnalysis(activePool.id);
+      if (res.data) {
+        setAnalysis(res.data);
+      } else {
+        setError(res.warnings.join("；") || "组合分析未返回数据");
+      }
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "运行组合分析失败");
+    } finally {
+      setAnalysisRunning(false);
+    }
+  };
+
+  const handleBuildPacket = async () => {
+    if (!activePool) return;
+    setPacketBuilding(true);
+    setError(null);
+    try {
+      const res = await api.buildPortfolioPacket(activePool.id);
+      if (res.data) {
+        setPacketInfo(
+          `组合研究包已生成：${res.data.packet_id}（模板 ${res.data.template}）`
+        );
+      } else {
+        setError(res.warnings.join("；") || "组合研究包生成失败");
+      }
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "生成组合研究包失败");
+    } finally {
+      setPacketBuilding(false);
     }
   };
 
@@ -396,6 +748,8 @@ export default function FundPoolPage() {
     ...m,
     key: m.fund_code,
     removeSelf: handleRemoveFund,
+    weightDraft: weightDrafts[m.fund_code] ?? "",
+    onWeightChange: handleWeightChange,
   }));
 
   const crumbs: BreadcrumbItem[] = [
@@ -594,6 +948,13 @@ export default function FundPoolPage() {
             subtitle={`共 ${members.length} 只`}
             actions={
               <div style={{ display: "flex", gap: "var(--space-2)" }}>
+                <button
+                  className="btn btn-primary btn-sm"
+                  onClick={handleSaveWeights}
+                  disabled={!weightsDirty || savingWeights}
+                >
+                  {savingWeights ? "保存中…" : "保存权重"}
+                </button>
                 <ExportButton
                   data={exportData}
                   filename={`fund-pools-${new Date().toISOString().slice(0, 10)}.json`}
@@ -611,6 +972,9 @@ export default function FundPoolPage() {
               </div>
             }
           />
+          <div className="text-sm text-tertiary" style={{ marginTop: "var(--space-2)" }}>
+            权重留空 = 观察列表；填入权重（%）即成为组合，分析时自动归一。
+          </div>
           <div style={{ marginTop: "var(--space-3)" }}>
             {members.length === 0 ? (
               <EmptyState
@@ -627,6 +991,59 @@ export default function FundPoolPage() {
               />
             )}
           </div>
+        </div>
+      )}
+      
+      {activePool && members.length > 0 && (
+        <div className="fade-up fade-up-4" style={{ marginTop: "var(--space-5)" }}>
+          <SectionHeader
+            title="组合穿透分析（P4C）"
+            subtitle="NAV 加权组合指标 + 风格/行业穿透 + 重仓重叠（披露 vs estimated 隔离）+ 集中度风险"
+            actions={
+              <div style={{ display: "flex", gap: "var(--space-2)" }}>
+                <button
+                  className="btn btn-primary btn-sm"
+                  onClick={handleRunAnalysis}
+                  disabled={analysisRunning}
+                >
+                  {analysisRunning ? "分析中…" : "运行组合分析"}
+                </button>
+                <button
+                  className="btn btn-secondary btn-sm"
+                  onClick={handleBuildPacket}
+                  disabled={packetBuilding}
+                >
+                  {packetBuilding ? "生成中…" : "生成组合研究包"}
+                </button>
+              </div>
+            }
+          />
+          {packetInfo && (
+            <div
+              className="text-sm"
+              style={{
+                marginTop: "var(--space-2)",
+                padding: "var(--space-2) var(--space-3)",
+                background: "var(--accent-subtle)",
+                borderRadius: "var(--radius-sm)",
+                color: "var(--accent)",
+              }}
+            >
+              {packetInfo}
+            </div>
+          )}
+          {!analysis && (
+            <div style={{ marginTop: "var(--space-3)" }}>
+              <EmptyState
+                icon="◈"
+                title="暂无组合分析快照"
+                desc="点击「运行组合分析」对当前池成员做穿透分析（无权重视为观察列表，等权口径）"
+              />
+            </div>
+          )}
+          {analysis && (
+            <PortfolioAnalysisView analysis={analysis} />
+          )}
         </div>
       )}
 

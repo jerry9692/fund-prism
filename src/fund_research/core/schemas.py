@@ -94,7 +94,10 @@ class FieldCoverage(BaseModel):
 class ResearchPacketMetadata(BaseModel):
     """研究包元数据。"""
 
-    fund_code: str = Field(..., description="基金代码")
+    fund_code: str = Field(..., description="基金代码（组合包为 pool:{pool_id}）")
+    entity_type: str = Field(default="fund", description="实体类型 fund/portfolio（P4C）")
+    pool_id: int | None = Field(default=None, description="组合池 ID（组合包，P4C）")
+    pool_name: str | None = Field(default=None, description="组合池名称（组合包，P4C）")
     generated_at: datetime = Field(default_factory=datetime.now, description="生成时间")
     data_date: date = Field(..., description="数据截止日期")
     template: str = Field(default="single_fund_checkup", description="研究包模板")
@@ -135,6 +138,9 @@ class ResearchPacket(BaseModel):
     simulated_holding: dict[str, Any] | None = Field(None, description="模拟持仓结果（Phase 2，estimated）")
     dynamic_attribution: dict[str, Any] | None = Field(None, description="动态归因结果（Phase 2，estimated）")
     risk_alerts: list[dict[str, Any]] = Field(default_factory=list, description="风险提示")
+    portfolio: dict[str, Any] | None = Field(
+        None, description="组合穿透分析（P4C，entity_type=portfolio）"
+    )
     evidence: list[EvidenceRecord] = Field(default_factory=list, description="证据列表")
     data_quality: dict[str, Any] | None = Field(None, description="数据质量摘要")
     conclusion_map: dict[str, ConclusionStatus] = Field(

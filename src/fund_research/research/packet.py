@@ -1475,6 +1475,16 @@ def render_packet_markdown(packet: ResearchPacket) -> str:
     return "\n".join(lines)
 
 
+def _entity_type_for(entity_id: str) -> str:
+    """由 entity_id 前缀推断证据实体类型（P4C：支持组合实体）。"""
+    if entity_id.startswith("fund:"):
+        return "fund"
+    if entity_id.startswith("portfolio:"):
+        return "portfolio"
+    # 兼容直接使用基金代码作为 entity_id 的历史记录
+    return "fund" if entity_id[:6].isdigit() else "unknown"
+
+
 def _persist_evidence_records(db: Session, packet: ResearchPacket) -> None:
     """Upsert packet evidence into the evidence table."""
     for evidence in packet.evidence:
@@ -1489,7 +1499,7 @@ def _persist_evidence_records(db: Session, packet: ResearchPacket) -> None:
         )
         values = {
             "entity_id": evidence.entity_id,
-            "entity_type": "fund" if evidence.entity_id.startswith("fund:") else "unknown",
+            "entity_type": _entity_type_for(evidence.entity_id),
             "evidence_type": evidence.evidence_type.value,
             "source": evidence.source,
             "source_level": evidence.source_level.value,

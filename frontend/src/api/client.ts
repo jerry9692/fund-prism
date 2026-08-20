@@ -640,6 +640,69 @@ export interface BondFactorExposureItem {
   warnings: string[];
 }
 
+// ---- Phase 4 (P4C) 组合穿透分析 ----
+
+export interface PortfolioOverlapItem {
+  stock_code: string;
+  stock_name: string | null;
+  fund_codes: string[];
+  fund_count: number;
+  combined_weight: number;
+}
+
+export interface PortfolioAnalysis {
+  pool_id: number;
+  pool_name?: string | null;
+  calc_date?: string;
+  weights_mode: "weighted" | "equal" | string;
+  member_weights: Record<string, number>;
+  members?: Array<{ fund_code: string; fund_name: string | null; weight: number }>;
+  portfolio_metrics: Record<string, number | string | null>;
+  correlation_matrix: Record<string, Record<string, number>>;
+  style_penetration: {
+    available: boolean;
+    composite?: Record<string, number>;
+    covered_funds?: string[];
+    coverage_weight?: number;
+  };
+  industry_penetration: {
+    available: boolean;
+    industries?: Array<{ industry: string; weight: number }>;
+    top5?: Array<{ industry: string; weight: number }>;
+    industry_hhi?: number | null;
+    disclosed_weight_total?: number;
+  };
+  holding_overlap: {
+    disclosed: {
+      available: boolean;
+      shared_stock_count: number;
+      union_stock_count: number;
+      overlap_ratio: number | null;
+      top_overlaps: PortfolioOverlapItem[];
+    };
+    estimated_overlap: Record<string, unknown>;
+  };
+  concentration: {
+    manager_concentration: Array<{
+      manager_id: string;
+      manager_name: string;
+      weight: number;
+      fund_codes: string[];
+    }>;
+    company_concentration: Array<{
+      company: string;
+      weight: number;
+      fund_codes: string[];
+    }>;
+    max_manager_weight: number | null;
+    max_company_weight: number | null;
+  };
+  window_start: string | null;
+  window_end: string | null;
+  conclusion_status: string;
+  warnings: string[];
+}
+
 // ---- API functions (one per endpoint) ----
 
 export const api = {
@@ -1065,34 +1128,61 @@ export const api = {
   // ---- Fund Pool (P2.5-1) ----
 
   listPools: () =>
-    request<{ id: number; name: string; description: string | null; fund_count: number; created_at: string | null; updated_at: string | null }[]>(
+    request<{ id: string; name: string; description: string | null; fund_count: number; created_at: string | null; updated_at: string | null }[]>(
       "/api/v2/pools"
     ),
 
   createPool: (body: { name: string; description?: string }) =>
-    request<{ id: number; name: string; description: string | null }>(
+    request<{ id: string; name: string; description: string | null }>(
       "/api/v2/pools",
       { method: "POST", body: JSON.stringify(body) }
     ),
 
-  getPool: (poolId: number) =>
-    request<{ id: number; name: string; description: string | null; created_at: string | null; funds: { fund_code: string; note: string | null; added_at: string | null }[] }>(
+  getPool: (poolId: string) =>
+    request<{ id: string; name: string; description: string | null; created_at: string | null; funds: { fund_code: string; note: string | null; added_at: string | null; weight_pct: number | null }[] }>(
       `/api/v2/pools/${poolId}`
     ),
 
-  deletePool: (poolId: number) =>
-    request<{ deleted: boolean; pool_id: number }>(
+  deletePool: (poolId: string) =>
+    request<{ deleted: boolean; pool_id: string }>(
       `/api/v2/pools/${poolId}`,
       { method: "DELETE" }
     ),
 
-  addPoolMember: (poolId: number, body: { fund_code: string; note?: string }) =>
-    request<{ id: number; pool_id: number; fund_code: string }>(
+  addPoolMember: (poolId: string, body: { fund_code: string; note?: string; weight_pct?: number | null }) =>
+    request<{ id: string; pool_id: string; fund_code: string; weight_pct: number | null }>(
       `/api/v2/pools/${poolId}/funds`,
       { method: "POST", body: JSON.stringify(body) }
     ),
 
-  removePoolMember: (poolId: number, fundCode: string) =>
+  updatePoolWeights: (poolId: string, weights: Record<string, number | null>) =>
+    request<{
+      pool_id: string;
+      updated: Record<string, number | null>;
+      skipped: string[];
+    }>(`/api/v2/pools/${poolId}/weights`, {
+      method: "PATCH",
+      body: JSON.stringify({ weights }),
+    }),
+
+  runPortfolioAnalysis: (poolId: string, body?: { calc_date?: string }) =>
+    request<PortfolioAnalysis & { persisted: boolean }>(
+      `/api/v2/portfolios/${poolId}/analysis`,
+      { method: "POST", body: JSON.stringify(body ?? {}) }
+    ),
+
+  getLatestPortfolioAnalysis: (poolId: string) =>
+    request<PortfolioAnalysis>(`/api/v2/portfolios/${poolId}/analysis/latest`),
+
+  buildPortfolioPacket: (poolId: string) =>
+    request<{
+      packet_id: string;
+      template: string;
+      packet: Record<string, unknown>;
+      markdown: string;
+    }>(`/api/v2/portfolios/${poolId}/packet`, { method: "POST" }),
+
+  removePoolMember: (poolId: string, fundCode: string) =>
     request<{ removed: boolean; fund_code: string }>(
       `/api/v2/pools/${poolId}/funds/${encodeURIComponent(fundCode)}`,
       { method: "DELETE" }
@@ -1259,15 +1349,15 @@ export const api = {
 
   // ---- Phase 3: Pool Alerts ----
 
-  scanPoolAlerts: (poolId: number, alertTypes?: string[]) =>
+  scanPoolAlerts: (poolId: string, alertTypes?: string[]) =>
     request<{ results: Array<Record<string, unknown>>; total: number }>(
       `/api/v2/pools/${poolId}/alerts/scan`,
       { method: "POST", body: JSON.stringify({ alert_types: alertTypes }) }
     ),
 
-  getPoolAlerts: (poolId?: number, isRead?: boolean, limit = 50) => {
+  getPoolAlerts: (poolId?: string, isRead?: boolean, limit = 50) => {
     const sp = new URLSearchParams();
-    if (poolId != null) sp.set("pool_id", String(poolId));
+    if (poolId != null) sp.set("pool_id", poolId);
     if (isRead != null) sp.set("is_read", String(isRead));
     sp.set("limit", String(limit));
     return request<{ items: Array<Record<string, unknown>>; total: number }>(
@@ -1275,25 +1365,25 @@ export const api = {
     );
   },
 
-  markAlertRead: (alertId: number) =>
+  markAlertRead: (alertId: string) =>
     request<Record<string, unknown>>(`/api/v2/alerts/${alertId}/read`, { method: "POST" }),
 
-  createAlertRule: (poolId: number, body: { fund_code: string; alert_type: string; params?: Record<string, unknown> }) =>
-    request<{ id: number; pool_id: number; fund_code: string; alert_type: string; params: Record<string, unknown>; is_active: boolean }>(
+  createAlertRule: (poolId: string, body: { fund_code: string; alert_type: string; params?: Record<string, unknown> }) =>
+    request<{ id: string; pool_id: string; fund_code: string; alert_type: string; params: Record<string, unknown>; is_active: boolean }>(
       `/api/v2/pools/${poolId}/alert-rules`,
       { method: "POST", body: JSON.stringify(body) }
     ),
 
-  listAlertRules: (poolId: number, fundCode?: string) => {
+  listAlertRules: (poolId: string, fundCode?: string) => {
     const sp = new URLSearchParams();
     if (fundCode) sp.set("fund_code", fundCode);
     const qs = sp.toString();
-    return request<{ rules: Array<{ id: number; pool_id: number; fund_code: string; alert_type: string; params: Record<string, unknown>; is_active: boolean; created_at: string | null }>; total: number }>(
+    return request<{ rules: Array<{ id: string; pool_id: string; fund_code: string; alert_type: string; params: Record<string, unknown>; is_active: boolean; created_at: string | null }>; total: number }>(
       qs ? `/api/v2/pools/${poolId}/alert-rules?${qs}` : `/api/v2/pools/${poolId}/alert-rules`
     );
   },
 
-  deleteAlertRule: (poolId: number, ruleId: number) =>
+  deleteAlertRule: (poolId: string, ruleId: string) =>
     request<Record<string, unknown>>(`/api/v2/pools/${poolId}/alert-rules/${ruleId}`, { method: "DELETE" }),
 
   // ---- Phase 3: Reverse Lookup ----

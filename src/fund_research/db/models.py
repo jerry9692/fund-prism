@@ -639,14 +639,24 @@ class StaticAttributionResult(Base):
 
 
 class ResearchPacketRecord(Base):
-    """研究包存储表。"""
+    """研究包存储表。
+
+    P4C：``entity_type`` 支持 fund/portfolio；组合包 ``fund_code`` 为空、
+    ``pool_id`` 指向 fund_pool。
+    """
 
     __tablename__ = "research_packet"
 
     id: Mapped[int] = id_column()
     packet_id: Mapped[str] = mapped_column(String(64), unique=True, index=True, comment="研究包 ID")
-    fund_code: Mapped[str] = mapped_column(
-        String(20), ForeignKey("fund_main.fund_code"), index=True, comment="基金代码"
+    fund_code: Mapped[str | None] = mapped_column(
+        String(20), ForeignKey("fund_main.fund_code"), index=True, comment="基金代码（组合包为空）"
+    )
+    entity_type: Mapped[str] = mapped_column(
+        String(30), default="fund", server_default="fund", comment="实体类型 fund/portfolio（P4C）"
+    )
+    pool_id: Mapped[int | None] = mapped_column(
+        BigInteger, ForeignKey("fund_pool.id"), index=True, comment="组合池 ID（组合包，P4C）"
     )
     template: Mapped[str] = mapped_column(String(50), comment="研究包模板")
     generated_at: Mapped[datetime] = mapped_column(DateTime, comment="生成时间")

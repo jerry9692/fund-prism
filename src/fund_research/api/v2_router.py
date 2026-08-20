@@ -86,6 +86,18 @@ from fund_research.analysis.pool_alert import (
 from fund_research.analysis.pool_alert import (
     ALGORITHM_VERSION as POOL_ALERT_VERSION,
 )
+from fund_research.analysis.portfolio import (
+    ALGORITHM_NAME as PORTFOLIO_NAME,
+)
+from fund_research.analysis.portfolio import (
+    ALGORITHM_VERSION as PORTFOLIO_VERSION,
+)
+from fund_research.analysis.portfolio import (
+    compute_portfolio_analysis,
+    get_latest_portfolio_analysis,
+    persist_portfolio_analysis,
+    portfolio_row_to_dict,
+)
 from fund_research.analysis.research_template import (
     ALGORITHM_NAME as TEMPLATE_NAME,
 )
@@ -3422,6 +3434,17 @@ class CreatePoolRequest(BaseModel):
 class AddPoolMemberRequest(BaseModel):
     fund_code: str = Field(..., max_length=20)
     note: str | None = Field(default=None, max_length=200)
+    weight_pct: float | None = Field(
+        default=None, ge=0, le=100, description="组合权重(%)，P4C：空=观察列表成员"
+    )
+
+
+class UpdatePoolWeightsRequest(BaseModel):
+    """批量设置组合权重（P4C）：仅更新传入的成员；权重合计无需为 100，分析时归一。"""
+
+    weights: dict[str, float | None] = Field(
+        ..., description="{fund_code: weight_pct}，值为 null 清除权重"
+    )
 
 
 class SaveScreenRequest(BaseModel):
@@ -3441,7 +3464,7 @@ def list_pools(db: SessionDep):
             select(DbFundPoolMember.fund_code).where(DbFundPoolMember.pool_id == p.id)
         ).scalars().all()
         result.append({
-            "id": p.id,
+            "id": str(p.id),
             "name": p.name,
             "description": p.description,
             "fund_count": len(count),
@@ -3460,7 +3483,7 @@ def create_pool(body: CreatePoolRequest, db: SessionDep):
         db.commit()
         db.refresh(pool)
         return _log(db, "create_pool", body.model_dump(), APIResponse(
-            data={"id": pool.id, "name": pool.name, "description": pool.description},
+            data={"id": str(pool.id), "name": pool.name, "description": pool.description},
             metadata={"created": True},
         ), started)
     except Exception as exc:
@@ -3484,7 +3507,7 @@ def get_pool(pool_id: int, db: SessionDep):
         select(DbFundPoolMember).where(DbFundPoolMember.pool_id == pool_id).order_by(DbFundPoolMember.added_at)
     ).scalars().all()
     data = {
-        "id": pool.id,
+        "id": str(pool.id),
         "name": pool.name,
         "description": pool.description,
         "created_at": pool.created_at.isoformat() if pool.created_at else None,
@@ -3493,6 +3516,7 @@ def get_pool(pool_id: int, db: SessionDep):
                 "fund_code": m.fund_code,
                 "note": m.note,
                 "added_at": m.added_at.isoformat() if m.added_at else None,
+                "weight_pct": m.weight_pct,
             }
             for m in members
         ],
@@ -3519,7 +3543,7 @@ def delete_pool(pool_id: int, db: SessionDep):
         db.delete(pool)
         db.commit()
         return _log(db, "delete_pool", {"pool_id": pool_id}, APIResponse(
-            data={"deleted": True, "pool_id": pool_id},
+            data={"deleted": True, "pool_id": str(pool_id)},
         ), started)
     except Exception as exc:
         db.rollback()
@@ -3551,12 +3575,22 @@ def add_pool_member(pool_id: int, body: AddPoolMemberRequest, db: SessionDep):
                 data=None, warnings=["该基金已在池中"],
                 conclusion_status=ConclusionStatus.NEEDS_REVIEW,
             ), started)
-        member = DbFundPoolMember(pool_id=pool_id, fund_code=body.fund_code, note=body.note)
+        member = DbFundPoolMember(
+            pool_id=pool_id,
+            fund_code=body.fund_code,
+            note=body.note,
+            weight_pct=body.weight_pct,
+        )
         db.add(member)
         db.commit()
         db.refresh(member)
         return _log(db, "add_pool_member", params, APIResponse(
-            data={"id": member.id, "pool_id": pool_id, "fund_code": body.fund_code},
+            data={
+                "id": str(member.id),
+                "pool_id": str(pool_id),
+                "fund_code": body.fund_code,
+                "weight_pct": member.weight_pct,
+            },
         ), started)
     except Exception as exc:
         db.rollback()
@@ -3593,6 +3627,69 @@ def remove_pool_member(pool_id: int, fund_code: str, db: SessionDep):
             data=None, warnings=[f"从池中移除基金失败: {exc}"],
             conclusion_status=ConclusionStatus.NEEDS_REVIEW,
         ), started)
+
+
+@v2_router.patch("/pools/{pool_id}/weights", response_model=APIResponse[dict])
+def update_pool_weights(
+    pool_id: int, body: UpdatePoolWeightsRequest, db: SessionDep
+) -> APIResponse[dict]:
+    """批量设置组合成员权重（P4C）：仅更新池内已有成员，未知代码告警跳过。"""
+    started = perf_counter()
+    params = {"pool_id": pool_id, "weights": body.weights}
+    try:
+        pool = db.get(DbFundPool, pool_id)
+        if pool is None:
+            return _log(
+                db,
+                "update_pool_weights",
+                params,
+                APIResponse(
+                    data=None,
+                    warnings=["基金池不存在"],
+                    conclusion_status=ConclusionStatus.NEEDS_REVIEW,
+                ),
+                started,
+            )
+        members = {
+            m.fund_code: m
+            for m in db.scalars(
+                select(DbFundPoolMember).where(DbFundPoolMember.pool_id == pool_id)
+            ).all()
+        }
+        updated: dict[str, float | None] = {}
+        skipped: list[str] = []
+        for fund_code, weight in body.weights.items():
+            member = members.get(fund_code)
+            if member is None:
+                skipped.append(fund_code)
+                continue
+            member.weight_pct = weight
+            updated[fund_code] = weight
+        db.commit()
+        warnings = [f"非池内成员已跳过: {', '.join(skipped)}"] if skipped else []
+        return _log(
+            db,
+            "update_pool_weights",
+            params,
+            APIResponse(
+                data={"pool_id": str(pool_id), "updated": updated, "skipped": skipped},
+                warnings=warnings,
+            ),
+            started,
+        )
+    except Exception as exc:
+        db.rollback()
+        return _log(
+            db,
+            "update_pool_weights",
+            params,
+            APIResponse(
+                data=None,
+                warnings=[f"更新组合权重失败: {exc}"],
+                conclusion_status=ConclusionStatus.NEEDS_REVIEW,
+            ),
+            started,
+        )
 
 
 @v2_router.get("/screens")
@@ -4467,11 +4564,14 @@ class AlertScanRequest(BaseModel):
 
 
 def _alert_record_to_dict(r: PoolAlertRecord) -> dict[str, Any]:
-    """Serialize a PoolAlertRecord to an API-friendly dict."""
+    """Serialize a PoolAlertRecord to an API-friendly dict.
+
+    代理 ID 为 19 位大整数，超出 JS Number 安全范围，统一 str 序列化。
+    """
     return {
-        "id": r.id,
-        "rule_id": r.rule_id,
-        "pool_id": r.pool_id,
+        "id": str(r.id),
+        "rule_id": str(r.rule_id) if r.rule_id is not None else None,
+        "pool_id": str(r.pool_id),
         "fund_code": r.fund_code,
         "alert_type": r.alert_type,
         "severity": r.severity,
@@ -4504,8 +4604,8 @@ def create_alert_rule_endpoint(
         db.refresh(rule)
         return _log(db, "create_alert_rule", params, APIResponse(
             data={
-                "id": rule.id,
-                "pool_id": rule.pool_id,
+                "id": str(rule.id),
+                "pool_id": str(rule.pool_id),
                 "fund_code": rule.fund_code,
                 "alert_type": rule.alert_type,
                 "params": rule.params,
@@ -4537,8 +4637,8 @@ def list_alert_rules_endpoint(
         rules = get_alert_rules(db, pool_id, fund_code=fund_code)
         data = [
             {
-                "id": r.id,
-                "pool_id": r.pool_id,
+                "id": str(r.id),
+                "pool_id": str(r.pool_id),
                 "fund_code": r.fund_code,
                 "alert_type": r.alert_type,
                 "params": r.params,
@@ -4565,7 +4665,7 @@ def list_alert_rules_endpoint(
 @v2_router.delete("/pools/{pool_id}/alert-rules/{rule_id}", response_model=APIResponse[dict])
 def delete_alert_rule_endpoint(
     pool_id: int,
-    rule_id: int,
+    rule_id: str,
     db: SessionDep,
 ) -> APIResponse[dict]:
     """删除基金池提醒规则。"""
@@ -4574,7 +4674,7 @@ def delete_alert_rule_endpoint(
     try:
         rule = db.scalars(
             select(PoolAlertRule).where(
-                PoolAlertRule.id == rule_id,
+                PoolAlertRule.id == int(rule_id),
                 PoolAlertRule.pool_id == pool_id,
             ).limit(1)
         ).first()
@@ -4660,19 +4760,19 @@ def list_alerts_endpoint(
 
 @v2_router.post("/alerts/{alert_id}/read", response_model=APIResponse[dict])
 def mark_alert_read_endpoint(
-    alert_id: int,
+    alert_id: str,
     db: SessionDep,
 ) -> APIResponse[dict]:
     """标记提醒为已读。"""
     started = perf_counter()
     params = {"alert_id": alert_id}
     try:
-        record = mark_alert_read(db, alert_id)
+        record = mark_alert_read(db, int(alert_id))
         if record is None:
             raise HTTPException(status_code=404, detail="提醒记录不存在")
         db.commit()
         return _log(db, "mark_alert_read", params, APIResponse(
-            data={"id": record.id, "is_read": record.is_read},
+            data={"id": str(record.id), "is_read": record.is_read},
             metadata={"tool": POOL_ALERT_NAME, "platform_version": __version__},
             conclusion_status=ConclusionStatus.COMPUTED,
         ), started)
@@ -5841,6 +5941,207 @@ def get_bond_factor_exposure_endpoint(db: SessionDep, fund_code: str) -> APIResp
             APIResponse(
                 data=None,
                 metadata=_bond_factor_meta(),
+                warnings=[str(exc)],
+                conclusion_status=ConclusionStatus.NEEDS_REVIEW,
+            ),
+            started,
+        )
+
+
+# ============================================================
+# P4C: 基金组合穿透分析与组合研究包（需求书 §6.3.9 / §12.4.2/§12.4.4）
+# ============================================================
+
+
+class PortfolioAnalysisRequest(BaseModel):
+    """组合穿透分析请求。"""
+
+    calc_date: date | None = Field(None, description="计算日期，默认今日")
+
+
+def _portfolio_meta() -> dict:
+    return {
+        "tool": PORTFOLIO_NAME,
+        "algorithm_version": PORTFOLIO_VERSION,
+        "platform_version": __version__,
+    }
+
+
+@v2_router.post("/portfolios/{pool_id}/analysis", response_model=APIResponse[dict])
+def run_portfolio_analysis_endpoint(
+    pool_id: int,
+    db: SessionDep,
+    body: PortfolioAnalysisRequest | None = None,
+) -> APIResponse[dict]:
+    """运行组合穿透分析并落库（幂等覆盖同日期同版本）。"""
+    started = perf_counter()
+    calc_date = body.calc_date if body else None
+    params = {"pool_id": pool_id, "calc_date": str(calc_date) if calc_date else None}
+    try:
+        analysis = compute_portfolio_analysis(db, pool_id)
+        if analysis.conclusion_status == ConclusionStatus.NEEDS_REVIEW.value and (
+            "不存在" in "；".join(analysis.warnings) or "不足 2 只" in "；".join(analysis.warnings)
+        ):
+            return _log(
+                db,
+                "portfolio_analysis",
+                params,
+                APIResponse(
+                    data=analysis.to_data(),
+                    metadata=_portfolio_meta(),
+                    warnings=analysis.warnings,
+                    conclusion_status=ConclusionStatus.NEEDS_REVIEW,
+                ),
+                started,
+            )
+        persist_portfolio_analysis(db, analysis, calc_date=calc_date)
+        db.commit()
+        return _log(
+            db,
+            "portfolio_analysis",
+            params,
+            APIResponse(
+                data={
+                    **analysis.to_data(),
+                    "calc_date": str(calc_date or date.today()),
+                    "persisted": True,
+                },
+                metadata=_portfolio_meta(),
+                warnings=analysis.warnings,
+                conclusion_status=ConclusionStatus(analysis.conclusion_status),
+            ),
+            started,
+        )
+    except Exception as exc:
+        db.rollback()
+        return _log(
+            db,
+            "portfolio_analysis",
+            params,
+            APIResponse(
+                data=None,
+                metadata=_portfolio_meta(),
+                warnings=[str(exc)],
+                conclusion_status=ConclusionStatus.NEEDS_REVIEW,
+            ),
+            started,
+        )
+
+
+@v2_router.get(
+    "/portfolios/{pool_id}/analysis/latest", response_model=APIResponse[dict]
+)
+def get_portfolio_analysis_endpoint(pool_id: int, db: SessionDep) -> APIResponse[dict]:
+    """获取组合最近一次穿透分析快照（已落库）。"""
+    started = perf_counter()
+    params = {"pool_id": pool_id}
+    try:
+        row = get_latest_portfolio_analysis(db, pool_id)
+        if row is None:
+            return _log(
+                db,
+                "get_portfolio_analysis",
+                params,
+                APIResponse(
+                    data=None,
+                    metadata=_portfolio_meta(),
+                    warnings=[
+                        f"组合 {pool_id} 暂无穿透分析记录，"
+                        f"请先运行 POST /portfolios/{pool_id}/analysis"
+                    ],
+                    conclusion_status=ConclusionStatus.NEEDS_REVIEW,
+                ),
+                started,
+            )
+        pool = db.get(DbFundPool, pool_id)
+        return _log(
+            db,
+            "get_portfolio_analysis",
+            params,
+            APIResponse(
+                data=portfolio_row_to_dict(row, pool_name=pool.name if pool else None),
+                metadata=_portfolio_meta(),
+                warnings=[],
+                conclusion_status=ConclusionStatus(row.conclusion_status),
+            ),
+            started,
+        )
+    except Exception as exc:
+        db.rollback()
+        return _log(
+            db,
+            "get_portfolio_analysis",
+            params,
+            APIResponse(
+                data=None,
+                metadata=_portfolio_meta(),
+                warnings=[str(exc)],
+                conclusion_status=ConclusionStatus.NEEDS_REVIEW,
+            ),
+            started,
+        )
+
+
+@v2_router.post("/portfolios/{pool_id}/packet", response_model=APIResponse[dict])
+def build_portfolio_packet_endpoint(pool_id: int, db: SessionDep) -> APIResponse[dict]:
+    """组装并持久化组合研究包（含成分基金 evidence 引用，§12.4.4）。
+
+    若当日无分析快照，先运行一次穿透分析（不落分析快照以外额外写入）。
+    """
+    started = perf_counter()
+    params = {"pool_id": pool_id}
+    try:
+        from fund_research.research.portfolio_packet import (
+            PORTFOLIO_TEMPLATE,
+            build_portfolio_packet,
+            persist_portfolio_packet,
+            render_portfolio_packet_markdown,
+        )
+
+        analysis = compute_portfolio_analysis(db, pool_id)
+        if analysis.conclusion_status == ConclusionStatus.NEEDS_REVIEW.value and not analysis.members:
+            return _log(
+                db,
+                "portfolio_packet",
+                params,
+                APIResponse(
+                    data=None,
+                    metadata=_portfolio_meta(),
+                    warnings=analysis.warnings or ["组合不可用"],
+                    conclusion_status=ConclusionStatus.NEEDS_REVIEW,
+                ),
+                started,
+            )
+        # 同步落一份分析快照，保证研究包与快照可追溯对齐
+        persist_portfolio_analysis(db, analysis)
+        packet = build_portfolio_packet(db, analysis)
+        record = persist_portfolio_packet(db, packet)
+        return _log(
+            db,
+            "portfolio_packet",
+            params,
+            APIResponse(
+                data={
+                    "packet_id": record.packet_id,
+                    "template": PORTFOLIO_TEMPLATE,
+                    "packet": packet.model_dump(mode="json"),
+                    "markdown": render_portfolio_packet_markdown(packet),
+                },
+                metadata=_portfolio_meta(),
+                warnings=analysis.warnings,
+                conclusion_status=ConclusionStatus(analysis.conclusion_status),
+            ),
+            started,
+        )
+    except Exception as exc:
+        db.rollback()
+        return _log(
+            db,
+            "portfolio_packet",
+            params,
+            APIResponse(
+                data=None,
+                metadata=_portfolio_meta(),
                 warnings=[str(exc)],
                 conclusion_status=ConclusionStatus.NEEDS_REVIEW,
             ),

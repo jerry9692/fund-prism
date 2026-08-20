@@ -338,7 +338,11 @@ class FundPool(Base):
 
 
 class FundPoolMember(Base):
-    """基金池成员关联表。"""
+    """基金池成员关联表。
+
+    P4C：``weight_pct`` 可空权重(%) —— 有权重的池 = 组合（portfolio），
+    无权重仍为观察列表（watchlist），向后兼容。
+    """
 
     __tablename__ = "fund_pool_member"
 
@@ -351,6 +355,9 @@ class FundPoolMember(Base):
     fund_code: Mapped[str] = mapped_column(String(20), index=True)
     added_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.now)
     note: Mapped[str | None] = mapped_column(String(200))
+    weight_pct: Mapped[float | None] = mapped_column(
+        Float, comment="组合权重(%)，空=观察列表成员（P4C）"
+    )
 
     __table_args__ = (
         UniqueConstraint("pool_id", "fund_code", name="uq_pool_fund"),

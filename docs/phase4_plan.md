@@ -119,7 +119,7 @@
 
 ---
 
-## 3. P4C 基金组合穿透分析与组合研究包（§6.3.9 + §12.4.2/§12.4.4）
+## 3. P4C 基金组合穿透分析与组合研究包（§6.3.9 + §12.4.2/§12.4.4）✅ 已完成（2026-08-20）
 
 **现状**：`fund_pool` 仅池管理 + 提醒（pool_alert），无权重组合分析；`research_packet` 仅单基金实体；`compare_fund_fingerprints` 只有指纹相似度，无持仓穿透（P4.0-4 已登记欠账）。
 
@@ -138,9 +138,20 @@
 
 **验收标准**：
 
-- [ ] 组合收益/回撤与手工加权口径一致；相关性矩阵对称且对角为 1。
-- [ ] 重叠穿透区分披露口径（computed）与模拟口径（estimated），后者不进默认结论。
-- [ ] 组合研究包可导出且包含全部成分基金 evidence 链。
+- [x] 组合收益/回撤与手工加权口径一致；相关性矩阵对称且对角为 1。
+- [x] 重叠穿透区分披露口径（computed）与模拟口径（estimated），后者不进默认结论。
+- [x] 组合研究包可导出且包含全部成分基金 evidence 链。
+
+**落地说明**（2026-08-20 实施记录）：
+
+1. **ORM**（migration `20260821_0002`，SQLite batch）：`fund_pool_member.weight_pct` 可空权重（有权重=组合，无权重=观察列表，向后兼容）；`user_portfolio` 组合分析快照表（成员权重/组合指标/相关性/风格与行业穿透/重叠/集中度/窗口/结论状态，`(pool_id, calc_date, 算法名, 版本)` 唯一）；`research_packet` 扩展 `entity_type`/`pool_id` 且 `fund_code` 可空（组合包）。
+2. **算法**（`analysis/portfolio.py`，算法版本 0.1.0）：NAV 加权组合日收益（共同日期窗口，成员 <2 或重叠 <60 日 → needs_review；全员无权重 → 等权 + 观察列表告警）复用 `nav_metrics` 口径；相关性矩阵；风格穿透（最新风格回归暴露加权合成，缺失成员权重再归一 + 告警）；行业穿透（披露持仓 × SW2021 一级映射加权合成，含 HHI）；重仓重叠（≥2 成员共享个股 + 组合层合计权重 Top20 + 成对重叠矩阵，披露口径 computed），模拟持仓重叠一律 `estimated_*` 键隔离不进默认结论；集中度（同一现任经理/同一公司权重合计）。
+3. **组合研究包**（§12.4.4，`research/portfolio_packet.py`，模板 `portfolio_checkup`）：`ResearchPacketMetadata` 扩展 entity_type/pool_id/pool_name，`ResearchPacket` 新增 portfolio 段；evidence 登记 portfolio_analysis + portfolio_nav_metrics 两条（实体类型 portfolio），并引用各成分基金最近 5 条 evidence（member_evidence_refs，证据链完整）；Markdown 导出带算法版本/数据日期/免责声明（§6.3.10）；`_persist_evidence_records` 支持 portfolio 实体类型。
+4. **API**：`PATCH /api/v2/pools/{pool_id}/weights`（批量设权重，null 清除，非池内成员告警跳过）、`POST /api/v2/portfolios/{pool_id}/analysis`（幂等落库）、`GET .../analysis/latest`、`POST /api/v2/portfolios/{pool_id}/packet`；`add_pool_member`/`get_pool` 扩展 weight_pct。组合优化子项（CVXPY）本轮未实施，登记为可裁剪欠账（见 §8）。
+5. **审计修复（同日浏览器验证发现，P2.5-1 同源隐患）**：代理 ID 为 19 位大整数超 JS Number 安全范围，前端精度丢失致池详情 404 —— pools/alerts 全部端点 ID 统一 str 序列化（pool/member/rule/alert 的 id 与 rule_id），路径参数 rule_id/alert_id 改 str 内部 int() 转换，前端 Pool/AlertRule/AlertRecord/FundListPage 类型同步 string 化。
+6. **前端**：FundPoolPage 扩展 —— 权重列内联编辑 + 保存权重（脏检查），组合穿透分析区块：指标卡（年化/波动/回撤/Sharpe/修复天数/月度胜率）、风格/行业穿透、相关性矩阵、集中度、重仓重叠两栏（披露 + estimated 隔离框）、生成组合研究包。
+7. **冒烟验证**：真实库示例组合（000001/020005/040022，40/30/30）computed：年化 3.07%/波动 18.68%/最大回撤 -52.75%/窗口 2011-06-24→2026-08-19；风格穿透仅 1 只成员可得（降权告警诚实降级），行业 Top 电子/汽车/通信，经理集中度 0.4；组合研究包 `rp_pool_*` 落库（entity_type=portfolio）。浏览器端到端：权重保存/运行分析/快照加载全部 200，console 零报错。
+8. **测试**：新增 25 例（权重归一双模式/手工加权一致性/相关性对称/穿透再归一/estimated 隔离/集中度/降级路径/幂等/API 四端点），全量回归 697 passed（含 DuckDB 迁移兼容），ruff 全绿，前端 tsc 零错误。
 
 ---
 
@@ -223,7 +234,7 @@
 **Phase 4 完成标准**（对照 §12.4 五条 + §17 每期一个闭环）：
 
 - [ ] 债基因子暴露：12 只债基按四模板产出粗粒度因子暴露，方向符合已知策略（P4B，已完成 2026-08-20，待批次验收确认）
-- [ ] 组合分析：有权重组合产出收益/回撤/穿透重叠 + 组合研究包可导出（P4C）
+- [ ] 组合分析：有权重组合产出收益/回撤/穿透重叠 + 组合研究包可导出（P4C，已完成 2026-08-20，待批次验收确认）
 - [ ] ETF 组合构建：二次规划推荐 + 约束解释 + 再平衡成本闭环（P4D）
 - [ ] 公司/经理画像：频谱页可用（P4E）
 - [x] 指数基金优选：同指数对比表 + 综合评分在样本 11 只指数类产品上闭环（P4A，2026-08-20）
@@ -235,6 +246,7 @@
 
 | 项 | 出处 | 处置 |
 | --- | --- | --- |
+| 组合优化子项（CVXPY 最小化波动/控制回撤，约束逐条回显） | §6.3.9 第 4 条，P4C 可裁剪项 | P4C 本轮未实施（范围控制），登记欠账，可随 P4D CVXPY 基建一并落地 |
 | 无风险利率接真实货基指数曲线，统一 Sharpe/Alpha Rf 口径 | 对比报告 2.1#2 + 2.2#2、P4.0-3 | Phase 4 中期顺带：货基指数可 fetch，时序 Rf 切换需版本化（影响所有 Sharpe/Alpha 结论可信度） |
 | 滚动月度胜率 | 对比报告 2.2#4 | ✅ 已闭环（P4.0-2 `win_rate`）；滚动窗口变体可选随 nav_metrics 补强 |
 | 类型内排名 k/N | 对比报告 2.2#5 | ✅ 已闭环（P4.0-2 `analysis/rank.py`） |

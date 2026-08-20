@@ -29,9 +29,11 @@ from typing import Any
 
 from sqlalchemy import (
     JSON,
+    BigInteger,
     Date,
     DateTime,
     Float,
+    ForeignKey,
     Index,
     Integer,
     String,
@@ -505,3 +507,73 @@ class BondFactorExposureResult(Base):
 
 # 债基因子暴露导出别名
 BondFactorExposureResultV4 = BondFactorExposureResult
+
+
+# ============================================================
+# P4C 基金组合穿透分析结果（需求书 §6.3.9 / §12.4.2）
+# ============================================================
+
+
+class UserPortfolio(Base):
+    """组合分析快照表 — 有权重基金池的穿透分析结果（§6.3.9）。
+
+    模拟持仓口径的重叠穿透一律 ``estimated_*`` 键隔离，不进默认结论；
+    披露口径（computed/fact）与模拟口径分键存储。
+    """
+
+    __tablename__ = "user_portfolio"
+
+    id: Mapped[int] = id_column()
+    pool_id: Mapped[int] = mapped_column(
+        BigInteger,
+        ForeignKey("fund_pool.id"),
+        index=True,
+        comment="基金池 ID，关联 fund_pool.id",
+    )
+    calc_date: Mapped[date] = mapped_column(Date, index=True, comment="计算日期")
+    algorithm_name: Mapped[str] = mapped_column(String(50), comment="算法名")
+    algorithm_version: Mapped[str] = mapped_column(String(10), comment="算法版本")
+    member_weights: Mapped[dict[str, Any] | None] = mapped_column(
+        JSON, comment="归一化后的成员权重 {fund_code: weight}"
+    )
+    weights_mode: Mapped[str | None] = mapped_column(
+        String(20), comment="权重模式 weighted/equal（无权重视为观察列表，等权分析）"
+    )
+    portfolio_metrics: Mapped[dict[str, Any] | None] = mapped_column(
+        JSON, comment="组合层收益/波动/回撤/修复天数等（nav_metrics 口径）"
+    )
+    correlation_matrix: Mapped[dict[str, Any] | None] = mapped_column(
+        JSON, comment="基金间收益相关性矩阵 {code: {code: corr}}"
+    )
+    style_penetration: Mapped[dict[str, Any] | None] = mapped_column(
+        JSON, comment="风格穿透：指纹风格维度加权合成"
+    )
+    industry_penetration: Mapped[dict[str, Any] | None] = mapped_column(
+        JSON, comment="行业穿透：披露持仓行业权重加权合成（SW2021）"
+    )
+    holding_overlap: Mapped[dict[str, Any] | None] = mapped_column(
+        JSON, comment="重仓重叠：披露口径 + estimated_* 模拟口径隔离"
+    )
+    concentration: Mapped[dict[str, Any] | None] = mapped_column(
+        JSON, comment="集中度风险：经理/公司权重合计"
+    )
+    window_start: Mapped[date | None] = mapped_column(Date, comment="组合收益窗口起始日")
+    window_end: Mapped[date | None] = mapped_column(Date, comment="组合收益窗口结束日")
+    conclusion_status: Mapped[str] = mapped_column(String(20), default="computed")
+    warnings: Mapped[list[str] | None] = mapped_column(JSON)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.now)
+
+    __table_args__ = (
+        UniqueConstraint(
+            "pool_id",
+            "calc_date",
+            "algorithm_name",
+            "algorithm_version",
+            name="uq_user_portfolio_pool_date_algo",
+        ),
+        Index("ix_user_portfolio_pool_date", "pool_id", "calc_date"),
+    )
+
+
+# 组合分析导出别名
+UserPortfolioV4 = UserPortfolio

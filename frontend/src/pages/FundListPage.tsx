@@ -68,8 +68,8 @@ export default function FundListPage() {
   const [selectedCodes, setSelectedCodes] = useState<Set<string>>(new Set());
 
   // 基金池操作
-  const [pools, setPools] = useState<{ id: number; name: string; fund_count: number }[]>([]);
-  const [targetPoolId, setTargetPoolId] = useState<number | null>(null);
+  const [pools, setPools] = useState<{ id: string; name: string; fund_count: number }[]>([]);
+  const [targetPoolId, setTargetPoolId] = useState<string | null>(null);
   const [poolMsg, setPoolMsg] = useState<string | null>(null);
 
   // 保存筛选
@@ -529,10 +529,10 @@ export default function FundListPage() {
               <select
                 className="select"
                 style={{ width: "auto" }}
-                value={targetPoolId ?? 0}
-                onChange={(e) => setTargetPoolId(Number(e.target.value) || null)}
+                value={targetPoolId ?? ""}
+                onChange={(e) => setTargetPoolId(e.target.value || null)}
               >
-                <option value={0}>选择基金池…</option>
+                <option value="">选择基金池…</option>
                 {pools.map((p) => (
                   <option key={p.id} value={p.id}>
                     {p.name} ({p.fund_count})
