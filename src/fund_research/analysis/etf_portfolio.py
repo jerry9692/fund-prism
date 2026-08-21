@@ -245,7 +245,8 @@ def optimize_tracking_weights(
     - returns 列 = 候选 ETF 日收益，``__index__`` 列 = 目标指数日收益；
     - 协方差用 Ledoit-Wolf 收缩（§6.2.9 第 3 条）；不可用时回退样本协方差并告警；
     - max_positions 为基数约束（非凸）：先全池求解，保留权重最大的 k 只后
-      在子集上重新求解，保证约束严格成立；
+      在子集上重新求解，保证约束严格成立；子集重解不可行（如与换手
+      上限冲突）时返回 None 降级，不截断兜底（截断会静默绕过换手约束）；
     - max_turnover 以凸约束 sum|w − w_prev| ≤ cap 生效（再平衡用）。
     求解失败返回 (None, info)。
     """
@@ -316,10 +317,14 @@ def optimize_tracking_weights(
             info["subset_resolved"] = True
             info["solver_status"] = subset_status
         else:
+            # 子集重解不可行（常见于换手上限与数量上限冲突）：不截断兜底，
+            # 返回 None 由调用方降级（静态构建 needs_review；回测该期沿用
+            # 漂移权重 skipped），保证换手/数量约束不被静默绕过
+            info["solver_status"] = f"subset_{subset_status}"
             info["warnings"] = info.get("warnings", []) + [
-                f"数量上限子集重解失败（{subset_status}），沿用全池解后截断"
+                f"数量上限子集重解不可行（{subset_status}），约束组合无可行解"
             ]
-            weights = _truncate_to_positions(weights, max_positions)
+            return None, info
 
     result = {
         codes[i]: float(weights[i])
@@ -335,15 +340,6 @@ def optimize_tracking_weights(
 def prev_weights_vector(codes: list[str], prev_weights: dict[str, float]) -> list[float]:
     """把上期权重字典展开为与 codes 对齐的向量（缺失补 0）。"""
     return [float(prev_weights.get(code, 0.0)) for code in codes]
-
-
-def _truncate_to_positions(weights: np.ndarray, max_positions: int) -> np.ndarray:
-    """兜底截断：仅保留最大的 max_positions 个权重并再归一。"""
-    cleaned = np.zeros_like(weights)
-    top = np.argsort(weights)[::-1][: max(1, max_positions)]
-    cleaned[top] = weights[top]
-    total = cleaned.sum()
-    return cleaned / total if total > 0 else cleaned
 
 
 # ============================================================
@@ -966,7 +962,8 @@ def get_latest_etf_portfolios(db: Session) -> list[EtfPortfolioResult]:
 
 def etf_portfolio_row_to_dict(row: EtfPortfolioResult) -> dict:
     return {
-        "id": row.id,
+        # 代理 ID 为 19 位大整数超 JS Number 安全范围，统一 str 序列化
+        "id": str(row.id),
         "calc_date": str(row.calc_date),
         "algorithm_version": row.algorithm_version,
         "target_symbol": row.target_symbol,

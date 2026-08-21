@@ -8,6 +8,7 @@
 import math
 from datetime import date, timedelta
 
+import pandas as pd
 import pytest
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -506,3 +507,62 @@ def test_persist_idempotent_and_latest(test_session: Session) -> None:
     assert data["weights_mode"] == "weighted"
     assert data["portfolio_metrics"]
     assert data["correlation_matrix"]
+
+# ============================================================
+# 审计修复回归（2026-08-21 CodeReview）
+# ============================================================
+
+
+def test_zero_weight_member_does_not_truncate_window() -> None:
+    """零权重成员不参与共同窗口交集，不以其短历史截断组合收益窗口。"""
+    idx = pd.date_range("2025-01-01", periods=100, freq="B")
+    returns = {
+        "A": pd.Series(0.001, index=idx),
+        "B": pd.Series(0.002, index=idx),
+        "Z": pd.Series(0.003, index=idx[:5]),  # 仅 5 天但权重为 0
+    }
+    portfolio, frame = compute_portfolio_returns(
+        returns, {"A": 0.6, "B": 0.4, "Z": 0.0}
+    )
+    assert len(portfolio) == 100
+    assert set(frame.columns) == {"A", "B"}
+
+
+def test_zero_weight_member_analysis_not_degraded(test_session: Session) -> None:
+    """零权重成员净值短不应把整个组合分析降级为 needs_review。"""
+    _add_fund(test_session, "000001")
+    _add_fund(test_session, "020005")
+    _add_fund(test_session, "040022")
+    _add_nav_series(test_session, "000001", _make_returns(0.0))
+    _add_nav_series(test_session, "020005", _make_returns(1.5))
+    _add_nav_series(test_session, "040022", _make_returns(3.0, n=5))  # 短历史
+    pool_id = _add_pool(
+        test_session,
+        [("000001", 50.0), ("020005", 50.0), ("040022", 0.0)],
+    )
+    test_session.commit()
+
+    result = compute_portfolio_analysis(test_session, pool_id)
+    assert result.conclusion_status == "computed"
+    assert any("零权重" in w for w in result.warnings)
+
+
+def test_overlap_pairwise_matrix_symmetric() -> None:
+    """成对重叠矩阵严格对称（修复外层循环覆盖下三角）。"""
+    from fund_research.analysis.portfolio import _overlap_from_maps
+
+    holdings = {
+        "F1": {"600000": 5.0, "600001": 4.0, "600002": 3.0},
+        "F2": {"600000": 6.0, "600003": 2.0},
+        "F3": {"600000": 7.0, "600001": 1.0},
+    }
+    overlap = _overlap_from_maps(
+        holdings, {"F1": 0.4, "F2": 0.3, "F3": 0.3}, {}
+    )
+    pairwise = overlap["pairwise_shared_counts"]
+    for a, row in pairwise.items():
+        for b, count in row.items():
+            assert pairwise[b][a] == count
+    # 下三角不丢失：F3→F1 与 F1→F3 均可读取
+    assert pairwise["F3"]["F1"] == pairwise["F1"]["F3"] == 2
+    assert pairwise["F2"]["F1"] == pairwise["F1"]["F2"] == 1

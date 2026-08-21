@@ -295,7 +295,11 @@ def compute_exposures(
 
     n = len(y)
     dates = list(fund_returns.index)
-    for start in range(0, n - window_days + 1, step_days):
+    starts = list(range(0, n - window_days + 1, step_days))
+    # 末窗口对齐数据末尾：避免 latest_exposures 滞后于 window_end（口径一致）
+    if starts and starts[-1] + window_days < n:
+        starts.append(n - window_days)
+    for start in starts:
         end = start + window_days
         beta, t_values, r2 = _ols_window(y[start:end], x[start:end])
         result["rolling_dates"].append(dates[end - 1])
@@ -634,7 +638,8 @@ def get_latest_bond_factor_exposure(
 
 def exposure_row_to_dict(row: BondFactorExposureResult) -> dict:
     return {
-        "id": row.id,
+        # 代理 ID 为 19 位大整数超 JS Number 安全范围，统一 str 序列化
+        "id": str(row.id),
         "fund_code": row.fund_code,
         "calc_date": str(row.calc_date),
         "algorithm_version": row.algorithm_version,

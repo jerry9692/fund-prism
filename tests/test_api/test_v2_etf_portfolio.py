@@ -196,6 +196,8 @@ def test_get_by_id_roundtrip(test_client: TestClient, test_session: Session) -> 
         json={"target_symbol": "sh000300", "lookback_days": 120},
     )
     result_id = build_resp.json()["data"]["id"]
+    # 19 位大整数 ID 统一 str 序列化（防 JS Number 精度丢失）
+    assert isinstance(result_id, str)
 
     resp = test_client.get(f"/api/v2/etf-portfolio/{result_id}")
     assert resp.status_code == 200

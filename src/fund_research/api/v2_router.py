@@ -6253,7 +6253,8 @@ def build_etf_portfolio_endpoint(
             db.commit()
             result_id = row.id
         data = record.to_data()
-        data["id"] = result_id
+        # 代理 ID 为 19 位大整数超 JS Number 安全范围，统一 str 序列化
+        data["id"] = str(result_id) if result_id is not None else None
         data["persisted"] = request.persist
         return _log(
             db,

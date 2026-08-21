@@ -161,8 +161,13 @@ def _fund_daily_returns(db: Session, fund_code: str) -> pd.Series:
 def compute_portfolio_returns(
     returns_by_fund: dict[str, pd.Series], weights: dict[str, float]
 ) -> tuple[pd.Series, pd.DataFrame]:
-    """加权组合日收益（共同日期窗口）与成员收益宽表。"""
-    frame = pd.DataFrame(returns_by_fund).dropna()
+    """加权组合日收益（共同日期窗口）与成员收益宽表。
+
+    共同窗口仅对实际参与加权（权重 >0）的成员取交集：零权重成员对组合
+    收益无贡献，若参与 dropna 交集会以其短历史截断整个组合窗口。
+    """
+    active = {c: s for c, s in returns_by_fund.items() if weights.get(c, 0.0) > 0}
+    frame = pd.DataFrame(active).dropna()
     if frame.empty:
         return pd.Series(dtype="float64"), frame
     weight_series = pd.Series(
@@ -361,14 +366,13 @@ def _overlap_from_maps(
         )
     top_overlap.sort(key=lambda item: item["combined_weight"], reverse=True)
 
-    # 成对重叠个数（对称矩阵）
-    pairwise: dict[str, dict[str, int]] = {}
+    # 成对重叠个数（对称矩阵：双向均写入，避免外层循环覆盖下三角）
+    pairwise: dict[str, dict[str, int]] = {code: {} for code in funds}
     for i, a in enumerate(funds):
-        pairwise[a] = {}
         for b in funds[i:]:
             count = len(set(holdings_by_fund[a]) & set(holdings_by_fund[b]))
             pairwise[a][b] = count
-            pairwise.setdefault(b, {})[a] = count
+            pairwise[b][a] = count
 
     union = set().union(*[set(h) for h in holdings_by_fund.values()]) if holdings_by_fund else set()
     return {
@@ -564,7 +568,15 @@ def compute_portfolio_analysis(db: Session, pool_id: int) -> PortfolioAnalysisRe
     empty = [code for code, series in returns_by_fund.items() if series.empty]
     if empty:
         result.warnings.append(f"基金 {', '.join(empty)} 净值序列缺失")
+    zero_weight = [
+        code for code in codes
+        if weights.get(code, 0.0) <= 0 and not returns_by_fund[code].empty
+    ]
     portfolio_returns, frame = compute_portfolio_returns(returns_by_fund, weights)
+    if zero_weight:
+        result.warnings.append(
+            f"零权重成员 {', '.join(zero_weight)} 不参与组合收益窗口与相关性计算"
+        )
     if len(portfolio_returns) < MIN_PORTFOLIO_OBSERVATIONS:
         result.conclusion_status = ConclusionStatus.NEEDS_REVIEW.value
         result.warnings.append(
@@ -660,8 +672,9 @@ def get_latest_portfolio_analysis(db: Session, pool_id: int) -> UserPortfolio | 
 
 def portfolio_row_to_dict(row: UserPortfolio, pool_name: str | None = None) -> dict:
     return {
-        "id": row.id,
-        "pool_id": row.pool_id,
+        # 代理 ID 为 19 位大整数超 JS Number 安全范围，统一 str 序列化
+        "id": str(row.id),
+        "pool_id": str(row.pool_id),
         "pool_name": pool_name,
         "calc_date": str(row.calc_date),
         "algorithm_version": row.algorithm_version,

@@ -608,7 +608,7 @@ export interface BondFactorCurvePoint {
 }
 
 export interface BondFactorExposureItem {
-  id?: number;
+  id?: string;
   fund_code: string;
   fund_name?: string | null;
   sub_category?: string | null;
@@ -683,7 +683,7 @@ export interface EtfPortfolioIndustryRow {
 }
 
 export interface EtfPortfolioItem {
-  id?: number | null;
+  id?: string | null;
   calc_date?: string;
   algorithm_version?: string;
   target_symbol: string;
@@ -854,7 +854,7 @@ export interface PortfolioOverlapItem {
 }
 
 export interface PortfolioAnalysis {
-  pool_id: number;
+  pool_id: string;
   pool_name?: string | null;
   calc_date?: string;
   weights_mode: "weighted" | "equal" | string;
@@ -1719,7 +1719,7 @@ export const api = {
       "/api/v2/etf-portfolio/latest"
     ),
 
-  getEtfPortfolio: (resultId: number) =>
+  getEtfPortfolio: (resultId: string) =>
     request<EtfPortfolioItem>(`/api/v2/etf-portfolio/${resultId}`),
 
   // ---- Phase 4: 公司画像频谱与经理团队画像（P4E）----

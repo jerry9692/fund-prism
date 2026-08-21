@@ -456,3 +456,21 @@ def test_fingerprint_bond_factor_dimension_backfill(test_session: Session) -> No
     assert all(v == "estimated" for v in fp.vector_metadata["bond_factor"].values())
     assert fp.contains_estimated is True
     assert fp.conclusion_status == "estimated"
+
+
+def test_rolling_last_window_aligns_to_data_end() -> None:
+    """审计修复：末滚动窗口对齐数据末尾，latest_exposures 不滞后于 window_end。"""
+    import numpy as np
+    import pandas as pd
+
+    from fund_research.analysis.bond_factor_exposure import compute_exposures
+
+    rng = np.random.RandomState(3)
+    n = 253  # (253-120) % 20 = 13：未修复时末窗口滞后 13 个交易日
+    dates = pd.date_range("2025-01-01", periods=n, freq="B")
+    factor = pd.DataFrame({"f1": rng.normal(0.0, 0.002, n)}, index=dates)
+    fund = pd.Series(
+        0.5 * factor["f1"].to_numpy() + rng.normal(0.0, 0.001, n), index=dates
+    )
+    result = compute_exposures(fund, factor, ["f1"], window_days=120, step_days=20)
+    assert result["rolling_dates"][-1] == dates[-1]

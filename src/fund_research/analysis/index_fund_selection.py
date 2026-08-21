@@ -629,7 +629,8 @@ def get_latest_selection_results(db: Session) -> list[IndexFundSelectionResult]:
 
 def selection_row_to_dict(row: IndexFundSelectionResult) -> dict:
     return {
-        "id": row.id,
+        # 代理 ID 为 19 位大整数超 JS Number 安全范围，统一 str 序列化
+        "id": str(row.id),
         "fund_code": row.fund_code,
         "calc_date": str(row.calc_date),
         "algorithm_version": row.algorithm_version,

@@ -215,18 +215,32 @@ def test_max_weight_and_positions_respected(test_session: Session) -> None:
         BuildParams(
             target_symbol="sh000300",
             lookback_days=120,
-            max_weight=0.6,
             max_positions=1,
         ),
     )
     weights = {code: m["weight"] for code, m in record.member_weights.items()}
     assert len(weights) == 1
-    assert max(weights.values()) <= 0.6 + 1e-3 or len(weights) == 1 and abs(
-        sum(weights.values()) - 1.0
-    ) < 1e-3
+    assert abs(sum(weights.values()) - 1.0) < 1e-3
     # 数量上限约束回显
     cap = next(c for c in record.constraints if c["name"] == "持仓数量上限")
     assert cap["satisfied"]
+
+
+def test_infeasible_constraint_combo_needs_review(test_session: Session) -> None:
+    """数量上限 1 + 单只上限 0.6 数学上不可行 → needs_review，不截断兜底。"""
+    _seed_two_etfs(test_session)
+    record = build_etf_portfolio(
+        test_session,
+        BuildParams(
+            target_symbol="sh000300",
+            lookback_days=120,
+            max_positions=1,
+            max_weight=0.6,
+        ),
+    )
+    assert record.conclusion_status == "needs_review"
+    assert record.member_weights == {}
+    assert any("无可行解" in w or "求解失败" in w for w in record.warnings)
 
 
 def test_pool_lt_2_needs_review(test_session: Session) -> None:
