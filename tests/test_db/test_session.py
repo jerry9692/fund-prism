@@ -1,6 +1,6 @@
 """Database engine and initialization tests."""
 
-from datetime import date
+from datetime import date, datetime
 from pathlib import Path
 
 import pytest
@@ -47,7 +47,7 @@ def test_init_db_creates_core_tables_in_sqlite(tmp_path: Path) -> None:
     assert "alembic_version" in table_names
     with engine.connect() as connection:
         version = connection.execute(text("SELECT version_num FROM alembic_version")).scalar_one()
-    assert version == "20260821_0002"
+    assert version == "20260821_0003"
 
 
 def test_init_db_creates_phase4_index_domain_tables(tmp_path: Path) -> None:
@@ -130,6 +130,34 @@ def test_init_db_creates_core_tables_in_duckdb(tmp_path: Path) -> None:
     engine = create_engine_from_path(str(db_path))
 
     assert "fund_main" in inspect(engine).get_table_names()
+
+
+def test_init_db_creates_phase4_etf_portfolio_table(tmp_path: Path) -> None:
+    """P4D etf_portfolio_result 应随迁移创建并可 round-trip（唯一约束生效）。"""
+    db_path = tmp_path / "fund_research.sqlite"
+    init_db(str(db_path))
+    engine = create_engine_from_path(str(db_path))
+
+    assert "etf_portfolio_result" in inspect(engine).get_table_names()
+
+    from fund_research.db.models import EtfPortfolioResult
+
+    values = {
+        "calc_date": date(2026, 8, 21),
+        "algorithm_name": "etf_portfolio_build",
+        "algorithm_version": "0.1.0",
+        "target_symbol": "sh000300",
+        "target_name": "沪深300",
+        "member_weights": {"510300": {"weight": 1.0}},
+        "constraints": [{"name": "权重合计为 1", "satisfied": True}],
+        "conclusion_status": "computed",
+        "created_at": datetime(2026, 8, 21, 12, 0, 0),
+    }
+    with engine.begin() as conn:
+        conn.execute(EtfPortfolioResult.__table__.insert().values(**values))
+
+    with pytest.raises(IntegrityError), engine.begin() as conn:
+        conn.execute(EtfPortfolioResult.__table__.insert().values(**values))
 
 
 def test_surrogate_id_is_generated_by_application(tmp_path: Path) -> None:

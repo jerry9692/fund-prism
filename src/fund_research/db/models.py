@@ -829,6 +829,7 @@ from fund_research.db.models_phase4 import (  # noqa: E402,F401
     BondDaily,
     BondFactorExposureResult,
     BondMain,
+    EtfPortfolioResult,
     EtfProfile,
     FactorReturn,
     IndexConstituent,

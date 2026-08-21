@@ -25,6 +25,8 @@ import SimilarFundsPage from "./pages/SimilarFundsPage";
 import FingerprintPage from "./pages/FingerprintPage";
 import FundComparePage from "./pages/FundComparePage";
 import IndexFundSelectionPage from "./pages/IndexFundSelectionPage";
+import EtfPortfolioBuildPage from "./pages/EtfPortfolioBuildPage";
+import CompanySpectrumPage from "./pages/CompanySpectrumPage";
 import BondFactorScanPage from "./pages/BondFactorScanPage";
 import AnomalyListPage from "./pages/AnomalyListPage";
 import AnomalyDetailPage from "./pages/AnomalyDetailPage";
@@ -67,6 +69,8 @@ export default function App() {
           <Route path="/fingerprint" element={<FingerprintPage />} />
           <Route path="/fund-compare" element={<FundComparePage />} />
           <Route path="/index-funds" element={<RouteErrorBoundary><IndexFundSelectionPage /></RouteErrorBoundary>} />
+          <Route path="/etf-portfolio" element={<RouteErrorBoundary><EtfPortfolioBuildPage /></RouteErrorBoundary>} />
+          <Route path="/company-spectrum" element={<RouteErrorBoundary><CompanySpectrumPage /></RouteErrorBoundary>} />
           <Route path="/bond-factors" element={<RouteErrorBoundary><BondFactorScanPage /></RouteErrorBoundary>} />
           <Route path="/anomalies" element={<AnomalyListPage />} />
           <Route path="/anomalies/:id" element={<RouteErrorBoundary><AnomalyDetailPage /></RouteErrorBoundary>} />

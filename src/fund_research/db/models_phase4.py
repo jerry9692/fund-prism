@@ -577,3 +577,65 @@ class UserPortfolio(Base):
 
 # 组合分析导出别名
 UserPortfolioV4 = UserPortfolio
+
+
+# ============================================================
+# P4D ETF 组合构建结果（需求书 §6.2.9 / §15.2 第 12 条）
+# ============================================================
+
+
+class EtfPortfolioResult(Base):
+    """ETF 组合构建结果表 — CVXPY 二次规划跟踪目标指数（§6.2.9）。
+
+    推荐权重、回测指标、约束清单、行业偏离全部落 JSON，约束逐条可回显
+    （§7.3 第 5 条）；协方差用 Ledoit-Wolf 收缩稳健化（§6.2.9 第 3 条）。
+    同一 (目标指数, 计算日期, 算法版本) 幂等覆盖。
+    """
+
+    __tablename__ = "etf_portfolio_result"
+
+    id: Mapped[int] = id_column()
+    calc_date: Mapped[date] = mapped_column(Date, index=True, comment="计算日期")
+    algorithm_name: Mapped[str] = mapped_column(String(50), comment="算法名")
+    algorithm_version: Mapped[str] = mapped_column(String(10), comment="算法版本")
+    target_symbol: Mapped[str] = mapped_column(
+        String(40), index=True, comment="目标指数 benchmark symbol，如 sh000300"
+    )
+    target_name: Mapped[str | None] = mapped_column(String(100), comment="目标指数名称")
+    candidate_count: Mapped[int | None] = mapped_column(Integer, comment="初始候选 ETF 数")
+    eligible_count: Mapped[int | None] = mapped_column(Integer, comment="阈值过滤后可优化候选数")
+    member_weights: Mapped[dict[str, Any] | None] = mapped_column(
+        JSON, comment="推荐权重 {fund_code: {weight, fund_name, fee, scale, liquidity, tracking_error}}"
+    )
+    portfolio_stats: Mapped[dict[str, Any] | None] = mapped_column(
+        JSON, comment="组合费率/规模/流动性/历史拟合跟踪误差/超额等"
+    )
+    backtest: Mapped[dict[str, Any] | None] = mapped_column(
+        JSON, comment="再平衡回测：样本外指标 + 逐期换手/成本 + 拟合曲线"
+    )
+    constraints: Mapped[list[Any] | None] = mapped_column(
+        JSON, comment="约束清单 [{name, value, satisfied, detail}]（逐条可回显）"
+    )
+    industry_deviation: Mapped[dict[str, Any] | None] = mapped_column(
+        JSON, comment="与目标指数的行业偏离（SW2021 口径对照）"
+    )
+    window_start: Mapped[date | None] = mapped_column(Date, comment="估计窗口起始日")
+    window_end: Mapped[date | None] = mapped_column(Date, comment="估计窗口结束日")
+    conclusion_status: Mapped[str] = mapped_column(String(20), default="computed")
+    warnings: Mapped[list[str] | None] = mapped_column(JSON)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.now)
+
+    __table_args__ = (
+        UniqueConstraint(
+            "target_symbol",
+            "calc_date",
+            "algorithm_name",
+            "algorithm_version",
+            name="uq_etf_portfolio_target_date_algo",
+        ),
+        Index("ix_etf_portfolio_target_date", "target_symbol", "calc_date"),
+    )
+
+
+# ETF 组合构建导出别名
+EtfPortfolioResultV4 = EtfPortfolioResult

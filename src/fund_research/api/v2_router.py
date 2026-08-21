@@ -43,6 +43,18 @@ from fund_research.analysis.bond_factor_exposure import (
     persist_bond_factor_exposures,
     run_bond_factor_batch,
 )
+from fund_research.analysis.company_profile import (
+    ALGORITHM_NAME as COMPANY_PROFILE_NAME,
+)
+from fund_research.analysis.company_profile import (
+    ALGORITHM_VERSION as COMPANY_PROFILE_VERSION,
+)
+from fund_research.analysis.company_profile import (
+    build_company_spectrum,
+    build_manager_profile,
+    list_company_spectra,
+    list_manager_summaries,
+)
 from fund_research.analysis.dashboard import (
     ALGORITHM_NAME as DASHBOARD_NAME,
 )
@@ -50,6 +62,25 @@ from fund_research.analysis.dashboard import (
     ALGORITHM_VERSION as DASHBOARD_VERSION,
 )
 from fund_research.analysis.dashboard import generate_dashboard
+from fund_research.analysis.etf_portfolio import (
+    ALGORITHM_NAME as ETF_PORTFOLIO_NAME,
+)
+from fund_research.analysis.etf_portfolio import (
+    ALGORITHM_VERSION as ETF_PORTFOLIO_VERSION,
+)
+from fund_research.analysis.etf_portfolio import (
+    REBALANCE_FREQUENCIES as ETF_REBALANCE_FREQUENCIES,
+)
+from fund_research.analysis.etf_portfolio import (
+    BuildParams as EtfPortfolioBuildParams,
+)
+from fund_research.analysis.etf_portfolio import (
+    build_etf_portfolio,
+    etf_portfolio_row_to_dict,
+    get_etf_portfolio_by_id,
+    get_latest_etf_portfolios,
+    persist_etf_portfolio,
+)
 from fund_research.analysis.fingerprint import (
     ALGORITHM_VERSION as FINGERPRINT_VERSION,
 )
@@ -6148,3 +6179,414 @@ def build_portfolio_packet_endpoint(pool_id: int, db: SessionDep) -> APIResponse
             started,
         )
 
+
+# ============================================================
+# P4D: ETF 组合构建（需求书 §6.2.9）
+# ============================================================
+
+
+class EtfPortfolioBuildRequest(BaseModel):
+    """ETF 组合构建请求（默认目标沪深300，默认池为样本内 ETF/联接）。"""
+
+    target_symbol: str = Field("sh000300", description="目标指数 benchmark symbol")
+    fund_codes: list[str] | None = Field(None, description="指定 ETF 池，留空用默认候选")
+    min_weight: float = Field(0.0, ge=0.0, lt=1.0, description="单只权重下限")
+    max_weight: float = Field(1.0, gt=0.0, le=1.0, description="单只权重上限")
+    max_positions: int | None = Field(None, ge=1, description="持仓数量上限")
+    min_scale: float | None = Field(None, ge=0.0, description="规模下限（亿元）")
+    min_amount: float | None = Field(None, ge=0.0, description="日均成交额下限（元）")
+    max_fee: float | None = Field(None, ge=0.0, description="费率上限（%/年）")
+    max_tracking_error: float | None = Field(None, ge=0.0, description="跟踪误差上限（年化小数）")
+    lookback_days: int = Field(252, ge=60, le=1500, description="估计窗口（交易日）")
+    rebalance_frequency: str | None = Field(
+        "quarterly", description="再平衡频率 monthly/quarterly，null 不回测"
+    )
+    max_turnover: float | None = Field(None, ge=0.0, le=2.0, description="再平衡换手上限（双边）")
+    calc_date: date | None = Field(None, description="计算日期，默认今日")
+    persist: bool = Field(True, description="是否落库（false 干跑）")
+
+
+def _etf_portfolio_meta() -> dict:
+    return {
+        "tool": ETF_PORTFOLIO_NAME,
+        "algorithm_version": ETF_PORTFOLIO_VERSION,
+        "platform_version": __version__,
+    }
+
+
+@v2_router.post("/etf-portfolio/build", response_model=APIResponse[dict])
+def build_etf_portfolio_endpoint(
+    db: SessionDep,
+    body: EtfPortfolioBuildRequest | None = None,
+) -> APIResponse[dict]:
+    """CVXPY 二次规划构建 ETF 组合（Ledoit-Wolf 收缩 + 再平衡回测）。
+
+    默认幂等落库（同目标/日期/版本覆盖）；persist=false 干跑不写库。
+    """
+    started = perf_counter()
+    request = body or EtfPortfolioBuildRequest()
+    if request.rebalance_frequency not in (None, *ETF_REBALANCE_FREQUENCIES):
+        raise HTTPException(
+            status_code=422,
+            detail=f"rebalance_frequency 仅支持 {'/'.join(ETF_REBALANCE_FREQUENCIES)} 或 null",
+        )
+    params_dict = request.model_dump(exclude={"calc_date", "persist"})
+    try:
+        build_params = EtfPortfolioBuildParams(
+            target_symbol=request.target_symbol,
+            fund_codes=request.fund_codes,
+            min_weight=request.min_weight,
+            max_weight=request.max_weight,
+            max_positions=request.max_positions,
+            min_scale=request.min_scale,
+            min_amount=request.min_amount,
+            max_fee=request.max_fee,
+            max_tracking_error=request.max_tracking_error,
+            lookback_days=request.lookback_days,
+            rebalance_frequency=request.rebalance_frequency or "none",
+            max_turnover=request.max_turnover,
+        )
+        record = build_etf_portfolio(db, build_params)
+        result_id: int | None = None
+        if request.persist:
+            row = persist_etf_portfolio(db, record, calc_date=request.calc_date)
+            db.commit()
+            result_id = row.id
+        data = record.to_data()
+        data["id"] = result_id
+        data["persisted"] = request.persist
+        return _log(
+            db,
+            "etf_portfolio_build",
+            params_dict,
+            APIResponse(
+                data=data,
+                metadata=_etf_portfolio_meta(),
+                warnings=record.warnings,
+                conclusion_status=ConclusionStatus(record.conclusion_status),
+            ),
+            started,
+        )
+    except Exception as exc:
+        db.rollback()
+        return _log(
+            db,
+            "etf_portfolio_build",
+            params_dict,
+            APIResponse(
+                data=None,
+                metadata=_etf_portfolio_meta(),
+                warnings=[str(exc)],
+                conclusion_status=ConclusionStatus.NEEDS_REVIEW,
+            ),
+            started,
+        )
+
+
+@v2_router.get("/etf-portfolio/latest", response_model=APIResponse[dict])
+def get_latest_etf_portfolio_endpoint(db: SessionDep) -> APIResponse[dict]:
+    """最近一个计算日的全部 ETF 组合构建结果（各目标指数各一条）。"""
+    started = perf_counter()
+    params: dict[str, Any] = {}
+    try:
+        rows = get_latest_etf_portfolios(db)
+        if not rows:
+            return _log(
+                db,
+                "get_etf_portfolio_latest",
+                params,
+                APIResponse(
+                    data=None,
+                    metadata=_etf_portfolio_meta(),
+                    warnings=["暂无 ETF 组合构建记录，请先运行 POST /etf-portfolio/build"],
+                    conclusion_status=ConclusionStatus.NEEDS_REVIEW,
+                ),
+                started,
+            )
+        results = [etf_portfolio_row_to_dict(row) for row in rows]
+        statuses = [r["conclusion_status"] for r in results]
+        return _log(
+            db,
+            "get_etf_portfolio_latest",
+            params,
+            APIResponse(
+                data={"calc_date": str(rows[0].calc_date), "results": results},
+                metadata=_etf_portfolio_meta(),
+                warnings=[],
+                conclusion_status=_selection_overall_status(statuses),
+            ),
+            started,
+        )
+    except Exception as exc:
+        db.rollback()
+        return _log(
+            db,
+            "get_etf_portfolio_latest",
+            params,
+            APIResponse(
+                data=None,
+                metadata=_etf_portfolio_meta(),
+                warnings=[str(exc)],
+                conclusion_status=ConclusionStatus.NEEDS_REVIEW,
+            ),
+            started,
+        )
+
+
+@v2_router.get("/etf-portfolio/{result_id}", response_model=APIResponse[dict])
+def get_etf_portfolio_endpoint(result_id: int, db: SessionDep) -> APIResponse[dict]:
+    """按结果 ID 获取 ETF 组合构建记录。"""
+    started = perf_counter()
+    params = {"result_id": result_id}
+    try:
+        row = get_etf_portfolio_by_id(db, result_id)
+        if row is None:
+            return _log(
+                db,
+                "get_etf_portfolio",
+                params,
+                APIResponse(
+                    data=None,
+                    metadata=_etf_portfolio_meta(),
+                    warnings=[f"未找到 ETF 组合构建记录 {result_id}"],
+                    conclusion_status=ConclusionStatus.NEEDS_REVIEW,
+                ),
+                started,
+            )
+        return _log(
+            db,
+            "get_etf_portfolio",
+            params,
+            APIResponse(
+                data=etf_portfolio_row_to_dict(row),
+                metadata=_etf_portfolio_meta(),
+                warnings=[],
+                conclusion_status=ConclusionStatus(row.conclusion_status),
+            ),
+            started,
+        )
+    except Exception as exc:
+        db.rollback()
+        return _log(
+            db,
+            "get_etf_portfolio",
+            params,
+            APIResponse(
+                data=None,
+                metadata=_etf_portfolio_meta(),
+                warnings=[str(exc)],
+                conclusion_status=ConclusionStatus.NEEDS_REVIEW,
+            ),
+            started,
+        )
+
+
+# ============================================================
+# P4E: 公司画像频谱与经理团队画像（需求书 §6.2.6 / §12.4.5）
+# ============================================================
+
+
+def _company_profile_meta() -> dict:
+    return {
+        "tool": COMPANY_PROFILE_NAME,
+        "algorithm_version": COMPANY_PROFILE_VERSION,
+        "platform_version": __version__,
+    }
+
+
+@v2_router.get("/companies/spectra", response_model=APIResponse[dict])
+def list_company_spectra_endpoint(db: SessionDep) -> APIResponse[dict]:
+    """全部公司概览：公司列表（含样本不足标记）+ 全池基金 alpha/beta 气泡数据。
+
+    全池统一对沪深300 计算 Jensen alpha/beta，保证跨公司可比；只读不落库。
+    """
+    started = perf_counter()
+    params: dict[str, Any] = {}
+    try:
+        overview = list_company_spectra(db)
+        if not overview["companies"]:
+            return _log(
+                db,
+                "list_company_spectra",
+                params,
+                APIResponse(
+                    data=None,
+                    metadata=_company_profile_meta(),
+                    warnings=["在库无基金公司数据"],
+                    conclusion_status=ConclusionStatus.NEEDS_REVIEW,
+                ),
+                started,
+            )
+        return _log(
+            db,
+            "list_company_spectra",
+            params,
+            APIResponse(
+                data=overview,
+                metadata=_company_profile_meta(),
+                warnings=[],
+                conclusion_status=ConclusionStatus.COMPUTED,
+            ),
+            started,
+        )
+    except Exception as exc:
+        db.rollback()
+        return _log(
+            db,
+            "list_company_spectra",
+            params,
+            APIResponse(
+                data=None,
+                metadata=_company_profile_meta(),
+                warnings=[str(exc)],
+                conclusion_status=ConclusionStatus.NEEDS_REVIEW,
+            ),
+            started,
+        )
+
+
+@v2_router.get("/companies/{company_id}/spectrum", response_model=APIResponse[dict])
+def get_company_spectrum_endpoint(company_id: str, db: SessionDep) -> APIResponse[dict]:
+    """单一公司画像频谱：alpha/beta 频谱 + 风格分布 + 类型结构 + 规模光谱。
+
+    基金数 <3 的公司标"样本不足" observation（§12.4.5 验收）。
+    """
+    started = perf_counter()
+    params = {"company_id": company_id}
+    try:
+        spectrum = build_company_spectrum(db, company_id)
+        if spectrum is None:
+            return _log(
+                db,
+                "get_company_spectrum",
+                params,
+                APIResponse(
+                    data=None,
+                    metadata=_company_profile_meta(),
+                    warnings=[f"未找到基金公司 {company_id}"],
+                    conclusion_status=ConclusionStatus.NEEDS_REVIEW,
+                ),
+                started,
+            )
+        return _log(
+            db,
+            "get_company_spectrum",
+            params,
+            APIResponse(
+                data=spectrum.to_data(),
+                metadata=_company_profile_meta(),
+                warnings=spectrum.warnings,
+                conclusion_status=ConclusionStatus(spectrum.conclusion_status),
+            ),
+            started,
+        )
+    except Exception as exc:
+        db.rollback()
+        return _log(
+            db,
+            "get_company_spectrum",
+            params,
+            APIResponse(
+                data=None,
+                metadata=_company_profile_meta(),
+                warnings=[str(exc)],
+                conclusion_status=ConclusionStatus.NEEDS_REVIEW,
+            ),
+            started,
+        )
+
+
+@v2_router.get("/managers", response_model=APIResponse[dict])
+def list_managers_endpoint(db: SessionDep) -> APIResponse[dict]:
+    """有在管基金的经理概览列表（任期加权 alpha 降序）。"""
+    started = perf_counter()
+    params: dict[str, Any] = {}
+    try:
+        summaries = list_manager_summaries(db)
+        if not summaries:
+            return _log(
+                db,
+                "list_managers",
+                params,
+                APIResponse(
+                    data=None,
+                    metadata=_company_profile_meta(),
+                    warnings=["无有在管基金的经理记录"],
+                    conclusion_status=ConclusionStatus.NEEDS_REVIEW,
+                ),
+                started,
+            )
+        return _log(
+            db,
+            "list_managers",
+            params,
+            APIResponse(
+                data={"managers": summaries, "total": len(summaries)},
+                metadata=_company_profile_meta(),
+                warnings=[],
+                conclusion_status=ConclusionStatus.COMPUTED,
+            ),
+            started,
+        )
+    except Exception as exc:
+        db.rollback()
+        return _log(
+            db,
+            "list_managers",
+            params,
+            APIResponse(
+                data=None,
+                metadata=_company_profile_meta(),
+                warnings=[str(exc)],
+                conclusion_status=ConclusionStatus.NEEDS_REVIEW,
+            ),
+            started,
+        )
+
+
+@v2_router.get("/managers/{manager_id}/profile", response_model=APIResponse[dict])
+def get_manager_profile_endpoint(manager_id: str, db: SessionDep) -> APIResponse[dict]:
+    """单一经理团队画像：任期加权 alpha / 管理规模 / 风格稳定性 / 同类排名中位数。"""
+    started = perf_counter()
+    params = {"manager_id": manager_id}
+    try:
+        profile = build_manager_profile(db, manager_id)
+        if profile is None:
+            return _log(
+                db,
+                "get_manager_profile",
+                params,
+                APIResponse(
+                    data=None,
+                    metadata=_company_profile_meta(),
+                    warnings=[f"未找到基金经理 {manager_id}"],
+                    conclusion_status=ConclusionStatus.NEEDS_REVIEW,
+                ),
+                started,
+            )
+        return _log(
+            db,
+            "get_manager_profile",
+            params,
+            APIResponse(
+                data=profile.to_data(),
+                metadata=_company_profile_meta(),
+                warnings=profile.warnings,
+                conclusion_status=ConclusionStatus(profile.conclusion_status),
+            ),
+            started,
+        )
+    except Exception as exc:
+        db.rollback()
+        return _log(
+            db,
+            "get_manager_profile",
+            params,
+            APIResponse(
+                data=None,
+                metadata=_company_profile_meta(),
+                warnings=[str(exc)],
+                conclusion_status=ConclusionStatus.NEEDS_REVIEW,
+            ),
+            started,
+        )

@@ -135,6 +135,8 @@ MODULE_FUND_TYPE_EXCLUSIONS: dict[str, set[str]] = {
     # Phase 4 模块占位（§6.2.7/§6.2.8）：债基因子仅适用债基，ETF 优选仅适用指数类
     "bond_factor_exposure": {"equity_family", "index_family", "mixed_family", "money_family"},
     "etf_selection": {"bond_family", "money_family", "equity_family", "mixed_family"},
+    # P4D：ETF 组合构建候选仅适用指数类（ETF/联接），跨类型候选直接拒绝
+    "etf_portfolio_build": {"bond_family", "money_family", "equity_family", "mixed_family"},
 }
 
 # 基金族归一化（§5.3.3 口径：东财分类如 "债券型-短债" 按前缀归族）

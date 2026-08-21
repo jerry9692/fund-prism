@@ -129,6 +129,23 @@ const PATHS: Record<string, JSX.Element> = {
       <path d="M3 16.5 L12 21.5 L21 16.5" strokeOpacity="0.4" />
     </>
   ),
+  // ETF 组合构建：饼图分割（权重组合语义）
+  build: (
+    <>
+      <circle cx="12" cy="12" r="8.5" />
+      <path d="M12 3.5 V12 L18.5 17" />
+      <path d="M12 12 L4.5 8.5" strokeOpacity="0.6" />
+    </>
+  ),
+  // 公司频谱：散点谱（alpha-beta 气泡谱语义）
+  spectrum: (
+    <>
+      <path d="M4 20 V4 M4 20 H20" />
+      <circle cx="9" cy="14" r="1.6" />
+      <circle cx="13.5" cy="9.5" r="2.2" />
+      <circle cx="17.5" cy="13" r="1.2" />
+    </>
+  ),
 
   // ---- 系统 ----
   // 数据质量：盾牌 + 勾

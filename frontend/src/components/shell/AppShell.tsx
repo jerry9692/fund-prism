@@ -33,6 +33,8 @@ const NAV_GROUPS: NavGroup[] = [
       { to: "/similar-funds", label: "相似搜索", icon: "similar" },
       { to: "/fund-compare", label: "基金对比", icon: "compare" },
       { to: "/index-funds", label: "指数优选", icon: "layers" },
+      { to: "/etf-portfolio", label: "ETF 组合构建", icon: "build" },
+      { to: "/company-spectrum", label: "公司频谱", icon: "spectrum" },
       { to: "/bond-factors", label: "债基风险扫描", icon: "scan" },
     ],
   },

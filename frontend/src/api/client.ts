@@ -640,6 +640,209 @@ export interface BondFactorExposureItem {
   warnings: string[];
 }
 
+// ---- Phase 4 (P4D) ETF 组合构建 ----
+
+export interface EtfPortfolioMember {
+  weight: number;
+  fund_name: string | null;
+  fee_pct: number | null;
+  scale: number | null;
+  avg_daily_amount: number | null;
+  tracking_error_1y: number | null;
+}
+
+export interface EtfPortfolioConstraint {
+  name: string;
+  value: number | boolean | null;
+  satisfied: boolean;
+  detail: string;
+  key?: string;
+}
+
+export interface EtfPortfolioRebalance {
+  date: string;
+  turnover: number;
+  cost: number;
+  turnover_cap_satisfied: boolean;
+  skipped: boolean;
+  reason?: string;
+  weights?: Record<string, number>;
+}
+
+export interface EtfPortfolioFitPoint {
+  date: string;
+  portfolio: number;
+  index: number;
+}
+
+export interface EtfPortfolioIndustryRow {
+  industry: string;
+  portfolio_weight: number;
+  target_weight: number;
+  deviation: number;
+}
+
+export interface EtfPortfolioItem {
+  id?: number | null;
+  calc_date?: string;
+  algorithm_version?: string;
+  target_symbol: string;
+  target_name: string | null;
+  candidate_count: number;
+  eligible_count: number;
+  member_weights: Record<string, EtfPortfolioMember>;
+  portfolio_stats: {
+    fitted: Record<string, number | null>;
+    weighted_fee_pct: number;
+    weighted_scale: number;
+    weighted_avg_daily_amount: number;
+    shrinkage_applied: boolean;
+    shrinkage_intensity: number | null;
+  };
+  backtest: {
+    available: boolean;
+    reason?: string;
+    summary?: Record<string, number | string>;
+    rebalances?: EtfPortfolioRebalance[];
+    fit_curve?: EtfPortfolioFitPoint[];
+  };
+  constraints: EtfPortfolioConstraint[];
+  industry_deviation: {
+    available: boolean;
+    reason?: string;
+    target_symbol?: string;
+    covered_weight?: number;
+    uncovered?: string[];
+    rows?: EtfPortfolioIndustryRow[];
+    total_abs_deviation?: number;
+  };
+  window_start: string | null;
+  window_end: string | null;
+  conclusion_status: string;
+  warnings: string[];
+  persisted?: boolean;
+}
+
+export interface EtfPortfolioBuildBody {
+  target_symbol?: string;
+  fund_codes?: string[] | null;
+  min_weight?: number;
+  max_weight?: number;
+  max_positions?: number | null;
+  min_scale?: number | null;
+  min_amount?: number | null;
+  max_fee?: number | null;
+  max_tracking_error?: number | null;
+  lookback_days?: number;
+  rebalance_frequency?: string | null;
+  max_turnover?: number | null;
+  calc_date?: string;
+  persist?: boolean;
+}
+
+// ---- Phase 4 (P4E) 公司画像频谱与经理团队画像 ----
+
+export interface CompanySpectrumFund {
+  fund_code: string;
+  fund_name: string | null;
+  family: string;
+  family_label: string;
+  sub_category?: string | null;
+  alpha_annualized: number | null;
+  beta: number | null;
+  scale: number | null;
+}
+
+export interface CompanyOverviewEntry {
+  company_id: string;
+  company_name: string;
+  fund_count: number;
+  insufficient_sample: boolean;
+}
+
+export interface CompanySpectraOverview {
+  companies: CompanyOverviewEntry[];
+  funds: Array<CompanySpectrumFund & { company_id: string; company_name: string }>;
+}
+
+export interface CompanySpectrumDetail {
+  company_id: string;
+  company_name: string;
+  fund_count: number;
+  funds: CompanySpectrumFund[];
+  alpha_beta_summary: {
+    coverage: number;
+    median_alpha: number | null;
+    median_beta: number | null;
+    max_alpha: number | null;
+    min_alpha: number | null;
+  };
+  style_distribution: {
+    available: boolean;
+    coverage_funds: number;
+    coverage_weight?: number;
+    dimensions?: Record<string, number>;
+  };
+  category_structure: Record<string, { count: number; share: number; label: string }>;
+  scale_spectrum: {
+    total: number | null;
+    median: number | null;
+    max: number | null;
+    min: number | null;
+    coverage: number;
+  };
+  conclusion_status: string;
+  warnings: string[];
+}
+
+export interface ManagerSummary {
+  manager_id: string;
+  name: string;
+  experience_years: number | null;
+  current_fund_count: number;
+  current_fund_codes: string[];
+  tenure_weighted_alpha: number | null;
+  managed_scale: number | null;
+}
+
+export interface ManagerProfileDetail {
+  manager_id: string;
+  name: string;
+  experience_years: number | null;
+  education: string | null;
+  bio: string | null;
+  current_funds: Array<{
+    fund_code: string;
+    fund_name: string | null;
+    family: string | null;
+    start_date: string;
+    tenure_days: number | null;
+    alpha_annualized: number | null;
+    scale: number | null;
+  }>;
+  history_tenures: Array<{
+    fund_code: string;
+    start_date: string;
+    end_date: string | null;
+    tenure_days: number | null;
+    tenure_return: number | null;
+  }>;
+  tenure_weighted_alpha: number | null;
+  managed_scale: number | null;
+  style_stability: {
+    drifted_funds: Array<{ fund_code: string; dimensions: unknown[] }>;
+    evaluable_funds: number;
+    current_fund_count: number;
+    stable: boolean;
+  };
+  peer_rank: {
+    ranks: Array<{ fund_code: string; rank_text: string; percentile: number | null; sub_category: string | null }>;
+    median_percentile: number | null;
+  };
+  conclusion_status: string;
+  warnings: string[];
+}
+
 // ---- Phase 4 (P4C) 组合穿透分析 ----
 
 export interface PortfolioOverlapItem {
@@ -1501,5 +1704,39 @@ export const api = {
   getLatestBondFactor: (fundCode: string) =>
     request<BondFactorExposureItem>(
       `/api/v2/analysis/bond-factors/${encodeURIComponent(fundCode)}/latest`
+    ),
+
+  // ---- Phase 4: ETF 组合构建（P4D）----
+
+  buildEtfPortfolio: (body?: EtfPortfolioBuildBody) =>
+    request<EtfPortfolioItem>("/api/v2/etf-portfolio/build", {
+      method: "POST",
+      body: JSON.stringify(body ?? {}),
+    }),
+
+  getLatestEtfPortfolios: () =>
+    request<{ calc_date: string; results: EtfPortfolioItem[] }>(
+      "/api/v2/etf-portfolio/latest"
+    ),
+
+  getEtfPortfolio: (resultId: number) =>
+    request<EtfPortfolioItem>(`/api/v2/etf-portfolio/${resultId}`),
+
+  // ---- Phase 4: 公司画像频谱与经理团队画像（P4E）----
+
+  getCompanySpectraOverview: () =>
+    request<CompanySpectraOverview>("/api/v2/companies/spectra"),
+
+  getCompanySpectrum: (companyId: string) =>
+    request<CompanySpectrumDetail>(
+      `/api/v2/companies/${encodeURIComponent(companyId)}/spectrum`
+    ),
+
+  listManagers: () =>
+    request<{ managers: ManagerSummary[]; total: number }>("/api/v2/managers"),
+
+  getManagerProfile: (managerId: string) =>
+    request<ManagerProfileDetail>(
+      `/api/v2/managers/${encodeURIComponent(managerId)}/profile`
     ),
 };
